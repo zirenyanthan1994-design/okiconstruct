@@ -3,11 +3,12 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { auth, db } from '../lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 
 export default function Navbar() {
-  const [user, setUser] = useState<any>(null);
-  const [userData, setUserData] = useState<any>(null);
+  // Swapped <any> for proper TypeScript definitions
+  const [user, setUser] = useState<User | null>(null);
+  const [userData, setUserData] = useState<Record<string, any> | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -24,10 +25,9 @@ export default function Navbar() {
 
   const handleLogout = async () => {
     await signOut(auth);
-    window.location.href = '/dashboard'; // Force full redirect to clear state
+    window.location.href = '/'; 
   };
 
-  // If nobody is logged in, don't show the internal app navigation
   if (!user) return null; 
 
   const isPremium = userData?.tier === "premium";
@@ -37,12 +37,10 @@ export default function Navbar() {
       <header className="bg-white border-b-[6px] border-black sticky top-0 z-50 shadow-[0px_8px_0px_0px_rgba(0,0,0,1)]">
         <div className="max-w-[1400px] mx-auto px-4 md:px-6 h-20 flex justify-between items-center bg-white relative z-50">
           
-          {/* LOGO */}
           <Link href="/profile" className="font-black text-2xl md:text-3xl tracking-tighter cursor-pointer hover:text-[#22c55e] transition-colors">
             <span className="text-black">OKI</span><span className="text-[#22c55e]">CONSTRUCT</span>
           </Link>
 
-          {/* DESKTOP SAAS NAVIGATION */}
           <nav className="hidden lg:flex items-center gap-8">
             <Link href="/estimate-boq" className="font-black uppercase text-sm tracking-widest hover:text-[#22c55e] transition-colors">Estimate BOQ</Link>
             <Link href="/track-expenditure" className="font-black uppercase text-sm tracking-widest hover:text-[#22c55e] transition-colors">Ledger</Link>
@@ -52,7 +50,6 @@ export default function Navbar() {
             )}
           </nav>
 
-          {/* DESKTOP USER CONTROLS */}
           <div className="hidden lg:flex items-center gap-4 border-l-[4px] border-black pl-6">
             <Link href="/profile" className="font-bold text-gray-500 hover:text-black uppercase text-sm tracking-widest transition-colors">
               {userData?.name ? userData.name.split(' ')[0] : 'Profile'}
@@ -62,14 +59,12 @@ export default function Navbar() {
             </button>
           </div>
           
-          {/* MOBILE HAMBURGER BUTTON */}
           <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="lg:hidden flex items-center gap-2 font-black text-xl hover:text-[#22c55e] transition-colors">
             <span className="text-xs tracking-widest uppercase mt-1">Menu</span>
             <span className="text-3xl leading-none">{isMobileMenuOpen ? "✕" : "☰"}</span>
           </button>
         </div>
 
-        {/* MOBILE DROPDOWN MENU */}
         {isMobileMenuOpen && (
           <nav className="lg:hidden absolute top-full left-0 w-full bg-white border-b-[6px] border-black flex flex-col p-6 gap-4 shadow-[0px_12px_0px_0px_rgba(0,0,0,1)] z-40">
             <div className="max-w-[1400px] mx-auto w-full flex flex-col gap-4">
