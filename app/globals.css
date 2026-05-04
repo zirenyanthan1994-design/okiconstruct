@@ -1,8 +1,24 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-body {
-  background-color: #ffffff;
-  color: #000000;
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  
+  ::selection {
+    background-color: #22c55e;
+    color: #ffffff;
+  }
+  
+  /* Modern Input Polish: Smooth focus rings and rounded corners */
+  input, select, textarea {
+    transition: all 0.2s ease;
+    border-radius: 0.5rem;
+  }
+
+  input:focus, select:focus, textarea:focus {
+    outline: none !important;
+    box-shadow: 0 0 0 3px rgba(34,197,94,0.2) !important;
+    border-color: #22c55e !important;
+  }
 }

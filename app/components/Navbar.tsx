@@ -6,7 +6,6 @@ import { doc, getDoc } from 'firebase/firestore';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 
 export default function Navbar() {
-  // Swapped <any> for proper TypeScript definitions
   const [user, setUser] = useState<User | null>(null);
   const [userData, setUserData] = useState<Record<string, any> | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -34,46 +33,46 @@ export default function Navbar() {
 
   return (
     <>
-      <header className="bg-white border-b-[6px] border-black sticky top-0 z-50 shadow-[0px_8px_0px_0px_rgba(0,0,0,1)]">
-        <div className="max-w-[1400px] mx-auto px-4 md:px-6 h-20 flex justify-between items-center bg-white relative z-50">
+      {/* Added print:hidden here to prevent it from showing on PDFs */}
+      <header className="bg-white/80 backdrop-blur-md border-b border-gray-100 sticky top-0 z-50 print:hidden">
+        <div className="max-w-[1400px] mx-auto px-4 md:px-6 h-20 flex justify-between items-center relative z-50">
           
-          <Link href="/profile" className="font-black text-2xl md:text-3xl tracking-tighter cursor-pointer hover:text-[#22c55e] transition-colors">
-            <span className="text-black">OKI</span><span className="text-[#22c55e]">CONSTRUCT</span>
+          <Link href="/" className="font-extrabold text-2xl tracking-tight cursor-pointer hover:text-[#22c55e] transition-colors">
+            <span className="text-gray-900">OKI</span><span className="text-[#22c55e]">CONSTRUCT</span>
           </Link>
 
           <nav className="hidden lg:flex items-center gap-8">
-            <Link href="/estimate-boq" className="font-black uppercase text-sm tracking-widest hover:text-[#22c55e] transition-colors">Estimate BOQ</Link>
-            <Link href="/track-expenditure" className="font-black uppercase text-sm tracking-widest hover:text-[#22c55e] transition-colors">Ledger</Link>
-            <Link href="/contact-experts" className="font-black uppercase text-sm tracking-widest hover:text-[#22c55e] transition-colors">Directory</Link>
+            <Link href="/estimate-boq" className="font-semibold text-sm text-gray-600 hover:text-[#22c55e] transition-colors">Estimate BOQ</Link>
+            <Link href="/track-expenditure" className="font-semibold text-sm text-gray-600 hover:text-[#22c55e] transition-colors">Expense Tracking</Link>
+            <Link href="/contact-experts" className="font-semibold text-sm text-gray-600 hover:text-[#22c55e] transition-colors">Contact Experts</Link>
             {isPremium && (
-              <Link href="/custom-settings" className="font-black uppercase text-sm tracking-widest bg-black text-[#22c55e] px-3 py-1">PRO ENGINE</Link>
+              <Link href="/custom-settings" className="font-bold text-xs bg-gray-900 text-[#22c55e] px-4 py-1.5 rounded-full">PRO ENGINE</Link>
             )}
           </nav>
 
-          <div className="hidden lg:flex items-center gap-4 border-l-[4px] border-black pl-6">
-            <Link href="/profile" className="font-bold text-gray-500 hover:text-black uppercase text-sm tracking-widest transition-colors">
+          <div className="hidden lg:flex items-center gap-6 border-l border-gray-200 pl-6">
+            <Link href="/profile" className="font-medium text-gray-500 hover:text-gray-900 text-sm transition-colors">
               {userData?.name ? userData.name.split(' ')[0] : 'Profile'}
             </Link>
-            <button onClick={handleLogout} className="font-black uppercase text-sm bg-[#22c55e] border-[3px] border-black px-4 py-2 hover:bg-black hover:text-[#22c55e] transition-colors shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-y-0.5">
+            <button onClick={handleLogout} className="font-semibold text-sm bg-white border border-gray-200 text-gray-700 px-5 py-2 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm">
               Logout
             </button>
           </div>
           
-          <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="lg:hidden flex items-center gap-2 font-black text-xl hover:text-[#22c55e] transition-colors">
-            <span className="text-xs tracking-widest uppercase mt-1">Menu</span>
-            <span className="text-3xl leading-none">{isMobileMenuOpen ? "✕" : "☰"}</span>
+          <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="lg:hidden flex items-center gap-2 text-gray-900 hover:text-[#22c55e] transition-colors">
+            <span className="text-2xl leading-none">{isMobileMenuOpen ? "✕" : "☰"}</span>
           </button>
         </div>
 
         {isMobileMenuOpen && (
-          <nav className="lg:hidden absolute top-full left-0 w-full bg-white border-b-[6px] border-black flex flex-col p-6 gap-4 shadow-[0px_12px_0px_0px_rgba(0,0,0,1)] z-40">
-            <div className="max-w-[1400px] mx-auto w-full flex flex-col gap-4">
-              <Link href="/estimate-boq" onClick={() => setIsMobileMenuOpen(false)} className="font-black text-lg uppercase hover:text-[#22c55e] border-b-4 border-gray-100 pb-3">Estimate BOQ</Link>
-              <Link href="/track-expenditure" onClick={() => setIsMobileMenuOpen(false)} className="font-black text-lg uppercase hover:text-[#22c55e] border-b-4 border-gray-100 pb-3">Track Expenditure</Link>
-              <Link href="/contact-experts" onClick={() => setIsMobileMenuOpen(false)} className="font-black text-lg uppercase hover:text-[#22c55e] border-b-4 border-gray-100 pb-3">Contact Experts</Link>
-              {isPremium && <Link href="/custom-settings" onClick={() => setIsMobileMenuOpen(false)} className="font-black text-lg uppercase text-[#22c55e] border-b-4 border-gray-100 pb-3">⚙️ Custom Engine</Link>}
-              <Link href="/profile" onClick={() => setIsMobileMenuOpen(false)} className="font-black text-lg uppercase hover:text-[#22c55e] border-b-4 border-gray-100 pb-3">My Profile</Link>
-              <button onClick={handleLogout} className="font-black text-lg uppercase text-white bg-black p-3 text-center mt-2 shadow-[4px_4px_0px_0px_rgba(34,197,94,1)]">Logout ➔</button>
+          <nav className="lg:hidden absolute top-full left-0 w-full bg-white border-b border-gray-100 flex flex-col p-6 gap-2 shadow-lg z-40 rounded-b-2xl">
+            <div className="max-w-[1400px] mx-auto w-full flex flex-col gap-2">
+              <Link href="/estimate-boq" onClick={() => setIsMobileMenuOpen(false)} className="font-medium text-lg text-gray-700 hover:text-[#22c55e] p-2 rounded-lg hover:bg-gray-50">Estimate BOQ</Link>
+              <Link href="/track-expenditure" onClick={() => setIsMobileMenuOpen(false)} className="font-medium text-lg text-gray-700 hover:text-[#22c55e] p-2 rounded-lg hover:bg-gray-50">Track Expenditure</Link>
+              <Link href="/contact-experts" onClick={() => setIsMobileMenuOpen(false)} className="font-medium text-lg text-gray-700 hover:text-[#22c55e] p-2 rounded-lg hover:bg-gray-50">Contact Experts</Link>
+              {isPremium && <Link href="/custom-settings" onClick={() => setIsMobileMenuOpen(false)} className="font-medium text-lg text-[#22c55e] p-2 rounded-lg hover:bg-green-50">⚙️ Custom Engine</Link>}
+              <Link href="/profile" onClick={() => setIsMobileMenuOpen(false)} className="font-medium text-lg text-gray-700 hover:text-[#22c55e] p-2 rounded-lg hover:bg-gray-50">My Profile</Link>
+              <button onClick={handleLogout} className="font-semibold text-base text-white bg-gray-900 p-3 rounded-xl text-center mt-4 hover:bg-gray-800 transition-colors">Logout</button>
             </div>
           </nav>
         )}

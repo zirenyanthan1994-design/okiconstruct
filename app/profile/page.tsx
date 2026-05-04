@@ -1,270 +1,372 @@
 "use client";
-import { useState, useEffect } from 'react';
-import { auth, db } from '../lib/firebase';
-import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
+import React, { useState, useEffect } from 'react';
+import { auth, db } from "../lib/firebase";
+import Navbar from "../components/Navbar";
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 
-export default function Profile() {
-  const router = useRouter();
-  
-  // --- STATE ---
-  const [user, setUser] = useState<any>(null);
-  const [userData, setUserData] = useState<any>(null);
-  const [projects, setProjects] = useState<any[]>([]);
+export default function ProfilePage() {
+  const [user, setUser] = useState<User | null>(null);
+  const [userData, setUserData] = useState<Record<string, any> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
+  
+  // Workspace Navigation State
+  const [activeTab, setActiveTab] = useState<'overview' | 'boqs' | 'ledgers'>('overview');
+  
+  // Database States
+  const [savedBOQs, setSavedBOQs] = useState<any[]>([]);
+  const [isLoadingData, setIsLoadingData] = useState(false);
+  
+  // NEW: State to hold the actively opened BOQ document
+  const [selectedBOQ, setSelectedBOQ] = useState<any>(null);
 
-  // Editable Profile State
-  const [editName, setEditName] = useState("");
-  const [editPhone, setEditPhone] = useState("");
+  // Message Center State
+  const [isMessageCenterOpen, setIsMessageCenterOpen] = useState(false);
+  const mockMessages = [
+    { id: 1, sender: "Rahul Sharma", role: "Homeowner", avatar: "👨‍💼", preview: "Hi! I saw your profile and need a quote for a 3BHK construction...", time: "2 hours ago", unread: true },
+    { id: 2, sender: "Priya Patel", role: "Architect", avatar: "👩‍💼", preview: "The revised BOQ looks good. Let's proceed with the new cement rates.", time: "Yesterday", unread: false }
+  ];
 
-  // --- INITIALIZATION ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
-        await fetchData(currentUser.uid);
+        const docRef = doc(db, "users", currentUser.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setUserData(docSnap.data());
+        }
       } else {
-        router.push('/dashboard');
+        window.location.href = '/'; 
       }
+      setIsLoading(false);
     });
     return () => unsubscribe();
-  }, [router]);
+  }, []);
 
-  const fetchData = async (uid: string) => {
-    try {
-      // 1. Fetch User Data
-      const docRef = doc(db, "users", uid);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setUserData(data);
-        setEditName(data.name || "");
-        setEditPhone(data.phone || "");
-      }
-
-      // 2. Fetch User's Projects (BOQ / Expenditure)
-      const q = query(collection(db, "boq_projects"), where("userId", "==", uid));
-      const projectSnap = await getDocs(q);
-      const fetchedProjects: any[] = [];
-      projectSnap.forEach((d) => fetchedProjects.push({ id: d.id, ...d.data() }));
-      
-      // Sort newest first
-      fetchedProjects.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
-      setProjects(fetchedProjects);
-
-    } catch (error) {
-      console.error("Error fetching data:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // --- ACTION HANDLERS ---
-  const handleLogout = async () => {
-    await signOut(auth);
-    router.push('/dashboard');
-  };
-
-  const handleUpdateProfile = async (e: any) => {
-    e.preventDefault();
+  // Fetch Saved BOQs from Firebase
+  const fetchSavedBOQs = async () => {
     if (!user) return;
-    setIsSaving(true);
+    setIsLoadingData(true);
+    setActiveTab('boqs');
+    setSelectedBOQ(null); // Always clear selection when returning to list
     try {
-      await updateDoc(doc(db, "users", user.uid), {
-        name: editName.trim(),
-        phone: editPhone.trim()
-      });
-      setUserData({ ...userData, name: editName.trim(), phone: editPhone.trim() });
-      alert("Profile updated successfully!");
+      const q = query(collection(db, "boq_projects"), where("userId", "==", user.uid));
+      const querySnapshot = await getDocs(q);
+      const fetchedBOQs = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      // Sort by newest first
+      fetchedBOQs.sort((a: any, b: any) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+      setSavedBOQs(fetchedBOQs);
     } catch (error) {
-      console.error("Error updating profile:", error);
-      alert("Failed to update profile.");
+      console.error("Error fetching BOQs:", error);
     } finally {
-      setIsSaving(false);
+      setIsLoadingData(false);
     }
   };
 
-  const handleToggleFeature = async () => {
-    if (!user || userData?.tier !== 'premium') return;
-    const newStatus = !userData.isFeatured;
-    try {
-      await updateDoc(doc(db, "users", user.uid), { isFeatured: newStatus });
-      setUserData({ ...userData, isFeatured: newStatus });
-    } catch (error) {
-      console.error("Error updating feature status:", error);
-    }
+  // Switch to Ledgers Tab 
+  const openLedgers = () => {
+    setActiveTab('ledgers');
   };
 
-  // --- UI: LOADING ---
-  if (isLoading) return <div className="min-h-screen flex items-center justify-center font-black text-2xl uppercase">Loading Profile...</div>;
-
-  const isPremium = userData?.tier === "premium";
+  if (isLoading) return <div className="min-h-screen flex items-center justify-center font-medium text-gray-500">Loading Profile...</div>;
+  if (!user || !userData) return null;
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col pb-20">
-      
-      {/* 1. MASTER HEADER (Unified Hamburger Menu) */}
-      <header className="bg-black text-white border-b-4 border-black sticky top-0 z-50">
-        <div className="max-w-[1400px] mx-auto px-4 md:px-6 h-20 flex justify-between items-center bg-black relative z-50">
-          <Link href="/dashboard" className="font-black text-2xl tracking-tighter cursor-pointer hover:opacity-80 transition-opacity">
-            <span className="text-white">OKI</span><span className="text-[#22c55e]">CONSTRUCT</span>
-          </Link>
-          <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="flex items-center gap-2 text-white font-black text-xl hover:text-[#22c55e] transition-colors">
-            <span className="text-sm tracking-widest uppercase hidden md:inline-block">Menu</span>
-            <span className="text-2xl">{isMobileMenuOpen ? "✕" : "☰"}</span>
-          </button>
-        </div>
+    <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
+      <Navbar />
 
-        {isMobileMenuOpen && (
-          <nav className="absolute top-full left-0 w-full bg-gray-900 border-b-4 border-black flex flex-col p-6 gap-4 animate-in slide-in-from-top-2 shadow-[0px_10px_0px_0px_rgba(0,0,0,1)] z-40">
-            <div className="max-w-[1400px] mx-auto w-full flex flex-col gap-4">
-              <Link href="/estimate-boq" className="font-black text-sm md:text-base uppercase hover:text-[#22c55e] border-b border-gray-800 pb-3 transition-colors">Estimate BOQ</Link>
-              <Link href="/track-expenditure" className="font-black text-sm md:text-base uppercase hover:text-[#22c55e] border-b border-gray-800 pb-3 transition-colors">Track Expenditure</Link>
-              <Link href="/contact-experts" className="font-black text-sm md:text-base uppercase hover:text-[#22c55e] border-b border-gray-800 pb-3 transition-colors">Contact Experts</Link>
-              {isPremium && <Link href="/custom-settings" className="font-black text-sm md:text-base uppercase text-[#22c55e] border-b border-gray-800 pb-3 hover:text-white transition-colors">⚙️ Custom Rates</Link>}
-              <Link href="/profile" className="font-black text-sm md:text-base uppercase text-white border-b border-gray-800 pb-3 transition-colors">My Profile</Link>
-              <button onClick={handleLogout} className="font-black text-sm md:text-base uppercase text-red-500 text-left pt-2 hover:text-white transition-colors w-fit">Logout ➔</button>
-            </div>
-          </nav>
-        )}
-      </header>
-
-      <main className="max-w-[1400px] mx-auto p-4 md:p-6 mt-10 w-full flex-grow">
+      <main className="max-w-[1000px] mx-auto p-4 md:p-6 mt-8 flex-grow w-full">
         
-        {/* HERO SECTION */}
-        <div className="mb-10 flex flex-col md:flex-row items-center md:items-end gap-6 border-b-8 border-black pb-8">
-          <div className="w-32 h-32 bg-white border-4 border-black flex items-center justify-center overflow-hidden shrink-0 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
-            {userData?.avatar?.length > 5 ? (
-              <img src={userData.avatar} alt="Profile" className="w-full h-full object-cover" />
-            ) : (
-              <span className="text-6xl">{userData?.avatar || "👤"}</span>
-            )}
+        {/* --- HEADER & PROFILE CARD --- */}
+        <div className="bg-white border border-gray-100 rounded-3xl p-8 shadow-sm relative mb-8 print:hidden">
+          
+          <div className="absolute top-6 right-6 flex items-center gap-4">
+            <button 
+              onClick={() => setIsMessageCenterOpen(true)}
+              className="relative p-2 text-gray-400 hover:text-[#22c55e] transition-colors bg-gray-50 hover:bg-green-50 rounded-full shadow-sm"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+              </svg>
+              <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 border-2 border-white rounded-full"></span>
+            </button>
+            <button className="text-sm font-semibold text-gray-500 hover:text-gray-900 px-4 py-2 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors hidden md:block">
+              Edit Profile
+            </button>
           </div>
-          <div className="text-center md:text-left">
-            <h1 className="text-4xl md:text-6xl font-black uppercase tracking-tighter text-black">{userData?.name || 'User'}</h1>
-            <div className="flex flex-wrap items-center justify-center md:justify-start gap-3 mt-2">
-              <span className="font-black text-sm uppercase tracking-widest text-gray-500 border-2 border-gray-300 px-3 py-1">{userData?.role}</span>
-              {isPremium ? (
-                <span className="font-black text-sm uppercase tracking-widest text-black bg-[#22c55e] border-2 border-black px-3 py-1 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">PREMIUM ACCOUNT</span>
+
+          <div className="flex flex-col md:flex-row items-center md:items-start gap-6">
+            <div className="w-24 h-24 bg-gray-50 border border-gray-200 rounded-full flex items-center justify-center overflow-hidden shrink-0 shadow-sm">
+              {userData.avatar?.length > 5 ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img src={userData.avatar} alt="Profile" className="w-full h-full object-cover" />
               ) : (
-                <span className="font-black text-sm uppercase tracking-widest text-gray-600 bg-gray-200 border-2 border-gray-400 px-3 py-1">STANDARD TIER</span>
+                <span className="text-4xl">{userData.avatar || "👤"}</span>
               )}
             </div>
+            
+            <div className="text-center md:text-left mt-2">
+              <h1 className="text-2xl font-bold text-gray-900">{userData.name}</h1>
+              <p className="text-gray-500 font-medium">{userData.email}</p>
+              
+              <div className="flex flex-wrap items-center justify-center md:justify-start gap-2 mt-4">
+                <span className="bg-gray-100 text-gray-700 px-3 py-1 rounded-lg text-xs font-semibold">{userData.role}</span>
+                {userData.tier === "premium" && (
+                  <span className="bg-[#22c55e]/10 text-[#15803d] px-3 py-1 rounded-lg text-xs font-bold border border-[#22c55e]/20">Premium Pro</span>
+                )}
+                <span className="bg-gray-100 text-gray-700 px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1">
+                  📞 {userData.phone}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          
-          {/* LEFT COLUMN: IDENTITY & SETTINGS */}
-          <div className="lg:col-span-4 space-y-8">
-            
-            {/* Personal Details Form */}
-            <div className="bg-white border-4 border-black p-6 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
-              <h2 className="font-black text-xl uppercase mb-6 border-b-4 border-[#22c55e] pb-2 inline-block">Personal Details</h2>
-              <form onSubmit={handleUpdateProfile} className="space-y-4">
-                <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">Email Address (Read Only)</label>
-                  <input type="email" readOnly disabled className="w-full border-2 border-gray-300 bg-gray-100 p-3 font-bold mt-1 text-gray-500 cursor-not-allowed" value={userData?.email || ""} />
+        {/* --- DYNAMIC WORKSPACE CONTROLS --- */}
+        <div className="flex items-center justify-between mb-4 px-2 print:hidden">
+          <h2 className="text-xl font-bold text-gray-900">Project Workspace</h2>
+          {activeTab !== 'overview' && !selectedBOQ && (
+            <button 
+              onClick={() => setActiveTab('overview')} 
+              className="text-sm font-bold text-gray-500 hover:text-gray-900 flex items-center gap-2 transition-colors"
+            >
+              ⬅ Back to Overview
+            </button>
+          )}
+        </div>
+        
+        {/* VIEW: OVERVIEW (Stats) */}
+        {activeTab === 'overview' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 animate-in fade-in duration-300">
+            <div className="bg-white border border-gray-100 rounded-3xl p-6 shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex items-center justify-between mb-6">
+                <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
+                  <span className="text-2xl">🏗️</span>
                 </div>
-                <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest">Full Name / Firm Name</label>
-                  <input type="text" required className="w-full border-2 border-black p-3 font-bold mt-1" value={editName} onChange={e => setEditName(e.target.value)} />
-                </div>
-                <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest">Phone Number</label>
-                  <input type="tel" required className="w-full border-2 border-black p-3 font-bold mt-1" value={editPhone} onChange={e => setEditPhone(e.target.value)} />
-                </div>
-                <button type="submit" disabled={isSaving} className="w-full bg-black text-white border-4 border-black p-4 font-black uppercase hover:bg-[#22c55e] hover:text-black transition-colors shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-y-1 mt-4">
-                  {isSaving ? "Saving..." : "Update Details"}
-                </button>
-              </form>
+                <button onClick={fetchSavedBOQs} className="text-sm font-semibold text-blue-600 hover:text-blue-800 transition-colors">View All ➔</button>
+              </div>
+              <h3 className="text-gray-500 font-semibold text-sm uppercase tracking-wider mb-1">Estimate BOQs</h3>
+              <div className="flex items-end gap-3">
+                <span className="text-4xl font-bold text-gray-900">Active</span>
+              </div>
+              <div className="mt-4 pt-4 border-t border-gray-100 text-sm text-gray-500">
+                Generate and manage comprehensive material estimates.
+              </div>
             </div>
 
-            {/* PREMIUM VIP SECTION */}
-            {isPremium && (
-              <div className="bg-black text-white border-4 border-black p-6 shadow-[8px_8px_0px_0px_rgba(34,197,94,1)]">
-                <h2 className="font-black text-xl uppercase mb-2 text-[#22c55e]">VIP Control Panel</h2>
-                <p className="font-bold text-xs text-gray-400 uppercase tracking-widest mb-6">Exclusive Premium Features</p>
+            <div className="bg-white border border-gray-100 rounded-3xl p-6 shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex items-center justify-between mb-6">
+                <div className="w-12 h-12 bg-orange-50 text-orange-600 rounded-xl flex items-center justify-center">
+                  <span className="text-2xl">📊</span>
+                </div>
+                <button onClick={openLedgers} className="text-sm font-semibold text-orange-600 hover:text-orange-800 transition-colors">Open Ledgers ➔</button>
+              </div>
+              <h3 className="text-gray-500 font-semibold text-sm uppercase tracking-wider mb-1">Expense Tracking</h3>
+              <div className="flex items-end gap-3">
+                <span className="text-4xl font-bold text-gray-900">Active</span>
+              </div>
+              <div className="mt-4 pt-4 border-t border-gray-100 text-sm text-gray-500">
+                Track material purchases and daily site expenditures.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* VIEW: BOQ HUB (List or Details) */}
+        {activeTab === 'boqs' && (
+          <>
+            {/* If a specific BOQ is NOT selected, show the Grid List */}
+            {!selectedBOQ ? (
+              <div className="bg-white border border-gray-100 rounded-3xl p-6 shadow-sm animate-in fade-in duration-300">
+                <h3 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-2">
+                  <span className="text-2xl">🏗️</span> Your Saved BOQ Estimates
+                </h3>
                 
-                <div className="space-y-6">
-                  {/* Feature Profile Toggle */}
-                  <div className="bg-gray-900 border-2 border-gray-700 p-4">
-                    <div className="flex justify-between items-start mb-2">
-                      <h3 className="font-black uppercase text-sm">Directory Visibility</h3>
-                      <span className={`text-[10px] font-black uppercase px-2 py-1 ${userData?.isFeatured ? 'bg-[#22c55e] text-black' : 'bg-gray-700 text-gray-300'}`}>
-                        {userData?.isFeatured ? "Currently Featured" : "Standard Listing"}
-                      </span>
+                {isLoadingData ? (
+                  <p className="text-center text-gray-500 py-10 font-medium">Fetching your projects from the cloud...</p>
+                ) : savedBOQs.length === 0 ? (
+                  <div className="text-center py-10">
+                    <p className="text-gray-500 font-medium mb-4">You haven't saved any BOQ estimates yet.</p>
+                    <a href="/estimate-boq" className="inline-block bg-gray-900 text-white font-semibold px-6 py-2 rounded-xl hover:bg-[#22c55e] transition-colors">Create New BOQ</a>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {savedBOQs.map((boq) => (
+                      <div 
+                        key={boq.id} 
+                        onClick={() => setSelectedBOQ(boq)} // NEW: Opens the detailed report
+                        className="border border-gray-200 rounded-2xl p-5 hover:border-[#22c55e] transition-all group cursor-pointer shadow-sm hover:shadow-md hover:-translate-y-1 bg-white"
+                      >
+                        <div className="flex justify-between items-start mb-4">
+                          <div>
+                            <h4 className="font-bold text-gray-900 text-lg group-hover:text-[#22c55e] transition-colors">{boq.projectName}</h4>
+                            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mt-1">
+                              {new Date(boq.createdAt?.seconds * 1000).toLocaleDateString()}
+                            </p>
+                          </div>
+                          <span className="bg-blue-50 text-blue-600 px-3 py-1 rounded-lg text-xs font-bold">
+                            G+{boq.totalFloors - 1} Structure
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-end border-t border-gray-100 pt-4 mt-4">
+                          <span className="text-sm font-medium text-gray-500">Estimated Cost</span>
+                          <span className="text-xl font-black text-gray-900">₹{boq.grandTotal?.toLocaleString()}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              
+              /* NEW: DETAILED BOQ SHEET VIEW */
+              <div className="animate-in fade-in duration-300 printable-boq">
+                <button 
+                  onClick={() => setSelectedBOQ(null)} 
+                  className="mb-6 text-sm font-bold text-gray-500 hover:text-gray-900 flex items-center gap-2 transition-colors print:hidden bg-white px-4 py-2 rounded-lg border border-gray-200 shadow-sm"
+                >
+                  ⬅ Back to Project List
+                </button>
+
+                <div className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-lg print:shadow-none print:border-none print:p-0">
+                  
+                  {/* Detailed Header */}
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 border-b border-gray-100 pb-6 print:border-b-2">
+                    <div>
+                      <h1 className="text-3xl font-bold text-gray-900 tracking-tight">{selectedBOQ.projectName}</h1>
+                      <div className="flex items-center gap-3 mt-2">
+                        <span className="text-sm font-bold text-gray-500 uppercase tracking-widest">
+                          OkiConstruct Master BOQ
+                        </span>
+                        <span className="text-gray-300">•</span>
+                        <span className="text-sm font-medium text-gray-500">
+                          {new Date(selectedBOQ.createdAt?.seconds * 1000).toLocaleDateString()}
+                        </span>
+                      </div>
                     </div>
-                    <p className="text-xs text-gray-400 font-bold mb-4">Display your profile at the very top of the Expert Directory to attract more clients.</p>
-                    <button onClick={handleToggleFeature} className={`w-full border-2 p-3 font-black uppercase text-sm transition-colors ${userData?.isFeatured ? 'border-red-500 text-red-500 hover:bg-red-500 hover:text-white' : 'border-[#22c55e] text-[#22c55e] hover:bg-[#22c55e] hover:text-black'}`}>
-                      {userData?.isFeatured ? "Remove from Featured" : "Feature My Profile 🌟"}
+                    <button 
+                      onClick={() => window.print()} 
+                      className="mt-4 md:mt-0 bg-gray-900 text-white px-6 py-2.5 rounded-xl font-semibold hover:bg-[#22c55e] transition-colors shadow-md print:hidden flex items-center gap-2"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                      Download PDF
                     </button>
                   </div>
 
-                  {/* Custom Settings Router */}
-                  <div className="bg-gray-900 border-2 border-gray-700 p-4">
-                    <h3 className="font-black uppercase text-sm mb-2">Custom Material Engine</h3>
-                    <p className="text-xs text-gray-400 font-bold mb-4">Override admin defaults. Set your own concrete ratios, TMT bar weights, and structural formulas.</p>
-                    <Link href="/custom-settings" className="block w-full text-center bg-white text-black border-2 border-white p-3 font-black uppercase text-sm hover:bg-gray-200 transition-colors">
-                      Configure Rates ➔
-                    </Link>
+                  {/* Sectional Data Mapping */}
+                  {selectedBOQ.boqData?.floorReports?.map((floor: any, fIdx: number) => (
+                    <div key={fIdx} className="space-y-6 print:break-inside-avoid print:mb-8 mb-10">
+                      <h2 className="text-lg font-bold text-[#15803d] bg-[#22c55e]/10 inline-block px-4 py-2 rounded-xl border border-[#22c55e]/20 print:border-none print:px-0 print:bg-transparent print:text-black print:text-xl">
+                        {floor.floorName}
+                      </h2>
+                      
+                      {floor.sections?.map((section: any, idx: number) => (
+                        <div key={idx} className="border border-gray-100 rounded-2xl overflow-hidden bg-white shadow-sm print:border-b print:rounded-none print:shadow-none print:mb-4">
+                          
+                          <div className="bg-gray-50 p-4 border-b border-gray-100 print:bg-gray-100 print:p-2">
+                            <h3 className="font-bold text-gray-800 text-sm uppercase tracking-wider">{section.title}</h3>
+                          </div>
+                          
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse min-w-[600px] print:min-w-full print:text-sm">
+                              <thead>
+                                <tr className="border-b border-gray-100 print:border-gray-300">
+                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider print:p-2">Material/Service</th>
+                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-center print:p-2">Unit</th>
+                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-center print:p-2">Qty</th>
+                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Rate</th>
+                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Amount</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {section.items?.map((item: any, i: number) => (
+                                  <tr key={i} className="border-b border-gray-50 hover:bg-gray-50 transition-colors print:border-gray-200">
+                                    <td className="p-4 font-semibold text-sm text-gray-900 print:p-2">{item.name}</td>
+                                    <td className="p-4 text-center font-medium text-sm text-gray-500 print:p-2">{item.unit}</td>
+                                    <td className="p-4 text-center font-bold text-sm text-[#22c55e] print:p-2 print:text-black">{item.qty || 0}</td>
+                                    <td className="p-4 text-right font-medium text-sm text-gray-600 print:p-2">₹{item.rate || 0}</td>
+                                    <td className="p-4 text-right font-bold text-sm text-gray-900 print:p-2">₹{Math.ceil((item.qty || 0) * (item.rate || 0)).toLocaleString()}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                              <tfoot>
+                                <tr className="bg-gray-50/50 print:bg-transparent">
+                                  <td colSpan={4} className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Section Subtotal:</td>
+                                  <td className="p-4 font-bold text-base text-gray-900 text-right print:p-2">₹{section.sectionTotal.toLocaleString()}</td>
+                                </tr>
+                              </tfoot>
+                            </table>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                  
+                  {/* Grand Total Block */}
+                  <div className="bg-gray-900 text-white p-8 rounded-2xl text-center shadow-lg mt-12 print:shadow-none print:bg-white print:text-black print:border-2 print:border-black print:break-inside-avoid">
+                    <p className="text-sm font-semibold uppercase tracking-widest text-gray-400 mb-2 print:text-gray-600">Total Project Estimate</p>
+                    <h2 className="text-5xl md:text-6xl font-black text-[#22c55e] print:text-black">
+                      ₹ {Math.ceil(selectedBOQ.boqData?.grandTotal || 0).toLocaleString()}
+                    </h2>
                   </div>
+
                 </div>
               </div>
             )}
-          </div>
+          </>
+        )}
 
-          {/* RIGHT COLUMN: DATA DASHBOARD */}
-          <div className="lg:col-span-8">
-            <div className="bg-white border-4 border-black p-6 lg:p-8 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] min-h-full">
-              <div className="flex justify-between items-end border-b-4 border-black pb-4 mb-6">
-                <h2 className="font-black text-2xl uppercase">Project Workspace</h2>
-                <span className="font-black text-xs uppercase bg-black text-white px-2 py-1">{projects.length} Total</span>
-              </div>
-
-              {projects.length === 0 ? (
-                <div className="py-20 text-center border-4 border-dashed border-gray-300 bg-gray-50">
-                  <h3 className="text-2xl font-black uppercase text-gray-400 mb-2">No Projects Yet</h3>
-                  <p className="font-bold text-gray-500 text-sm max-w-sm mx-auto mb-6">You haven't created any BOQ Estimates or Expenditure tracking ledgers yet.</p>
-                  <div className="flex justify-center gap-4">
-                    <Link href="/estimate-boq" className="bg-black text-white px-6 py-3 font-black uppercase text-sm hover:bg-[#22c55e] hover:text-black transition-colors">Start BOQ</Link>
-                    <Link href="/track-expenditure" className="bg-white text-black border-4 border-black px-6 py-3 font-black uppercase text-sm hover:bg-gray-100 transition-colors shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-y-1">Track Expenses</Link>
-                  </div>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {projects.map((proj) => (
-                    <div key={proj.id} className="border-4 border-black p-5 hover:bg-gray-50 transition-colors group relative">
-                      <div className="flex justify-between items-start mb-4">
-                        <h3 className="font-black text-xl uppercase truncate pr-4">{proj.projectName}</h3>
-                        {proj.isManualTracker ? (
-                          <span title="Manual Ledger" className="text-2xl grayscale group-hover:grayscale-0 transition-all">📊</span>
-                        ) : (
-                          <span title="BOQ Estimate" className="text-2xl grayscale group-hover:grayscale-0 transition-all">🏗️</span>
-                        )}
-                      </div>
-                      
-                      <div className="space-y-1 mb-6">
-                        <p className="text-xs font-black uppercase text-gray-500">Total Budget Limit</p>
-                        <p className="text-lg font-black text-[#22c55e]">₹{(proj.grandTotal || 0).toLocaleString()}</p>
-                      </div>
-
-                      <div className="absolute bottom-4 right-4 text-[10px] font-black uppercase text-gray-400">
-                        {new Date(proj.createdAt?.toMillis() || Date.now()).toLocaleDateString()}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+        {/* VIEW: SAVED LEDGERS LIST */}
+        {activeTab === 'ledgers' && (
+          <div className="bg-white border border-gray-100 rounded-3xl p-6 shadow-sm animate-in fade-in duration-300">
+             <h3 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-2">
+              <span className="text-2xl">📊</span> Your Expense Ledgers
+            </h3>
+            <div className="text-center py-10 border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50">
+                <p className="text-gray-500 font-medium mb-4">Connect this to your Expense Tracking database.</p>
+                <a href="/track-expenditure" className="inline-block bg-gray-900 text-white font-semibold px-6 py-2 rounded-xl hover:bg-orange-500 transition-colors">Start Tracking Expenses</a>
             </div>
           </div>
+        )}
 
-        </div>
       </main>
+
+      {/* --- MESSAGE CENTER MODAL (OVERLAY) --- */}
+      {isMessageCenterOpen && (
+        <div className="fixed inset-0 z-[100] flex justify-end bg-black/20 backdrop-blur-sm print:hidden">
+          <div className="w-full md:w-[450px] bg-white h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-white">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Messages</h2>
+                <p className="text-sm font-medium text-gray-500">Inquiries and project requests</p>
+              </div>
+              <button onClick={() => setIsMessageCenterOpen(false)} className="w-10 h-10 bg-gray-50 rounded-full flex items-center justify-center text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors">✕</button>
+            </div>
+            <div className="flex-grow overflow-y-auto p-4 space-y-2 bg-gray-50">
+              {mockMessages.map((msg) => (
+                <div key={msg.id} className={`p-4 rounded-2xl cursor-pointer transition-colors border ${msg.unread ? 'bg-white border-[#22c55e]/30 shadow-sm' : 'bg-white border-transparent hover:border-gray-200'}`}>
+                  <div className="flex justify-between items-start mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xl">{msg.avatar}</span>
+                      <div>
+                        <h4 className="font-bold text-sm text-gray-900">{msg.sender}</h4>
+                        <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">{msg.role}</span>
+                      </div>
+                    </div>
+                    <span className="text-xs font-medium text-gray-400">{msg.time}</span>
+                  </div>
+                  <p className={`text-sm ${msg.unread ? 'text-gray-900 font-medium' : 'text-gray-500'}`}>{msg.preview}</p>
+                </div>
+              ))}
+            </div>
+            <div className="p-4 border-t border-gray-100 bg-white text-center">
+              <p className="text-xs font-medium text-gray-400">End of messages</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

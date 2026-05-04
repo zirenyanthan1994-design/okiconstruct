@@ -5,6 +5,7 @@ import { collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc, g
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import Navbar from '../components/Navbar';
 
 const CATEGORIES = ["Footing & Foundation", "Plinth Beams", "Roof Beams", "Columns", "Roof Slab", "Staircase Structure", "Masonry, Joining & Plastering", "Doors & Windows", "Flooring & Tiles", "Painting Material", "Master Labor & Services", "Miscellaneous"];
 const UNITS = ["NOS", "BAG", "CFT", "SQFT", "LITER", "KG", "RFT", "%", "Lumbsum", "Meter", "Feet", "Inch", "Box", "Piece", "Milimeter", "CUM", "SQ/MT", "Matric Ton"];
@@ -18,15 +19,13 @@ const INITIAL_FORM = {
 export default function TrackExpenditure() {
   const router = useRouter();
   
-  // --- STATE ---
-  const [user, setUser] = useState<any>(null); // Re-added strict user tracking
+  const [user, setUser] = useState<any>(null); 
   const [userData, setUserData] = useState<any>(null);
   
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProject, setSelectedProject] = useState<any>(null);
   const [expenses, setExpenses] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectBudget, setNewProjectBudget] = useState("");
@@ -35,21 +34,18 @@ export default function TrackExpenditure() {
   const [expenseForm, setExpenseForm] = useState(INITIAL_FORM);
   const [isCreating, setIsCreating] = useState(false);
 
-  // --- INITIALIZATION ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
-        // Fetch User Tier
         const docRef = doc(db, "users", currentUser.uid);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
           setUserData(docSnap.data());
         }
-        // Fetch Projects
         fetchProjects(currentUser.uid);
       } else {
-        router.push('/dashboard');
+        router.push('/');
       }
     });
     return () => unsubscribe();
@@ -69,7 +65,6 @@ export default function TrackExpenditure() {
     }
   };
 
-  // LIVE REAL-TIME LISTENER
   useEffect(() => {
     if (!selectedProject) { 
       setExpenses([]); 
@@ -79,7 +74,10 @@ export default function TrackExpenditure() {
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const fetchedExpenses: any[] = [];
       querySnapshot.forEach((d) => fetchedExpenses.push({ id: d.id, ...d.data() }));
-      fetchedExpenses.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      
+      // Explicitly typed (a: any, b: any) to prevent TS build errors
+      fetchedExpenses.sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      
       setExpenses(fetchedExpenses);
     }, (error) => {
       console.error("Live Sync Error:", error.message);
@@ -87,12 +85,6 @@ export default function TrackExpenditure() {
     
     return () => unsubscribe();
   }, [selectedProject]);
-
-  // --- ACTION HANDLERS ---
-  const handleLogout = async () => {
-    await signOut(auth);
-    router.push('/dashboard');
-  };
 
   const handleProjectSelect = (e: any) => {
     const val = e.target.value;
@@ -183,15 +175,18 @@ export default function TrackExpenditure() {
     await deleteDoc(doc(db, "boq_projects", selectedProject.id, "expenses", expId));
   };
 
-  // --- UI RENDERING ---
-  if (isLoading) return <div className="min-h-screen flex items-center justify-center font-black text-2xl uppercase">Loading Tracker...</div>;
+  const inputStyle = "w-full border border-gray-200 bg-gray-50 rounded-xl p-3 md:p-4 text-gray-900 font-medium focus:bg-white focus:ring-2 focus:ring-[#22c55e]/30 focus:border-[#22c55e] transition-all outline-none";
+  const selectStyle = `${inputStyle} cursor-pointer appearance-none`;
+  const labelStyle = "text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block";
+
+  if (isLoading) return <div className="min-h-screen flex items-center justify-center font-medium text-gray-500 bg-gray-50">Loading Tracker...</div>;
 
   const isPremium = userData?.tier === 'premium';
   const estimatedBudget = selectedProject?.grandTotal || 0;
   
-  // Safe math calculations (prevents crashes from old data)
-  const actualTotalSpent = expenses.reduce((sum, exp) => sum + (Number(exp.actualAmount) || 0), 0);
-  const billableTotalSpent = expenses.reduce((sum, exp) => sum + (Number(exp.billableAmount) || 0), 0);
+  // Explicitly typed (sum: number, exp: any) for TS strictness
+  const actualTotalSpent = expenses.reduce((sum: number, exp: any) => sum + (Number(exp.actualAmount) || 0), 0);
+  const billableTotalSpent = expenses.reduce((sum: number, exp: any) => sum + (Number(exp.billableAmount) || 0), 0);
 
   const groupedExpenses = CATEGORIES.reduce((acc: any, cat) => {
     const items = expenses.filter(e => e.category === cat);
@@ -202,15 +197,32 @@ export default function TrackExpenditure() {
   // === CLIENT INVOICE VIEW (PREMIUM) ===
   if (isClientView && selectedProject) {
     return (
-      <main className="max-w-5xl mx-auto p-8 mt-10 bg-white border-4 border-black shadow-[10px_10px_0px_0px_rgba(0,0,0,1)] print:shadow-none print:border-none print:p-0">
-        <div className="flex justify-between items-end border-b-8 border-black pb-6 mb-8">
-          <div>
-            <h1 className="text-4xl font-black uppercase">Project Billing Summary</h1>
-            <h2 className="text-xl font-bold text-gray-500 mt-2">{selectedProject.projectName}</h2>
-          </div>
-          <div className="text-right">
-            <p className="text-sm font-black uppercase text-gray-500">Date Generated</p>
-            <p className="text-lg font-bold">{new Date().toLocaleDateString()}</p>
+      <main className="max-w-5xl mx-auto p-4 md:p-10 my-10 bg-white border border-gray-100 rounded-3xl shadow-xl print:shadow-none print:border-none print:p-0 print:my-0 animate-in fade-in duration-300">
+        
+        {/* PREMIUM BRANDING HEADER */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-gray-200 pb-6 mb-8 print:border-b-2 print:border-gray-300">
+          {isPremium ? (
+            <div className="flex items-center gap-4 text-left">
+              {userData?.avatar && userData.avatar.length > 5 ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img src={userData.avatar} alt="Business Logo" className="w-16 h-16 object-cover rounded-xl border border-gray-200 shadow-sm" />
+              ) : (
+                <span className="text-4xl bg-gray-50 p-3 rounded-xl border border-gray-100">{userData?.avatar || "🏢"}</span>
+              )}
+              <div>
+                <h1 className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight uppercase">{userData?.name}</h1>
+                <p className="text-gray-500 font-bold tracking-widest text-xs uppercase mt-1">Official Project Ledger • 📞 {userData?.phone}</p>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Project Billing Summary</h1>
+              <p className="text-gray-500 font-bold tracking-widest text-xs uppercase mt-1">OkiConstruct Master Ledger</p>
+            </div>
+          )}
+          <div className="mt-4 md:mt-0 text-left md:text-right">
+            <h2 className="text-xl font-bold text-gray-900">{selectedProject.projectName}</h2>
+            <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mt-1">Date Generated: {new Date().toLocaleDateString()}</p>
           </div>
         </div>
         
@@ -218,49 +230,56 @@ export default function TrackExpenditure() {
           const sectionTotal = groupedExpenses[cat].reduce((sum: number, exp: any) => sum + (Number(exp.billableAmount) || 0), 0);
           return (
             <div key={cat} className="mb-10 print:break-inside-avoid">
-              <div className="bg-gray-100 p-2 border-l-8 border-[#22c55e] mb-4">
-                <h3 className="font-black uppercase text-lg ml-2">{cat}</h3>
+              <div className="bg-green-50/50 p-3 rounded-xl border border-green-100 mb-4 inline-block">
+                <h3 className="font-bold text-[#15803d] text-sm uppercase tracking-wider">{cat}</h3>
               </div>
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b-2 border-black">
-                    <th className="p-2 font-black text-xs uppercase">Date</th>
-                    <th className="p-2 font-black text-xs uppercase">Material/Service</th>
-                    <th className="p-2 font-black text-xs uppercase text-center">Unit</th>
-                    <th className="p-2 font-black text-xs uppercase text-right">Qty</th>
-                    <th className="p-2 font-black text-xs uppercase text-right">Rate</th>
-                    <th className="p-2 font-black text-xs uppercase text-right">Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {groupedExpenses[cat].map((exp: any) => (
-                    <tr key={exp.id} className="border-b border-gray-300">
-                      <td className="p-2 text-sm">{new Date(exp.date).toLocaleDateString()}</td>
-                      <td className="p-2 text-sm font-bold">{exp.materialName}</td>
-                      <td className="p-2 text-sm text-center">{exp.unit}</td>
-                      <td className="p-2 text-sm text-right">{exp.billableQty || exp.qty}</td>
-                      <td className="p-2 text-sm text-right">₹{(Number(exp.billableRate) || 0).toLocaleString()}</td>
-                      <td className="p-2 text-sm font-black text-right">₹{(Number(exp.billableAmount) || 0).toLocaleString()}</td>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[600px]">
+                  <thead>
+                    <tr className="border-b border-gray-200">
+                      <th className="p-3 font-semibold text-xs text-gray-500 uppercase tracking-wider">Date</th>
+                      <th className="p-3 font-semibold text-xs text-gray-500 uppercase tracking-wider">Material/Service</th>
+                      <th className="p-3 font-semibold text-xs text-gray-500 uppercase tracking-wider text-center">Unit</th>
+                      <th className="p-3 font-semibold text-xs text-gray-500 uppercase tracking-wider text-right">Qty</th>
+                      <th className="p-3 font-semibold text-xs text-gray-500 uppercase tracking-wider text-right">Rate</th>
+                      <th className="p-3 font-semibold text-xs text-gray-500 uppercase tracking-wider text-right">Amount</th>
                     </tr>
-                  ))}
-                  <tr className="bg-gray-50">
-                    <td colSpan={5} className="p-2 text-right font-black text-sm uppercase">Section Total:</td>
-                    <td className="p-2 text-right font-black text-lg">₹{sectionTotal.toLocaleString()}</td>
-                  </tr>
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {groupedExpenses[cat].map((exp: any) => (
+                      <tr key={exp.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors print:border-gray-100">
+                        <td className="p-3 text-sm text-gray-600">{new Date(exp.date).toLocaleDateString()}</td>
+                        <td className="p-3 text-sm font-semibold text-gray-900">{exp.materialName}</td>
+                        <td className="p-3 text-sm text-center text-gray-500">{exp.unit}</td>
+                        <td className="p-3 text-sm text-right text-gray-900">{exp.billableQty || exp.qty}</td>
+                        <td className="p-3 text-sm text-right text-gray-600">₹{(Number(exp.billableRate) || 0).toLocaleString()}</td>
+                        <td className="p-3 text-sm font-bold text-gray-900 text-right">₹{(Number(exp.billableAmount) || 0).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                    <tr className="bg-gray-50/50 print:bg-transparent">
+                      <td colSpan={5} className="p-4 text-right font-semibold text-xs text-gray-500 uppercase tracking-wider">Section Total:</td>
+                      <td className="p-4 text-right font-bold text-lg text-gray-900">₹{sectionTotal.toLocaleString()}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           );
         })}
         
-        <div className="mt-12 bg-black text-white p-6 flex justify-between items-center print:break-inside-avoid">
-          <span className="text-2xl font-black uppercase">Grand Total Due:</span>
-          <span className="text-4xl font-black text-[#22c55e]">₹{billableTotalSpent.toLocaleString()}</span>
+        <div className="mt-12 bg-gray-900 text-white p-8 rounded-2xl flex flex-col md:flex-row justify-between items-center shadow-lg print:break-inside-avoid print:bg-white print:text-black print:border-2 print:border-gray-300 print:shadow-none gap-4">
+          <span className="text-sm font-semibold uppercase tracking-widest text-gray-400 print:text-gray-600">Grand Total Due</span>
+          <span className="text-4xl md:text-5xl font-black text-[#22c55e] print:text-black">₹{billableTotalSpent.toLocaleString()}</span>
         </div>
         
-        <div className="mt-10 flex gap-4 print:hidden">
-          <button onClick={() => setIsClientView(false)} className="flex-1 border-4 border-black p-4 font-black uppercase hover:bg-gray-100">Back to Ledger</button>
-          <button onClick={() => window.print()} className="flex-1 bg-[#22c55e] border-4 border-black p-4 font-black uppercase hover:bg-black hover:text-white transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">Download / Print Bill</button>
+        <div className="mt-10 flex flex-col md:flex-row gap-4 print:hidden">
+          <button onClick={() => setIsClientView(false)} className="flex-1 border border-gray-200 text-gray-600 font-semibold p-4 rounded-xl hover:bg-gray-50 transition-colors">
+            ⬅ Back to Ledger
+          </button>
+          <button onClick={() => window.print()} className="flex-[2] bg-[#22c55e] text-white p-4 font-bold text-lg rounded-xl hover:bg-[#1ea950] transition-colors shadow-md flex items-center justify-center gap-2">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+            Download / Print Bill
+          </button>
         </div>
       </main>
     );
@@ -268,224 +287,232 @@ export default function TrackExpenditure() {
 
   // === MASTER TRACKING VIEW ===
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col pb-20">
-      
-      {/* 1. MASTER HEADER */}
-      <header className="bg-black text-white border-b-4 border-black sticky top-0 z-50">
-        {/* Header Bar */}
-        <div className="max-w-[1400px] mx-auto px-4 md:px-6 h-20 flex justify-between items-center bg-black relative z-50">
-          
-          {/* Logo */}
-          <Link href="/dashboard" className="font-black text-2xl tracking-tighter cursor-pointer hover:opacity-80 transition-opacity">
-            <span className="text-white">OKI</span><span className="text-[#22c55e]">CONSTRUCT</span>
-          </Link>
+    <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
+      <Navbar />
 
-          {/* Universal Menu Button (Visible on ALL screens) */}
-          <button 
-            className="flex items-center gap-2 text-white font-black text-xl hover:text-[#22c55e] transition-colors"
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-          >
-            <span className="text-sm tracking-widest uppercase hidden md:inline-block">Menu</span>
-            <span className="text-2xl">{isMobileMenuOpen ? "✕" : "☰"}</span>
-          </button>
+      <main className="max-w-[1400px] mx-auto p-4 md:p-8 mt-4 w-full flex-grow animate-in fade-in duration-500">
+        
+        <div className="bg-white border border-gray-100 rounded-3xl p-6 md:p-8 shadow-sm flex flex-col md:flex-row justify-between md:items-center gap-6 mb-8">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-bold text-gray-900 tracking-tight flex items-center gap-3">
+              <span className="text-3xl">📊</span> Project Ledger
+            </h1>
+            <p className="text-gray-500 font-medium mt-1 text-sm uppercase tracking-widest">
+              OkiConstruct Expense Tracking
+            </p>
+          </div>
+          
+          <div className="w-full md:w-80 relative">
+            <select 
+              className={selectStyle} 
+              value={selectedProject ? selectedProject.id : ""} 
+              onChange={handleProjectSelect}
+            >
+              <option value="" disabled>-- Select a Project --</option>
+              <option value="NEW_PROJECT" className="font-bold text-[#22c55e]">＋ Create New Blank Project</option>
+              {projects.map(p => <option key={p.id} value={p.id}>{p.projectName}</option>)}
+            </select>
+            <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-sm">▼</div>
+          </div>
         </div>
 
-        {/* Universal Dropdown Drawer */}
-        {isMobileMenuOpen && (
-          <nav className="absolute top-full left-0 w-full bg-gray-900 border-b-4 border-black flex flex-col p-6 gap-4 animate-in slide-in-from-top-2 shadow-[0px_10px_0px_0px_rgba(0,0,0,1)] z-40">
-            <div className="max-w-[1400px] mx-auto w-full flex flex-col gap-4">
-              <Link href="/estimate-boq" className="font-black text-sm md:text-base uppercase hover:text-[#22c55e] border-b border-gray-800 pb-3 transition-colors">Estimate BOQ</Link>
-              <Link href="/track-expenditure" className="font-black text-sm md:text-base uppercase hover:text-[#22c55e] border-b border-gray-800 pb-3 transition-colors">Track Expenditure</Link>
-              <Link href="/contact-experts" className="font-black text-sm md:text-base uppercase hover:text-[#22c55e] border-b border-gray-800 pb-3 transition-colors">Contact Experts</Link>
-              
-              {isPremium && (
-                <Link href="/custom-settings" className="font-black text-sm md:text-base uppercase text-[#22c55e] border-b border-gray-800 pb-3 hover:text-white transition-colors">
-                  ⚙️ Custom Rates
-                </Link>
-              )}
-              
-              <Link href="/profile" className="font-black text-sm md:text-base uppercase text-gray-300 hover:text-white border-b border-gray-800 pb-3 transition-colors">My Profile</Link>
-              
-              <button onClick={handleLogout} className="font-black text-sm md:text-base uppercase text-red-500 text-left pt-2 hover:text-white transition-colors w-fit">
-                Logout ➔
-              </button>
-            </div>
-          </nav>
-        )}
-      </header>
-
-      <main className="max-w-[1400px] mx-auto p-4 md:p-6 mt-10 w-full flex-grow">
-        <div className="bg-white border-4 border-black p-6 shadow-[10px_10px_0px_0px_rgba(0,0,0,1)]">
+        {!selectedProject ? (
           
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 border-b-8 border-black pb-6">
-            <div>
-              <h1 className="text-4xl font-black uppercase text-black">Project Ledger</h1>
-              <p className="text-sm font-bold text-gray-500 tracking-widest mt-1">OKICONSTRUCT EXPENSE TRACKING</p>
-            </div>
-            <div className="mt-4 md:mt-0 w-full md:w-1/3">
-              <select className="w-full border-4 border-black p-4 font-black text-xl bg-gray-50 hover:bg-gray-100 outline-none cursor-pointer" value={selectedProject ? selectedProject.id : ""} onChange={handleProjectSelect}>
-                <option value="" disabled>-- SELECT A PROJECT --</option>
-                <option value="NEW_PROJECT" className="font-black text-[#22c55e] bg-black">＋ CREATE NEW PROJECT</option>
-                {projects.map(p => <option key={p.id} value={p.id}>{p.projectName}</option>)}
-              </select>
+          <div className="py-10 text-center animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <h2 className="text-3xl font-bold text-gray-900 mb-3">Start Tracking</h2>
+            <p className="text-gray-500 font-medium mb-10 max-w-xl mx-auto">
+              Select an existing project from the dropdown above, or create a brand new ledger to start tracking your expenses instantly.
+            </p>
+            
+            <div className="max-w-md mx-auto bg-white border border-gray-100 rounded-3xl p-8 text-left shadow-lg relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-[#22c55e] to-[#16a34a]"></div>
+              
+              <h3 className="font-bold text-xl text-gray-900 mb-6">Create Blank Project</h3>
+              
+              <form onSubmit={handleCreateStandaloneProject} className="space-y-6">
+                <div>
+                  <label className={labelStyle}>Project Name</label>
+                  <input type="text" required placeholder="e.g. Smith Residence" className={inputStyle} value={newProjectName} onChange={e => setNewProjectName(e.target.value)} />
+                </div>
+                <div>
+                  <label className={labelStyle}>Overall Budget Limit (Optional)</label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">₹</span>
+                    <input type="number" inputMode="decimal" min="0" placeholder="0" className={`${inputStyle} pl-8`} value={newProjectBudget} onChange={e => setNewProjectBudget(e.target.value)} />
+                  </div>
+                </div>
+                <button type="submit" disabled={isCreating} className={`w-full text-white font-semibold text-lg p-4 rounded-xl shadow-md flex justify-center items-center gap-2 transition-all ${isCreating ? 'bg-gray-400 opacity-70 cursor-not-allowed' : 'bg-gray-900 hover:bg-[#22c55e]'}`}>
+                  {isCreating ? "Creating Tracker..." : <>Create & Open Ledger <span className="text-xl">➔</span></>}
+                </button>
+              </form>
             </div>
           </div>
 
-          {!selectedProject ? (
-            <div className="py-12 px-4 text-center animate-in fade-in zoom-in duration-300">
-              <h2 className="text-3xl md:text-5xl font-black uppercase mb-4 text-black">Start Tracking</h2>
-              <p className="text-lg font-bold text-gray-500 mb-10 max-w-2xl mx-auto">Select an existing project or create a brand new ledger to start tracking your expenses instantly.</p>
+        ) : (
+
+          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            
+            <div className="bg-white border border-gray-100 rounded-3xl p-6 md:p-8 shadow-sm print:hidden">
+              <h2 className="font-bold text-xl text-gray-900 mb-6 flex items-center gap-2">
+                <span className="bg-green-50 text-[#22c55e] w-8 h-8 rounded-lg flex items-center justify-center text-sm">
+                  {editingId ? "✏️" : "➕"}
+                </span>
+                {editingId ? "Update Entry" : "Add Expenditure"}
+              </h2>
               
-              <div className="max-w-md mx-auto bg-gray-50 border-4 border-black p-8 text-left shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
-                <h3 className="font-black text-xl uppercase mb-6 border-b-4 border-[#22c55e] pb-2 inline-block">Create Blank Project</h3>
-                <form onSubmit={handleCreateStandaloneProject} className="space-y-6">
-                  <div>
-                    <label className="text-xs font-black uppercase tracking-widest text-gray-600">Project Name</label>
-                    <input type="text" required placeholder="e.g. Smith Residence" className="w-full border-4 border-black p-3 font-bold mt-1 bg-white" value={newProjectName} onChange={e => setNewProjectName(e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="text-xs font-black uppercase tracking-widest text-gray-600">Overall Budget Limit (Optional)</label>
-                    <input type="number" placeholder="0" className="w-full border-4 border-black p-3 font-bold mt-1 bg-white" value={newProjectBudget} onChange={e => setNewProjectBudget(e.target.value)} />
-                  </div>
-                  <button type="submit" disabled={isCreating} className={`w-full text-black border-4 border-black p-4 font-black uppercase text-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] ${isCreating ? 'bg-gray-400 opacity-70 cursor-not-allowed' : 'bg-[#22c55e] hover:bg-black hover:text-[#22c55e] hover:shadow-none hover:translate-y-1 transition-colors'}`}>
-                    {isCreating ? "Creating Tracker..." : "Create & Open Ledger ➔"}
-                  </button>
-                </form>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-10 animate-in fade-in duration-500">
-              
-              {/* THE DATA ENTRY ROW */}
-              <div className="bg-gray-50 border-4 border-black p-6 print:hidden">
-                <h2 className="font-black text-xl uppercase mb-4 text-[#22c55e] border-b-4 border-black inline-block pb-1">
-                  {editingId ? "Update Entry" : "Add Expenditure"}
-                </h2>
-                
-                <form onSubmit={handleSubmitExpense} className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-end">
-                  <div className="lg:col-span-2">
-                    <label className="text-[10px] font-black uppercase tracking-widest">Date</label>
-                    <input type="date" required className="w-full border-2 border-black p-2 font-bold cursor-pointer" value={expenseForm.date} onChange={e => setExpenseForm({...expenseForm, date: e.target.value})} />
-                  </div>
-                  <div className="lg:col-span-3">
-                    <label className="text-[10px] font-black uppercase tracking-widest">Material / Service</label>
-                    <input type="text" required placeholder="e.g. Portland Cement" className="w-full border-2 border-black p-2 font-bold" value={expenseForm.materialName} onChange={e => setExpenseForm({...expenseForm, materialName: e.target.value})} />
-                  </div>
-                  <div className="lg:col-span-3">
-                    <label className="text-[10px] font-black uppercase tracking-widest">Category</label>
-                    <select className="w-full border-2 border-black p-2 font-bold bg-white cursor-pointer" value={expenseForm.category} onChange={e => setExpenseForm({...expenseForm, category: e.target.value})}>
+              <form onSubmit={handleSubmitExpense} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-4 lg:gap-6 items-end">
+                <div className="lg:col-span-2">
+                  <label className={labelStyle}>Date</label>
+                  <input type="date" required className={inputStyle} value={expenseForm.date} onChange={e => setExpenseForm({...expenseForm, date: e.target.value})} />
+                </div>
+                <div className="lg:col-span-3">
+                  <label className={labelStyle}>Material / Service</label>
+                  <input type="text" required placeholder="e.g. Portland Cement" className={inputStyle} value={expenseForm.materialName} onChange={e => setExpenseForm({...expenseForm, materialName: e.target.value})} />
+                </div>
+                <div className="lg:col-span-3">
+                  <label className={labelStyle}>Category</label>
+                  <div className="relative">
+                    <select className={selectStyle} value={expenseForm.category} onChange={e => setExpenseForm({...expenseForm, category: e.target.value})}>
                       {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-sm">▼</div>
                   </div>
-                  <div className="lg:col-span-2">
-                    <label className="text-[10px] font-black uppercase tracking-widest">Unit</label>
-                    <select className="w-full border-2 border-black p-2 font-bold bg-white cursor-pointer" value={expenseForm.unit} onChange={e => setExpenseForm({...expenseForm, unit: e.target.value})}>
+                </div>
+                <div className="lg:col-span-2">
+                  <label className={labelStyle}>Unit</label>
+                  <div className="relative">
+                    <select className={selectStyle} value={expenseForm.unit} onChange={e => setExpenseForm({...expenseForm, unit: e.target.value})}>
                       {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
                     </select>
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-sm">▼</div>
                   </div>
-
-                  <div className="col-span-full border-t-2 border-gray-300 my-2 lg:hidden"></div>
-
-                  <div className="lg:col-span-2">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-red-600">{isPremium ? 'Actual Qty' : 'Qty'}</label>
-                    <input type="number" required inputMode="decimal" min="0" step="any" placeholder="0" className="w-full border-2 border-black p-2 font-black text-red-600" value={expenseForm.qty} onChange={e => setExpenseForm({...expenseForm, qty: e.target.value})} />
-                  </div>
-                  <div className="lg:col-span-2">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-red-600">{isPremium ? 'Actual Rate' : 'Rate'}</label>
-                    <input type="number" required inputMode="decimal" min="0" step="any" placeholder="0" className="w-full border-2 border-black p-2 font-black text-red-600" value={expenseForm.rate} onChange={e => setExpenseForm({...expenseForm, rate: e.target.value})} />
-                  </div>
-
-                  {isPremium && (
-                    <>
-                      <div className="lg:col-span-2 bg-[#22c55e]/10 p-2 border-2 border-black">
-                        <label className="text-[10px] font-black uppercase text-[#22c55e]">Billable Qty</label>
-                        <input type="number" inputMode="decimal" min="0" step="any" placeholder="Auto" className="w-full border-2 border-black p-1 font-black bg-white" value={expenseForm.billableQty} onChange={e => setExpenseForm({...expenseForm, billableQty: e.target.value})} />
-                      </div>
-                      <div className="lg:col-span-2 bg-[#22c55e]/10 p-2 border-2 border-black">
-                        <label className="text-[10px] font-black uppercase text-[#22c55e]">Billable Rate</label>
-                        <input type="number" inputMode="decimal" min="0" step="any" placeholder="Auto" className="w-full border-2 border-black p-1 font-black bg-white" value={expenseForm.billableRate} onChange={e => setExpenseForm({...expenseForm, billableRate: e.target.value})} />
-                      </div>
-                    </>
-                  )}
-
-                  <div className="lg:col-span-2">
-                    <button type="submit" className={`w-full text-white border-4 border-black p-3 font-black uppercase transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-y-1 ${editingId ? 'bg-blue-600' : 'bg-black hover:bg-[#22c55e] hover:text-black'}`}>
-                      {editingId ? 'Save' : 'ADD +'}
-                    </button>
-                    {editingId && (
-                      <button type="button" onClick={() => {setEditingId(null); setExpenseForm(INITIAL_FORM)}} className="w-full mt-2 text-xs font-black uppercase text-gray-500 hover:text-black">Cancel</button>
-                    )}
-                  </div>
-                </form>
-              </div>
-
-              {/* FINANCIAL SUMMARY */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="border-4 border-black p-6 bg-gray-100 flex flex-col justify-center">
-                  <span className="text-xs font-black uppercase tracking-widest text-gray-500 mb-1">Project Estimate Limit</span>
-                  <span className="text-3xl font-black">₹{estimatedBudget.toLocaleString()}</span>
                 </div>
-                <div className="border-4 border-black p-6 bg-black text-white flex flex-col justify-center shadow-[6px_6px_0px_0px_rgba(220,38,38,1)]">
-                  <span className="text-xs font-black uppercase tracking-widest text-gray-400 mb-1">Actual Expenditure</span>
-                  <span className="text-4xl font-black text-red-500">₹{actualTotalSpent.toLocaleString()}</span>
-                </div>
-                {isPremium ? (
-                  <div className="border-4 border-black p-6 bg-[#22c55e] text-black flex flex-col justify-center shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
-                    <span className="text-xs font-black uppercase tracking-widest text-black/70 mb-1">Client Billable Total</span>
-                    <span className="text-4xl font-black text-white">₹{billableTotalSpent.toLocaleString()}</span>
-                    <span className="text-xs font-black mt-2 bg-black text-white px-2 py-1 inline-block w-fit">
-                      PROFIT MARGIN: ₹{(billableTotalSpent - actualTotalSpent).toLocaleString()}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="border-4 border-black p-6 bg-white flex flex-col justify-center">
-                    <span className="text-xs font-black uppercase tracking-widest text-gray-500 mb-1">Budget Remaining</span>
-                    <span className={`text-3xl font-black ${estimatedBudget - actualTotalSpent < 0 ? 'text-red-600' : 'text-[#22c55e]'}`}>
-                      ₹{(estimatedBudget - actualTotalSpent).toLocaleString()}
-                    </span>
-                  </div>
-                )}
-              </div>
 
-              <div className="flex gap-4 print:hidden">
-                <button onClick={() => window.print()} className="bg-white text-black border-4 border-black px-6 py-3 font-black uppercase hover:bg-gray-100 transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-y-1">
-                  Print Ledger
-                </button>
+                <div className="col-span-full border-t border-gray-100 my-2 lg:hidden"></div>
+
+                <div className="lg:col-span-2">
+                  <label className={`text-xs font-bold uppercase tracking-wider mb-2 block ${isPremium ? 'text-red-500' : 'text-gray-500'}`}>{isPremium ? 'Act Qty' : 'Qty'}</label>
+                  <input type="number" required inputMode="decimal" min="0" step="any" placeholder="0" className={`${inputStyle} ${isPremium ? 'border-red-100 bg-red-50 focus:ring-red-200 focus:border-red-300' : ''}`} value={expenseForm.qty} onChange={e => setExpenseForm({...expenseForm, qty: e.target.value})} />
+                </div>
+                <div className="lg:col-span-2">
+                  <label className={`text-xs font-bold uppercase tracking-wider mb-2 block ${isPremium ? 'text-red-500' : 'text-gray-500'}`}>{isPremium ? 'Act Rate' : 'Rate'}</label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">₹</span>
+                    <input type="number" required inputMode="decimal" min="0" step="any" placeholder="0" className={`${inputStyle} pl-8 ${isPremium ? 'border-red-100 bg-red-50 focus:ring-red-200 focus:border-red-300' : ''}`} value={expenseForm.rate} onChange={e => setExpenseForm({...expenseForm, rate: e.target.value})} />
+                  </div>
+                </div>
+
                 {isPremium && (
-                  <button onClick={() => setIsClientView(true)} className="bg-black text-[#22c55e] border-4 border-black px-6 py-3 font-black uppercase hover:bg-[#22c55e] hover:text-black transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-y-1">
-                    Preview Client Bill ➔
-                  </button>
+                  <>
+                    <div className="lg:col-span-2">
+                      <label className="text-xs font-bold text-[#22c55e] uppercase tracking-wider mb-2 block">Bill Qty</label>
+                      <input type="number" inputMode="decimal" min="0" step="any" placeholder="Auto" className={`${inputStyle} border-green-200 bg-green-50 focus:ring-green-200 focus:border-[#22c55e]`} value={expenseForm.billableQty} onChange={e => setExpenseForm({...expenseForm, billableQty: e.target.value})} />
+                    </div>
+                    <div className="lg:col-span-2">
+                      <label className="text-xs font-bold text-[#22c55e] uppercase tracking-wider mb-2 block">Bill Rate</label>
+                      <div className="relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#22c55e] font-medium">₹</span>
+                        <input type="number" inputMode="decimal" min="0" step="any" placeholder="Auto" className={`${inputStyle} pl-8 border-green-200 bg-green-50 focus:ring-green-200 focus:border-[#22c55e]`} value={expenseForm.billableRate} onChange={e => setExpenseForm({...expenseForm, billableRate: e.target.value})} />
+                      </div>
+                    </div>
+                  </>
                 )}
+
+                <div className={`lg:col-span-${isPremium ? '4' : '8'} flex flex-col justify-end`}>
+                  <button type="submit" className={`w-full text-white p-4 rounded-xl font-bold transition-all shadow-md flex items-center justify-center gap-2 ${editingId ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-900 hover:bg-[#22c55e]'}`}>
+                    {editingId ? 'Save Update' : <>Add Expense <span>+</span></>}
+                  </button>
+                  {editingId && (
+                    <button type="button" onClick={() => {setEditingId(null); setExpenseForm(INITIAL_FORM)}} className="w-full mt-3 text-sm font-semibold text-gray-500 hover:text-gray-900 transition-colors">Cancel Edit</button>
+                  )}
+                </div>
+              </form>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              
+              <div className="bg-white border border-gray-100 rounded-3xl p-6 shadow-sm flex flex-col justify-center">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-sm">🎯</div>
+                  <span className="text-xs font-bold uppercase tracking-widest text-gray-500">Project Budget limit</span>
+                </div>
+                <span className="text-3xl font-black text-gray-900">₹{estimatedBudget.toLocaleString()}</span>
+              </div>
+              
+              <div className="bg-red-50 border border-red-100 rounded-3xl p-6 shadow-sm flex flex-col justify-center">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="w-8 h-8 rounded-full bg-red-100 text-red-600 flex items-center justify-center text-sm">📉</div>
+                  <span className="text-xs font-bold uppercase tracking-widest text-red-600">Actual Expenditure</span>
+                </div>
+                <span className="text-4xl font-black text-red-600">₹{actualTotalSpent.toLocaleString()}</span>
               </div>
 
-              {/* TABLE */}
-              <div className="mt-10 overflow-x-auto border-4 border-black bg-white">
+              {isPremium ? (
+                <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6 shadow-lg flex flex-col justify-center relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-[#22c55e]/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
+                  <div className="flex items-center gap-3 mb-2 relative z-10">
+                    <div className="w-8 h-8 rounded-full bg-[#22c55e]/20 text-[#22c55e] flex items-center justify-center text-sm">📈</div>
+                    <span className="text-xs font-bold uppercase tracking-widest text-gray-400">Client Billable Total</span>
+                  </div>
+                  <span className="text-4xl font-black text-[#22c55e] relative z-10">₹{billableTotalSpent.toLocaleString()}</span>
+                  <span className="text-xs font-bold mt-3 bg-white/10 text-white px-3 py-1.5 rounded-lg inline-block w-fit backdrop-blur-md relative z-10">
+                    PROFIT MARGIN: ₹{(billableTotalSpent - actualTotalSpent).toLocaleString()}
+                  </span>
+                </div>
+              ) : (
+                <div className="bg-white border border-gray-100 rounded-3xl p-6 shadow-sm flex flex-col justify-center">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-8 h-8 rounded-full bg-blue-50 text-blue-500 flex items-center justify-center text-sm">⚖️</div>
+                    <span className="text-xs font-bold uppercase tracking-widest text-gray-500">Budget Remaining</span>
+                  </div>
+                  <span className={`text-3xl font-black ${estimatedBudget - actualTotalSpent < 0 ? 'text-red-600' : 'text-[#22c55e]'}`}>
+                    ₹{(estimatedBudget - actualTotalSpent).toLocaleString()}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col md:flex-row gap-4 print:hidden">
+              <button onClick={() => window.print()} className="bg-white text-gray-700 border border-gray-200 rounded-xl px-6 py-4 font-bold hover:bg-gray-50 transition-colors shadow-sm flex items-center justify-center gap-2 flex-1 md:flex-none">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                Print Internal Ledger
+              </button>
+              {isPremium && (
+                <button onClick={() => setIsClientView(true)} className="bg-[#22c55e] text-white rounded-xl px-6 py-4 font-bold hover:bg-[#1ea950] transition-colors shadow-md flex items-center justify-center gap-2 flex-1 md:flex-none">
+                  Preview Client Bill ➔
+                </button>
+              )}
+            </div>
+
+            <div className="border border-gray-200 rounded-3xl bg-white shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse min-w-[900px]">
                   <thead>
-                    <tr className="bg-black text-white">
-                      <th className="p-3 font-black text-xs uppercase border-r-2 border-gray-600">Date</th>
-                      <th className="p-3 font-black text-xs uppercase border-r-2 border-gray-600">Material</th>
-                      <th className="p-3 font-black text-xs uppercase border-r-2 border-gray-600 text-center">Unit</th>
-                      <th className="p-3 font-black text-xs uppercase text-right bg-red-900 border-r border-red-950">{isPremium ? 'Act Qty' : 'Qty'}</th>
-                      <th className="p-3 font-black text-xs uppercase text-right bg-red-900 border-r border-red-950">{isPremium ? 'Act Rate' : 'Rate'}</th>
-                      <th className="p-3 font-black text-xs uppercase text-right bg-red-900 border-r-2 border-black">{isPremium ? 'Act Amount' : 'Amount'}</th>
+                    <tr className="bg-gray-50 border-b border-gray-200">
+                      <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider">Date</th>
+                      <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider">Material</th>
+                      <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-center">Unit</th>
+                      <th className="p-4 font-semibold text-xs uppercase tracking-wider text-right text-red-500">{isPremium ? 'Act Qty' : 'Qty'}</th>
+                      <th className="p-4 font-semibold text-xs uppercase tracking-wider text-right text-red-500">{isPremium ? 'Act Rate' : 'Rate'}</th>
+                      <th className="p-4 font-semibold text-xs uppercase tracking-wider text-right text-red-500 border-r border-gray-100">{isPremium ? 'Act Amount' : 'Amount'}</th>
                       
                       {isPremium && (
                         <>
-                          <th className="p-3 font-black text-xs uppercase text-right bg-green-900 border-r border-green-950 text-[#22c55e]">Bill Qty</th>
-                          <th className="p-3 font-black text-xs uppercase text-right bg-green-900 border-r border-green-950 text-[#22c55e]">Bill Rate</th>
-                          <th className="p-3 font-black text-xs uppercase text-right bg-green-900 border-r-2 border-black text-[#22c55e]">Bill Amount</th>
+                          <th className="p-4 font-semibold text-xs uppercase tracking-wider text-right text-[#15803d]">Bill Qty</th>
+                          <th className="p-4 font-semibold text-xs uppercase tracking-wider text-right text-[#15803d]">Bill Rate</th>
+                          <th className="p-4 font-semibold text-xs uppercase tracking-wider text-right text-[#15803d]">Bill Amount</th>
                         </>
                       )}
-                      <th className="p-3 font-black text-xs uppercase text-center print:hidden">Actions</th>
+                      <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-center print:hidden">Actions</th>
                     </tr>
                   </thead>
                   
                   {Object.keys(groupedExpenses).length === 0 ? (
                     <tbody>
                       <tr>
-                        <td colSpan={10} className="p-20 text-center font-black uppercase text-gray-400 text-xl tracking-widest">
-                          No expenses logged yet. Fill out the form above!
+                        <td colSpan={10} className="p-20 text-center font-medium text-gray-400">
+                          <div className="text-4xl mb-3">📝</div>
+                          No expenses logged yet. Fill out the form above to start tracking!
                         </td>
                       </tr>
                     </tbody>
@@ -496,41 +523,51 @@ export default function TrackExpenditure() {
                       
                       return (
                         <tbody key={cat}>
-                          <tr className="bg-gray-200 border-y-4 border-black">
-                            <td colSpan={10} className="p-2 font-black text-sm uppercase text-black bg-[#22c55e] border-b-2 border-black">{cat}</td>
+                          <tr className="bg-gray-50/80">
+                            <td colSpan={10} className="px-4 py-3">
+                              <span className="font-bold text-xs uppercase tracking-wider text-gray-700 bg-white px-3 py-1 rounded-lg border border-gray-200 shadow-sm inline-block">
+                                {cat}
+                              </span>
+                            </td>
                           </tr>
                           
                           {groupedExpenses[cat].map((exp: any) => (
-                            <tr key={exp.id} className="border-b-2 border-gray-300 hover:bg-gray-50">
-                              <td className="p-2 text-sm font-bold border-r-2 border-gray-200 whitespace-nowrap">{exp.date}</td>
-                              <td className="p-2 text-sm font-bold border-r-2 border-gray-200">{exp.materialName}</td>
-                              <td className="p-2 text-sm font-bold border-r-2 border-gray-200 text-center">{exp.unit}</td>
-                              <td className="p-2 text-sm font-bold text-right text-red-600 bg-red-50/50">{exp.qty}</td>
-                              <td className="p-2 text-sm font-bold text-right text-red-600 bg-red-50/50">₹{(Number(exp.rate) || 0).toLocaleString()}</td>
-                              <td className="p-2 text-sm font-black text-right text-red-700 bg-red-50/50 border-r-2 border-gray-300">₹{(Number(exp.actualAmount) || 0).toLocaleString()}</td>
+                            <tr key={exp.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                              <td className="p-4 text-sm font-medium text-gray-500 whitespace-nowrap">{new Date(exp.date).toLocaleDateString()}</td>
+                              <td className="p-4 text-sm font-semibold text-gray-900">{exp.materialName}</td>
+                              <td className="p-4 text-sm font-medium text-gray-500 text-center">{exp.unit}</td>
+                              <td className="p-4 text-sm font-medium text-right text-red-500">{exp.qty}</td>
+                              <td className="p-4 text-sm font-medium text-right text-red-500">₹{(Number(exp.rate) || 0).toLocaleString()}</td>
+                              <td className="p-4 text-sm font-bold text-right text-red-600 border-r border-gray-100 bg-red-50/30">₹{(Number(exp.actualAmount) || 0).toLocaleString()}</td>
                               
                               {isPremium && (
                                 <>
-                                  <td className="p-2 text-sm font-bold text-right text-green-700 bg-green-50/50">{exp.billableQty || exp.qty}</td>
-                                  <td className="p-2 text-sm font-bold text-right text-green-700 bg-green-50/50">₹{(Number(exp.billableRate) || 0).toLocaleString()}</td>
-                                  <td className="p-2 text-sm font-black text-right text-green-800 bg-green-50/50 border-r-2 border-gray-300">₹{(Number(exp.billableAmount) || 0).toLocaleString()}</td>
+                                  <td className="p-4 text-sm font-medium text-right text-gray-600">{exp.billableQty || exp.qty}</td>
+                                  <td className="p-4 text-sm font-medium text-right text-gray-600">₹{(Number(exp.billableRate) || 0).toLocaleString()}</td>
+                                  <td className="p-4 text-sm font-bold text-right text-[#15803d] bg-green-50/30">₹{(Number(exp.billableAmount) || 0).toLocaleString()}</td>
                                 </>
                               )}
                               
-                              <td className="p-2 text-center print:hidden">
-                                <button onClick={() => handleEdit(exp)} className="bg-black text-white px-3 py-1 text-xs font-black uppercase hover:bg-blue-600 transition-colors mr-2">Edit</button>
-                                <button onClick={() => handleDelete(exp.id)} className="bg-white text-red-600 border-2 border-red-600 px-3 py-1 text-xs font-black uppercase hover:bg-red-600 hover:text-white transition-colors">X</button>
+                              <td className="p-4 text-center print:hidden">
+                                <div className="flex items-center justify-center gap-2">
+                                  <button onClick={() => handleEdit(exp)} className="text-gray-400 hover:text-blue-600 transition-colors p-1" title="Edit">
+                                    ✏️
+                                  </button>
+                                  <button onClick={() => handleDelete(exp.id)} className="text-gray-400 hover:text-red-600 transition-colors p-1" title="Delete">
+                                    🗑️
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           ))}
                           
-                          <tr className="bg-gray-100 border-b-4 border-black">
-                            <td colSpan={5} className="p-2 text-right font-black text-xs uppercase">Subtotal:</td>
-                            <td className="p-2 text-right font-black text-red-600">₹{secActual.toLocaleString()}</td>
+                          <tr className="border-b border-gray-200 bg-gray-50/30">
+                            <td colSpan={5} className="p-3 text-right font-semibold text-xs text-gray-500 uppercase tracking-wider">Subtotal:</td>
+                            <td className="p-3 text-right font-bold text-red-600 bg-red-50/50">₹{secActual.toLocaleString()}</td>
                             {isPremium && (
                               <>
                                 <td colSpan={2}></td>
-                                <td className="p-2 text-right font-black text-[#22c55e]">₹{secBillable.toLocaleString()}</td>
+                                <td className="p-3 text-right font-bold text-[#15803d] bg-green-50/50">₹{secBillable.toLocaleString()}</td>
                               </>
                             )}
                             <td className="print:hidden"></td>
@@ -542,13 +579,13 @@ export default function TrackExpenditure() {
                   
                   {expenses.length > 0 && (
                     <tfoot>
-                      <tr className="bg-black text-white border-4 border-black">
-                        <td colSpan={5} className="p-4 text-right font-black text-lg uppercase">Grand Total:</td>
-                        <td className="p-4 text-right font-black text-xl text-red-500">₹{actualTotalSpent.toLocaleString()}</td>
+                      <tr className="bg-gray-900 text-white">
+                        <td colSpan={5} className="p-5 text-right font-bold text-sm uppercase tracking-wider text-gray-300">Grand Total:</td>
+                        <td className="p-5 text-right font-black text-xl text-red-400">₹{actualTotalSpent.toLocaleString()}</td>
                         {isPremium && (
                           <>
                             <td colSpan={2}></td>
-                            <td className="p-4 text-right font-black text-xl text-[#22c55e]">₹{billableTotalSpent.toLocaleString()}</td>
+                            <td className="p-5 text-right font-black text-xl text-[#22c55e]">₹{billableTotalSpent.toLocaleString()}</td>
                           </>
                         )}
                         <td className="print:hidden"></td>
@@ -558,8 +595,8 @@ export default function TrackExpenditure() {
                 </table>
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </main>
     </div>
   );

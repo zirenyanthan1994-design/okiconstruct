@@ -77,7 +77,6 @@ export default function Dashboard() {
     return () => unsubscribe();
   }, []);
 
-  // Added React.FormEvent type to fix (e: any)
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError("");
@@ -110,7 +109,6 @@ export default function Dashboard() {
     }
   };
 
-  // Added ChangeEvent type to fix (e: any)
   const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -138,7 +136,6 @@ export default function Dashboard() {
     reader.readAsDataURL(file);
   };
 
-  // Added React.FormEvent type to fix (e: any)
   const handleCompleteRegistration = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError("");
@@ -147,7 +144,7 @@ export default function Dashboard() {
       return setAuthError("Please fill in your Name and Phone Number.");
     }
     
-    if (!user) return; // Type guard
+    if (!user) return; 
 
     setIsLoading(true);
     try {
@@ -184,21 +181,23 @@ export default function Dashboard() {
     }
   };
 
-  if (isLoading) return <div className="min-h-screen flex items-center justify-center font-black text-2xl uppercase">Loading OkiConstruct...</div>;
+  if (isLoading) return <div className="min-h-screen flex items-center justify-center font-medium text-gray-500">Loading workspace...</div>;
 
   if (!user) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
-        <div className="w-full max-w-md bg-white border-4 border-black p-8 shadow-[10px_10px_0px_0px_rgba(0,0,0,1)]">
-          <h1 className="text-3xl font-black uppercase text-center mb-2">
-            {isRegistering ? "Start Registration" : "Access Portal"}
-          </h1>
-          <p className="text-center font-bold text-gray-500 mb-8 text-sm uppercase tracking-widest">OKICONSTRUCT OPERATING SYSTEM</p>
+      <main className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+        <div className="w-full max-w-md bg-white border border-gray-100 rounded-2xl p-8 shadow-xl">
+          <div className="text-center mb-8">
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">
+              {isRegistering ? "Create your account" : "Welcome back"}
+            </h1>
+            <p className="text-gray-500 text-sm">OKICONSTRUCT OPERATING SYSTEM</p>
+          </div>
 
-          {authError && <div className="bg-red-100 border-l-4 border-red-600 text-red-600 p-3 mb-6 font-bold text-sm">{authError}</div>}
+          {authError && <div className="bg-red-50 text-red-600 p-3 rounded-lg mb-6 text-sm font-medium">{authError}</div>}
 
-          <button onClick={handleGoogleAuth} type="button" className="w-full bg-white text-black border-4 border-black p-4 font-black uppercase flex items-center justify-center gap-3 hover:bg-gray-100 transition-colors shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-y-1 mb-6">
-            <svg className="w-6 h-6" viewBox="0 0 24 24">
+          <button onClick={handleGoogleAuth} type="button" className="w-full bg-white text-gray-700 border border-gray-200 rounded-xl p-3 font-semibold flex items-center justify-center gap-3 hover:bg-gray-50 transition-colors shadow-sm mb-6">
+            <svg className="w-5 h-5" viewBox="0 0 24 24">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
               <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
               <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
@@ -208,28 +207,28 @@ export default function Dashboard() {
           </button>
 
           <div className="flex items-center justify-between mb-6">
-            <hr className="w-full border-gray-300" />
-            <span className="p-2 text-xs font-black uppercase text-gray-400 bg-white">OR MANUAL ENTRY</span>
-            <hr className="w-full border-gray-300" />
+            <hr className="w-full border-gray-100" />
+            <span className="p-2 text-xs font-semibold text-gray-400 uppercase tracking-wider bg-white">Or</span>
+            <hr className="w-full border-gray-100" />
           </div>
 
           <form onSubmit={handleAuth} className="space-y-4">
             <div>
-              <label className="text-[10px] font-black uppercase tracking-widest">Email Address</label>
-              <input type="email" required className="w-full border-2 border-black p-3 font-bold mt-1" value={email} onChange={e => setEmail(e.target.value)} />
+              <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Email Address</label>
+              <input type="email" required className="w-full border border-gray-200 rounded-lg p-3 mt-1 text-gray-900 focus:ring-2 focus:ring-[#22c55e]/20" value={email} onChange={e => setEmail(e.target.value)} />
             </div>
             <div>
-              <label className="text-[10px] font-black uppercase tracking-widest">{isRegistering ? "Set Password" : "Password"}</label>
-              <input type="password" required className="w-full border-2 border-black p-3 font-bold mt-1" value={password} onChange={e => setPassword(e.target.value)} />
+              <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">{isRegistering ? "Set Password" : "Password"}</label>
+              <input type="password" required className="w-full border border-gray-200 rounded-lg p-3 mt-1 text-gray-900 focus:ring-2 focus:ring-[#22c55e]/20" value={password} onChange={e => setPassword(e.target.value)} />
             </div>
-            <button type="submit" className="w-full bg-[#22c55e] text-black border-4 border-black p-4 font-black uppercase text-xl hover:bg-black hover:text-[#22c55e] transition-colors shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-y-1 mt-4">
-              {isRegistering ? "Register Email" : "Secure Login"}
+            <button type="submit" className="w-full bg-[#22c55e] text-white rounded-xl p-3.5 font-semibold text-base hover:bg-[#1ea950] transition-colors shadow-md mt-4">
+              {isRegistering ? "Create Account" : "Sign In"}
             </button>
           </form>
 
-          <div className="mt-8 text-center border-t-2 border-gray-200 pt-6">
-            <button onClick={() => {setIsRegistering(!isRegistering); setAuthError("");}} className="font-black text-sm uppercase text-gray-500 hover:text-black transition-colors">
-              {isRegistering ? "Already have an account? Log In" : "Need an account? Register Here"}
+          <div className="mt-8 text-center">
+            <button onClick={() => {setIsRegistering(!isRegistering); setAuthError("");}} className="text-sm text-gray-500 hover:text-gray-900 font-medium transition-colors">
+              {isRegistering ? "Already have an account? Sign in" : "Don't have an account? Sign up"}
             </button>
           </div>
         </div>
@@ -241,48 +240,48 @@ export default function Dashboard() {
     const isSelectedPro = PRO_ROLES.includes(profileForm.role);
     
     return (
-      <main className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
-        <div className="w-full max-w-2xl bg-white border-4 border-black p-8 shadow-[10px_10px_0px_0px_rgba(0,0,0,1)]">
-          <div className="border-b-8 border-[#22c55e] pb-4 mb-8">
-            <h1 className="text-3xl md:text-4xl font-black uppercase text-black">Complete Profile</h1>
-            <p className="font-bold text-gray-500 uppercase tracking-widest text-sm mt-2">Almost there! We need a few details to set up your workspace.</p>
+      <main className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+        <div className="w-full max-w-2xl bg-white border border-gray-100 rounded-2xl p-8 shadow-xl">
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold text-gray-900">Complete Profile</h1>
+            <p className="text-gray-500 mt-2">Almost there! We need a few details to set up your workspace.</p>
           </div>
 
-          {authError && <div className="bg-red-100 border-l-4 border-red-600 text-red-600 p-3 mb-6 font-bold text-sm">{authError}</div>}
+          {authError && <div className="bg-red-50 text-red-600 p-3 rounded-lg mb-6 text-sm font-medium">{authError}</div>}
 
           <form onSubmit={handleCompleteRegistration} className="space-y-6">
             
-            <div className="bg-gray-50 p-4 border-2 border-dashed border-gray-300">
-              <label className="text-xs font-black uppercase tracking-widest text-[#22c55e]">I am registering as a...</label>
-              <select className="w-full border-2 border-black p-3 font-black mt-2 bg-white cursor-pointer text-lg" value={profileForm.role} onChange={e => setProfileForm({...profileForm, role: e.target.value})}>
+            <div className="bg-gray-50 p-5 rounded-xl border border-gray-100">
+              <label className="text-xs font-semibold text-[#22c55e] uppercase tracking-wider">I am registering as a...</label>
+              <select className="w-full border border-gray-200 rounded-lg p-3 mt-2 bg-white cursor-pointer text-gray-900 font-medium focus:ring-2 focus:ring-[#22c55e]/20" value={profileForm.role} onChange={e => setProfileForm({...profileForm, role: e.target.value})}>
                 {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
-                <label className="text-[10px] font-black uppercase tracking-widest">{isSelectedPro ? "Full Name / Firm Name" : "Full Name"}</label>
-                <input type="text" required className="w-full border-2 border-black p-3 font-bold mt-1" value={profileForm.name} onChange={e => setProfileForm({...profileForm, name: e.target.value})} />
+                <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">{isSelectedPro ? "Full Name / Firm Name" : "Full Name"}</label>
+                <input type="text" required className="w-full border border-gray-200 rounded-lg p-3 mt-1 text-gray-900" value={profileForm.name} onChange={e => setProfileForm({...profileForm, name: e.target.value})} />
               </div>
               
               <div>
-                <label className="text-[10px] font-black uppercase tracking-widest">Phone Number</label>
-                <input type="tel" required placeholder="+91" className="w-full border-2 border-black p-3 font-bold mt-1" value={profileForm.phone} onChange={e => setProfileForm({...profileForm, phone: e.target.value})} />
+                <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Phone Number</label>
+                <input type="tel" required placeholder="+91" className="w-full border border-gray-200 rounded-lg p-3 mt-1 text-gray-900" value={profileForm.phone} onChange={e => setProfileForm({...profileForm, phone: e.target.value})} />
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
               <div>
-                <label className="text-[10px] font-black uppercase tracking-widest">Gender</label>
-                <select className="w-full border-2 border-black p-3 font-bold mt-1 bg-white cursor-pointer" value={profileForm.gender} onChange={e => setProfileForm({...profileForm, gender: e.target.value})}>
+                <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Gender</label>
+                <select className="w-full border border-gray-200 rounded-lg p-3 mt-1 bg-white cursor-pointer text-gray-900" value={profileForm.gender} onChange={e => setProfileForm({...profileForm, gender: e.target.value})}>
                   {GENDERS.map(g => <option key={g} value={g}>{g}</option>)}
                 </select>
               </div>
 
               <div>
-                <label className="text-[10px] font-black uppercase tracking-widest block mb-1">Profile Avatar</label>
+                <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider block mb-2">Profile Avatar</label>
                 <div className="flex items-center gap-4">
-                  <div className="w-16 h-16 bg-gray-100 border-4 border-black flex items-center justify-center overflow-hidden shrink-0">
+                  <div className="w-16 h-16 bg-gray-50 border border-gray-200 rounded-full flex items-center justify-center overflow-hidden shrink-0">
                     {profileForm.avatar.length > 5 ? (
                       /* eslint-disable-next-line @next/next/no-img-element */
                       <img src={profileForm.avatar} alt="Avatar" className="w-full h-full object-cover" />
@@ -294,12 +293,12 @@ export default function Dashboard() {
                   <div className="flex-grow">
                     <div className="flex gap-2 mb-2">
                       {PRESET_AVATARS.map(preset => (
-                        <button key={preset} type="button" onClick={() => setProfileForm({...profileForm, avatar: preset})} className="w-8 h-8 flex items-center justify-center border-2 border-black hover:bg-gray-200 transition-colors">
+                        <button key={preset} type="button" onClick={() => setProfileForm({...profileForm, avatar: preset})} className="w-8 h-8 flex items-center justify-center border border-gray-200 rounded-full hover:bg-gray-50 transition-colors">
                           {preset}
                         </button>
                       ))}
                     </div>
-                    <label className="bg-black text-white px-3 py-1 text-xs font-black uppercase cursor-pointer hover:bg-[#22c55e] hover:text-black transition-colors border-2 border-black inline-block">
+                    <label className="bg-white text-gray-700 px-4 py-1.5 rounded-lg text-sm font-medium cursor-pointer border border-gray-200 hover:bg-gray-50 transition-colors inline-block shadow-sm">
                       Upload Photo
                       <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
                     </label>
@@ -308,8 +307,8 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <button type="submit" className="w-full bg-[#22c55e] text-black border-4 border-black p-4 font-black uppercase text-xl hover:bg-black hover:text-[#22c55e] transition-colors shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-y-1 mt-8">
-              Complete Registration ➔
+            <button type="submit" className="w-full bg-[#22c55e] text-white rounded-xl p-4 font-semibold text-lg hover:bg-[#1ea950] transition-colors shadow-md mt-8">
+              Complete Registration
             </button>
           </form>
         </div>
@@ -321,41 +320,42 @@ export default function Dashboard() {
   const isPremium = userData?.tier === "premium";
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
       
-      <header className="bg-black text-white border-b-4 border-black sticky top-0 z-50">
-        <div className="max-w-[1400px] mx-auto px-4 md:px-6 h-20 flex justify-between items-center bg-black relative z-50">
+      <header className="bg-white border-b border-gray-100 sticky top-0 z-50">
+        <div className="max-w-[1400px] mx-auto px-4 md:px-6 h-20 flex justify-between items-center bg-white relative z-50">
           
-          <Link href="/dashboard" className="font-black text-2xl tracking-tighter cursor-pointer hover:opacity-80 transition-opacity">
-            <span className="text-white">OKI</span><span className="text-[#22c55e]">CONSTRUCT</span>
-          </Link>
+          {/* Change href="/dashboard" to href="/" */}
+          <Link href="/" className="font-extrabold text-2xl tracking-tight cursor-pointer hover:text-[#22c55e] transition-colors">
+  <span className="text-gray-900">OKI</span><span className="text-[#22c55e]">CONSTRUCT</span>
+</Link>
 
           <button 
-            className="flex items-center gap-2 text-white font-black text-xl hover:text-[#22c55e] transition-colors"
+            className="flex items-center gap-2 text-gray-900 hover:text-[#22c55e] transition-colors"
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
           >
-            <span className="text-sm tracking-widest uppercase hidden md:inline-block">Menu</span>
-            <span className="text-2xl">{isMobileMenuOpen ? "✕" : "☰"}</span>
+            <span className="text-sm font-semibold uppercase tracking-wider hidden md:inline-block">Menu</span>
+            <span className="text-2xl leading-none">{isMobileMenuOpen ? "✕" : "☰"}</span>
           </button>
         </div>
 
         {isMobileMenuOpen && (
-          <nav className="absolute top-full left-0 w-full bg-gray-900 border-b-4 border-black flex flex-col p-6 gap-4 animate-in slide-in-from-top-2 shadow-[0px_10px_0px_0px_rgba(0,0,0,1)] z-40">
-            <div className="max-w-[1400px] mx-auto w-full flex flex-col gap-4">
-              <Link href="/estimate-boq" className="font-black text-sm md:text-base uppercase hover:text-[#22c55e] border-b border-gray-800 pb-3 transition-colors">Estimate BOQ</Link>
-              <Link href="/track-expenditure" className="font-black text-sm md:text-base uppercase hover:text-[#22c55e] border-b border-gray-800 pb-3 transition-colors">Track Expenditure</Link>
-              <Link href="/contact-experts" className="font-black text-sm md:text-base uppercase hover:text-[#22c55e] border-b border-gray-800 pb-3 transition-colors">Contact Experts</Link>
+          <nav className="absolute top-full left-0 w-full bg-white border-b border-gray-100 flex flex-col p-6 gap-2 shadow-lg z-40 rounded-b-2xl">
+            <div className="max-w-[1400px] mx-auto w-full flex flex-col gap-2">
+              <Link href="/estimate-boq" className="font-medium text-gray-700 hover:text-[#22c55e] hover:bg-gray-50 p-2 rounded-lg transition-colors">Estimate BOQ</Link>
+              <Link href="/track-expenditure" className="font-medium text-gray-700 hover:text-[#22c55e] hover:bg-gray-50 p-2 rounded-lg transition-colors">Track Expenditure</Link>
+              <Link href="/contact-experts" className="font-medium text-gray-700 hover:text-[#22c55e] hover:bg-gray-50 p-2 rounded-lg transition-colors">Contact Experts</Link>
               
               {isPremium && (
-                <Link href="/custom-settings" className="font-black text-sm md:text-base uppercase text-[#22c55e] border-b border-gray-800 pb-3 hover:text-white transition-colors">
+                <Link href="/custom-settings" className="font-medium text-[#22c55e] hover:bg-green-50 p-2 rounded-lg transition-colors">
                   ⚙️ Custom Rates
                 </Link>
               )}
               
-              <Link href="/profile" className="font-black text-sm md:text-base uppercase text-gray-300 hover:text-white border-b border-gray-800 pb-3 transition-colors">My Profile</Link>
+              <Link href="/profile" className="font-medium text-gray-700 hover:text-[#22c55e] hover:bg-gray-50 p-2 rounded-lg transition-colors">My Profile</Link>
               
-              <button onClick={handleLogout} className="font-black text-sm md:text-base uppercase text-red-500 text-left pt-2 hover:text-white transition-colors w-fit">
-                Logout ➔
+              <button onClick={handleLogout} className="font-semibold text-white bg-gray-900 rounded-xl px-4 py-2 mt-2 hover:bg-gray-800 transition-colors w-fit">
+                Logout
               </button>
             </div>
           </nav>
@@ -363,90 +363,96 @@ export default function Dashboard() {
       </header>
 
       {isProRole && !isPremium && (
-        <div className="bg-[#22c55e] text-black border-b-4 border-black p-3 text-center">
-          <p className="font-black text-sm uppercase">
+        <div className="bg-[#22c55e]/10 text-[#15803d] rounded-xl p-3 text-center mx-4 md:mx-6 mt-6 border border-[#22c55e]/20">
+          <p className="font-medium text-sm">
             Unlock custom material rates, billable client invoices, and directory visibility. 
-            <Link href="/upgrade" className="underline ml-2 hover:text-white">Upgrade to Premium ➔</Link>
+            <Link href="/upgrade" className="underline font-bold ml-2 hover:text-[#22c55e]">Upgrade to Premium</Link>
           </p>
         </div>
       )}
 
-      <main className="max-w-[1400px] mx-auto p-4 md:p-6 mt-6 flex-grow w-full">
+      <main className="max-w-[1400px] mx-auto p-4 md:p-6 mt-8 flex-grow w-full">
         
-        <div className="mb-8 flex items-center gap-6 border-l-8 border-black pl-6 py-2">
-          <div className="w-20 h-20 bg-gray-200 border-4 border-black flex items-center justify-center overflow-hidden shrink-0">
+        <div className="mb-12 flex items-center gap-6">
+          <div className="w-20 h-20 bg-white border border-gray-200 shadow-sm rounded-full flex items-center justify-center overflow-hidden shrink-0">
             {userData?.avatar?.length > 5 ? (
               /* eslint-disable-next-line @next/next/no-img-element */
               <img src={userData?.avatar} alt="Profile" className="w-full h-full object-cover" />
             ) : (
-              <span className="text-4xl">{userData?.avatar || "👤"}</span>
+              <span className="text-3xl">{userData?.avatar || "👤"}</span>
             )}
           </div>
           
           <div>
-            <h1 className="text-4xl md:text-5xl font-black uppercase">Welcome Back, {userData?.name || 'User'}</h1>
-            <p className="text-lg font-bold text-gray-500 uppercase tracking-widest mt-2">
-              {userData?.role} Account {isPremium ? <span className="text-[#22c55e] bg-black px-2 py-1 text-xs ml-2">PREMIUM TIER</span> : <span className="text-gray-400 bg-gray-200 px-2 py-1 text-xs ml-2">STANDARD TIER</span>}
-            </p>
+            <h1 className="text-3xl md:text-4xl font-bold text-gray-900 tracking-tight">Welcome back, {userData?.name || 'User'}</h1>
+            <div className="flex items-center gap-3 mt-2">
+              <p className="text-base text-gray-500 font-medium">
+                {userData?.role} Account
+              </p>
+              {isPremium ? 
+                <span className="bg-[#22c55e] text-white px-2.5 py-0.5 rounded-full text-xs font-bold shadow-sm">Premium</span> : 
+                <span className="bg-gray-200 text-gray-600 px-2.5 py-0.5 rounded-full text-xs font-semibold">Standard</span>
+              }
+            </div>
           </div>
         </div>
 
-        <div className="w-full h-[250px] md:h-[350px] bg-gray-200 border-4 border-black mb-12 flex items-center justify-center relative overflow-hidden group cursor-pointer">
-          <div className="absolute inset-0 bg-gradient-to-r from-gray-900 to-gray-800 opacity-90 group-hover:opacity-100 transition-opacity"></div>
-          <div className="relative z-10 text-center text-white p-6">
-            <span className="text-[#22c55e] font-black text-xs uppercase tracking-[0.3em] mb-4 block">Sponsored Content</span>
-            <h2 className="text-3xl md:text-5xl font-black uppercase mb-4">Your Advertisement Here</h2>
-            <p className="text-gray-300 font-bold max-w-2xl mx-auto">This hero space is completely controlled by the admin. Use it to promote new building materials, partner brands, or premium software features.</p>
+        <div className="w-full h-[250px] md:h-[300px] bg-gray-900 rounded-3xl mb-12 flex items-center justify-center relative overflow-hidden group shadow-lg">
+          <div className="absolute inset-0 bg-gradient-to-r from-gray-800 to-gray-900 opacity-90 transition-opacity"></div>
+          <div className="relative z-10 text-center text-white p-8">
+            <span className="text-[#22c55e] font-bold text-xs uppercase tracking-[0.2em] mb-4 block">Sponsored Insight</span>
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">Elevate Your Next Project</h2>
+            <p className="text-gray-300 font-medium max-w-2xl mx-auto text-sm md:text-base">Discover premium building materials and exclusive partner deals tailored for your architectural needs.</p>
           </div>
         </div>
 
-        <h3 className="font-black text-2xl uppercase mb-6 border-b-4 border-black pb-2 inline-block">Platform Tools</h3>
+        <h3 className="font-bold text-xl text-gray-900 mb-6">Platform Tools</h3>
         
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           
-          <Link href="/estimate-boq" className="bg-white border-4 border-black p-8 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-y-2 hover:translate-x-2 transition-all group">
-            <div className="w-16 h-16 bg-[#22c55e] border-4 border-black flex items-center justify-center mb-6 group-hover:bg-black transition-colors">
-              <span className="text-3xl">🏗️</span>
+          <Link href="/estimate-boq" className="bg-white border border-gray-100 rounded-2xl p-8 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all group">
+            <div className="w-14 h-14 bg-[#22c55e]/10 text-[#22c55e] rounded-xl flex items-center justify-center mb-6 transition-colors">
+              <span className="text-2xl">🏗️</span>
             </div>
-            <h2 className="text-2xl font-black uppercase mb-3">Estimate BOQ</h2>
-            <p className="font-bold text-gray-600 text-sm">Generate comprehensive material and labor estimates instantly based on your architectural parameters.</p>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">Estimate BOQ</h2>
+            <p className="text-gray-500 text-sm font-medium leading-relaxed">Generate comprehensive material and labor estimates instantly based on your architectural parameters.</p>
           </Link>
 
-          <Link href="/track-expenditure" className="bg-white border-4 border-black p-8 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-y-2 hover:translate-x-2 transition-all group">
-            <div className="w-16 h-16 bg-[#22c55e] border-4 border-black flex items-center justify-center mb-6 group-hover:bg-black transition-colors">
-              <span className="text-3xl">📊</span>
+          <Link href="/track-expenditure" className="bg-white border border-gray-100 rounded-2xl p-8 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all group">
+            <div className="w-14 h-14 bg-[#22c55e]/10 text-[#22c55e] rounded-xl flex items-center justify-center mb-6 transition-colors">
+              <span className="text-2xl">📊</span>
             </div>
-            <h2 className="text-2xl font-black uppercase mb-3">Track Expenditure</h2>
-            <p className="font-bold text-gray-600 text-sm">Log daily purchases, monitor material consumption, and ensure your project stays strictly under budget.</p>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">Track Expenditure</h2>
+            <p className="text-gray-500 text-sm font-medium leading-relaxed">Add expenditure records, monitor material consumption, and ensure your project stays strictly under budget.</p>
           </Link>
 
-          <Link href="/contact-experts" className="bg-white border-4 border-black p-8 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-y-2 hover:translate-x-2 transition-all group">
-            <div className="w-16 h-16 bg-[#22c55e] border-4 border-black flex items-center justify-center mb-6 group-hover:bg-black transition-colors">
-              <span className="text-3xl">🤝</span>
+          <Link href="/contact-experts" className="bg-white border border-gray-100 rounded-2xl p-8 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all group">
+            <div className="w-14 h-14 bg-[#22c55e]/10 text-[#22c55e] rounded-xl flex items-center justify-center mb-6 transition-colors">
+              <span className="text-2xl">🤝</span>
             </div>
-            <h2 className="text-2xl font-black uppercase mb-3">Contact Experts</h2>
-            <p className="font-bold text-gray-600 text-sm">Browse our directory of top-rated Architects, Engineers, and Builders to consult or hire for your next project.</p>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">Contact Experts</h2>
+            <p className="text-gray-500 text-sm font-medium leading-relaxed">Browse our directory of top-rated Architects, Engineers, and Builders to consult or hire for your next project.</p>
           </Link>
 
         </div>
       </main>
 
-      <footer className="bg-black text-white border-t-8 border-[#22c55e] py-12 mt-20">
+      <footer className="bg-white border-t border-gray-100 py-10 mt-16">
         <div className="max-w-[1400px] mx-auto px-4 md:px-6 flex flex-col md:flex-row justify-between items-center gap-6">
           
-          <div className="font-black text-2xl tracking-tighter">
-            <span className="text-white">OKI</span><span className="text-[#22c55e]">CONSTRUCT</span>
+          <div className="font-extrabold text-xl tracking-tight">
+            <span className="text-gray-900">OKI</span><span className="text-[#22c55e]">CONSTRUCT</span>
           </div>
 
-          <nav className="flex flex-wrap justify-center gap-6 md:gap-10 font-black text-xs uppercase tracking-widest text-gray-400">
-            <Link href="/terms" className="hover:text-white transition-colors">Terms & Conditions</Link>
-            <Link href="/privacy" className="hover:text-white transition-colors">Privacy Policy</Link>
-            <Link href="/about" className="hover:text-white transition-colors">About Us</Link>
-            <Link href="/faq" className="hover:text-white transition-colors">FAQs</Link>
+          <nav className="flex flex-wrap justify-center gap-6 md:gap-8 font-medium text-sm text-gray-500">
+            <Link href="/terms" className="hover:text-gray-900 transition-colors">Terms</Link>
+            <Link href="/privacy" className="hover:text-gray-900 transition-colors">Privacy</Link>
+            <Link href="/about" className="hover:text-gray-900 transition-colors">About</Link>
+            <Link href="/faq" className="hover:text-gray-900 transition-colors">Help</Link>
           </nav>
 
-          <div className="text-gray-600 font-bold text-[10px] uppercase tracking-widest">
-            © {new Date().getFullYear()} OkiConstruct. All rights reserved.
+          <div className="text-gray-400 font-medium text-xs">
+            © {new Date().getFullYear()} OkiConstruct.
           </div>
           
         </div>
