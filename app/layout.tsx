@@ -1,8 +1,12 @@
-import { Space_Grotesk } from 'next/font/google';
+import React from "react";
+import { Space_Grotesk } from "next/font/google";
 import "./globals.css";
 
-// This imports the premium font automatically, no downloads required!
-const spaceGrotesk = Space_Grotesk({ subsets: ['latin'] });
+// Notice the lowercase "footer" here to match your file exactly!
+import Footer from "./components/footer";
+
+// Premium font import
+const spaceGrotesk = Space_Grotesk({ subsets: ["latin"] });
 
 export const metadata = {
   title: "OkiConstruct | Command Center",
@@ -12,13 +16,20 @@ export const metadata = {
 export default function RootLayout({
   children,
 }: {
-  children: React.ReactNode
+  children: React.ReactNode;
 }) {
   return (
     <html lang="en">
-      {/* This injects the new font into every single page of your app */}
-      <body className={`${spaceGrotesk.className} bg-gray-50 text-black`}>
-        {children}
+      <body className={`${spaceGrotesk.className} bg-gray-50 text-black flex flex-col min-h-screen`}>
+        
+        {/* Main Content Area */}
+        <div className="flex-grow">
+          {children}
+        </div>
+        
+        {/* Global Footer */}
+        <Footer />
+        
       </body>
     </html>
   );
