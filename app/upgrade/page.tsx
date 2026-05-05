@@ -1,20 +1,20 @@
 "use client";
 import { useState, useEffect } from 'react';
 import { auth, db } from '../lib/firebase';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import CheckoutButton from '../components/CheckoutButton'; // Fixed relative import path
 
 export default function Upgrade() {
   const router = useRouter();
   
   // --- STATE ---
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null); // Added proper Firebase User typing
   const [userData, setUserData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
 
   // --- INITIALIZATION ---
   useEffect(() => {
@@ -25,7 +25,6 @@ export default function Upgrade() {
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
           setUserData(docSnap.data());
-          // If they are already premium, kick them back to the dashboard!
           if (docSnap.data().tier === "premium") {
             router.push('/dashboard');
           }
@@ -37,31 +36,6 @@ export default function Upgrade() {
     });
     return () => unsubscribe();
   }, [router]);
-
-  // --- UPGRADE HANDLER (TEST MODE) ---
-  const handleUpgrade = async () => {
-    if (!user) return;
-    setIsProcessing(true);
-
-    try {
-      // In the future, this is where you redirect to Stripe Checkout.
-      // For now, we simulate a successful payment and instantly upgrade the database!
-      
-      // Artificial delay to make it feel like a real transaction is processing
-      await new Promise(resolve => setTimeout(resolve, 1500));
-
-      await updateDoc(doc(db, "users", user.uid), {
-        tier: "premium"
-      });
-
-      // Success! Send them to the dashboard where the premium features will now be unlocked.
-      router.push('/dashboard');
-    } catch (error) {
-      console.error("Upgrade failed:", error);
-      alert("Something went wrong with the upgrade process.");
-      setIsProcessing(false);
-    }
-  };
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -148,13 +122,20 @@ export default function Upgrade() {
               <li className="flex items-center gap-2"><span>✅</span> Priority Client Lead Routing</li>
             </ul>
 
-            <button 
-              onClick={handleUpgrade}
-              disabled={isProcessing}
-              className={`w-full text-black border-4 border-black p-4 font-black uppercase text-xl shadow-[4px_4px_0px_0px_rgba(255,255,255,1)] hover:shadow-none hover:translate-y-1 transition-all ${isProcessing ? 'bg-gray-400' : 'bg-[#22c55e] hover:bg-white'}`}
-            >
-              {isProcessing ? "Processing..." : "Upgrade Now ➔"}
-            </button>
+            {/* REAL RAZORPAY ENGINE */}
+            {user ? (
+              <CheckoutButton 
+                planId="1mo" 
+                label="1 Month VIP" 
+                price={999} 
+                userId={user.uid}
+              />
+            ) : (
+              <button disabled className="w-full border-4 border-black p-4 font-black uppercase bg-gray-600 text-gray-300 cursor-not-allowed">
+                Loading Account...
+              </button>
+            )}
+
           </div>
 
         </div>
