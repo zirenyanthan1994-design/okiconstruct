@@ -37,9 +37,15 @@ export default function Navbar() {
       <header className="bg-white/80 backdrop-blur-md border-b border-gray-100 sticky top-0 z-50 print:hidden">
         <div className="max-w-[1400px] mx-auto px-4 md:px-6 h-20 flex justify-between items-center relative z-50">
           
-          <Link href="/" className="font-extrabold text-2xl tracking-tight cursor-pointer hover:text-[#22c55e] transition-colors">
-            <span className="text-gray-900">OKI</span><span className="text-[#22c55e]">CONSTRUCT</span>
-          </Link>
+        <Link href="/" className="flex items-center gap-3">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" className="w-8 h-8 md:w-10 md:h-10">
+    <path d="M 50 15 A 35 35 0 1 0 85 50" fill="none" stroke="currentColor" strokeWidth="12" strokeLinecap="round" className="text-gray-900" />
+    <path d="M 50 15 L 85 15 L 85 50" fill="none" stroke="#22c55e" strokeWidth="12" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+  <span className="font-extrabold text-xl md:text-2xl tracking-tight text-gray-900">
+    OKI<span className="text-[#22c55e]">CONSTRUCT</span>
+  </span>
+</Link>
 
           <nav className="hidden lg:flex items-center gap-8">
             <Link href="/estimate-boq" className="font-semibold text-sm text-gray-600 hover:text-[#22c55e] transition-colors">Estimate BOQ</Link>

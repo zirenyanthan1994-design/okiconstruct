@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useEffect } from 'react';
 import { auth, db } from "./lib/firebase";
-import Navbar from "./components/Navbar";
+import Navbar from "./components/Navbar"; 
 import {
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword, 
@@ -50,33 +50,60 @@ export default function Dashboard() {
     avatar: PRESET_AVATARS[0]
   });
 
+  // THE MASTER AUTH LISTENER (Robust & Crash-Proof)
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
-        const docRef = doc(db, "users", currentUser.uid);
-        const docSnap = await getDoc(docRef);
+        setAuthError("");
         
-        if (docSnap.exists()) {
-          setUserData(docSnap.data());
-          setIsOnboarding(false);
-        } else {
-          setProfileForm(prev => ({
-            ...prev,
-            name: currentUser.displayName || "", 
-          }));
-          setIsOnboarding(true);
+        try {
+          const docRef = doc(db, "users", currentUser.uid);
+          const docSnap = await getDoc(docRef);
+          
+          if (docSnap.exists()) {
+            setUserData(docSnap.data());
+            setIsOnboarding(false);
+          } else {
+            // Database empty? Send to onboarding and auto-fill Google Name if available.
+            setProfileForm(prev => ({
+              ...prev,
+              name: currentUser.displayName || "", 
+            }));
+            setIsOnboarding(true); 
+          }
+        } catch (error: any) {
+          console.error("Firestore Error:", error);
+          setAuthError("Could not connect to the database. Check your internet connection.");
+          await signOut(auth); // Kick out if database fails to prevent infinite loading
         }
       } else {
         setUser(null);
         setUserData(null);
         setIsOnboarding(false);
       }
-      setIsLoading(false);
+      setIsLoading(false); // ALWAYS turn off loading spinner
     });
+
     return () => unsubscribe();
   }, []);
 
+  // --- NEW GOOGLE AUTH HANDLER ---
+  const handleGoogleAuth = async () => {
+    setAuthError("");
+    setIsLoading(true);
+    const provider = new GoogleAuthProvider();
+
+    try {
+      await signInWithPopup(auth, provider); 
+    } catch (error: any) {
+      console.error("Google Auth Error:", error);
+      setAuthError(error.message || "Google Sign-In failed.");
+      setIsLoading(false);
+    }
+  };
+
+  // EMAIL & PASSWORD LOGIN/SIGNUP
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError("");
@@ -91,20 +118,6 @@ export default function Dashboard() {
     } catch (error: any) {
       console.error("Auth Error:", error);
       setAuthError(error.message || "Authentication failed. Please check your credentials.");
-      setIsLoading(false);
-    }
-  };
-
-  const handleGoogleAuth = async () => {
-    setAuthError("");
-    setIsLoading(true);
-    const provider = new GoogleAuthProvider();
-
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (error: any) {
-      console.error("Google Auth Error:", error);
-      setAuthError(error.message || "Google Sign-In failed.");
       setIsLoading(false);
     }
   };
@@ -131,11 +144,12 @@ export default function Dashboard() {
         const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.8);
         setProfileForm({ ...profileForm, avatar: compressedDataUrl });
       };
-      img.src = event.target.result;
+      img.src = event.target.result as string;
     };
     reader.readAsDataURL(file);
   };
 
+  // ONBOARDING SAVE
   const handleCompleteRegistration = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError("");
@@ -181,21 +195,34 @@ export default function Dashboard() {
     }
   };
 
-  if (isLoading) return <div className="min-h-screen flex items-center justify-center font-medium text-gray-500">Loading workspace...</div>;
+  // VIEW 1: LOADING SCREEN
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+        <div className="w-12 h-12 border-4 border-[#22c55e] border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
 
+  // VIEW 2: LOGIN SCREEN
   if (!user) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
         <div className="w-full max-w-md bg-white border border-gray-100 rounded-2xl p-8 shadow-xl">
           <div className="text-center mb-8">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" className="w-16 h-16 mx-auto mb-4">
+              <path d="M 50 15 A 35 35 0 1 0 85 50" fill="none" stroke="currentColor" strokeWidth="12" strokeLinecap="round" className="text-gray-900" />
+              <path d="M 50 15 L 85 15 L 85 50" fill="none" stroke="#22c55e" strokeWidth="12" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
             <h1 className="text-2xl font-bold text-gray-900 mb-2">
-              {isRegistering ? "Create your account" : "Welcome back"}
+              Welcome To OkiConstruct
             </h1>
-            <p className="text-gray-500 text-sm">OKICONSTRUCT OPERATING SYSTEM</p>
+            <p className="text-gray-500 text-sm">SECURE SYSTEM LOGIN</p>
           </div>
 
           {authError && <div className="bg-red-50 text-red-600 p-3 rounded-lg mb-6 text-sm font-medium">{authError}</div>}
 
+          {/* GOOGLE SIGN IN BUTTON */}
           <button onClick={handleGoogleAuth} type="button" className="w-full bg-white text-gray-700 border border-gray-200 rounded-xl p-3 font-semibold flex items-center justify-center gap-3 hover:bg-gray-50 transition-colors shadow-sm mb-6">
             <svg className="w-5 h-5" viewBox="0 0 24 24">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -215,11 +242,11 @@ export default function Dashboard() {
           <form onSubmit={handleAuth} className="space-y-4">
             <div>
               <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Email Address</label>
-              <input type="email" required className="w-full border border-gray-200 rounded-lg p-3 mt-1 text-gray-900 focus:ring-2 focus:ring-[#22c55e]/20" value={email} onChange={e => setEmail(e.target.value)} />
+              <input type="email" required className="w-full border border-gray-200 rounded-lg p-3 mt-1 text-gray-900 focus:ring-2 focus:ring-[#22c55e]/20 outline-none" value={email} onChange={e => setEmail(e.target.value)} />
             </div>
             <div>
               <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">{isRegistering ? "Set Password" : "Password"}</label>
-              <input type="password" required className="w-full border border-gray-200 rounded-lg p-3 mt-1 text-gray-900 focus:ring-2 focus:ring-[#22c55e]/20" value={password} onChange={e => setPassword(e.target.value)} />
+              <input type="password" required className="w-full border border-gray-200 rounded-lg p-3 mt-1 text-gray-900 focus:ring-2 focus:ring-[#22c55e]/20 outline-none" value={password} onChange={e => setPassword(e.target.value)} />
             </div>
             <button type="submit" className="w-full bg-[#22c55e] text-white rounded-xl p-3.5 font-semibold text-base hover:bg-[#1ea950] transition-colors shadow-md mt-4">
               {isRegistering ? "Create Account" : "Sign In"}
@@ -236,6 +263,7 @@ export default function Dashboard() {
     );
   }
 
+  // VIEW 3: ONBOARDING SCREEN
   if (isOnboarding) {
     const isSelectedPro = PRO_ROLES.includes(profileForm.role);
     
@@ -253,7 +281,7 @@ export default function Dashboard() {
             
             <div className="bg-gray-50 p-5 rounded-xl border border-gray-100">
               <label className="text-xs font-semibold text-[#22c55e] uppercase tracking-wider">I am registering as a...</label>
-              <select className="w-full border border-gray-200 rounded-lg p-3 mt-2 bg-white cursor-pointer text-gray-900 font-medium focus:ring-2 focus:ring-[#22c55e]/20" value={profileForm.role} onChange={e => setProfileForm({...profileForm, role: e.target.value})}>
+              <select className="w-full border border-gray-200 rounded-lg p-3 mt-2 bg-white cursor-pointer text-gray-900 font-medium focus:ring-2 focus:ring-[#22c55e]/20 outline-none" value={profileForm.role} onChange={e => setProfileForm({...profileForm, role: e.target.value})}>
                 {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
@@ -261,19 +289,19 @@ export default function Dashboard() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">{isSelectedPro ? "Full Name / Firm Name" : "Full Name"}</label>
-                <input type="text" required className="w-full border border-gray-200 rounded-lg p-3 mt-1 text-gray-900" value={profileForm.name} onChange={e => setProfileForm({...profileForm, name: e.target.value})} />
+                <input type="text" required className="w-full border border-gray-200 rounded-lg p-3 mt-1 text-gray-900 outline-none" value={profileForm.name} onChange={e => setProfileForm({...profileForm, name: e.target.value})} />
               </div>
               
               <div>
                 <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Phone Number</label>
-                <input type="tel" required placeholder="+91" className="w-full border border-gray-200 rounded-lg p-3 mt-1 text-gray-900" value={profileForm.phone} onChange={e => setProfileForm({...profileForm, phone: e.target.value})} />
+                <input type="tel" required placeholder="+91" className="w-full border border-gray-200 rounded-lg p-3 mt-1 text-gray-900 outline-none" value={profileForm.phone} onChange={e => setProfileForm({...profileForm, phone: e.target.value})} />
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
               <div>
                 <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Gender</label>
-                <select className="w-full border border-gray-200 rounded-lg p-3 mt-1 bg-white cursor-pointer text-gray-900" value={profileForm.gender} onChange={e => setProfileForm({...profileForm, gender: e.target.value})}>
+                <select className="w-full border border-gray-200 rounded-lg p-3 mt-1 bg-white cursor-pointer text-gray-900 outline-none" value={profileForm.gender} onChange={e => setProfileForm({...profileForm, gender: e.target.value})}>
                   {GENDERS.map(g => <option key={g} value={g}>{g}</option>)}
                 </select>
               </div>
@@ -316,6 +344,7 @@ export default function Dashboard() {
     );
   }
 
+  // VIEW 4: THE DASHBOARD
   const isProRole = userData?.role && PRO_ROLES.includes(userData.role);
   const isPremium = userData?.tier === "premium";
 
@@ -325,10 +354,15 @@ export default function Dashboard() {
       <header className="bg-white border-b border-gray-100 sticky top-0 z-50">
         <div className="max-w-[1400px] mx-auto px-4 md:px-6 h-20 flex justify-between items-center bg-white relative z-50">
           
-          {/* Change href="/dashboard" to href="/" */}
-          <Link href="/" className="font-extrabold text-2xl tracking-tight cursor-pointer hover:text-[#22c55e] transition-colors">
-  <span className="text-gray-900">OKI</span><span className="text-[#22c55e]">CONSTRUCT</span>
-</Link>
+          <Link href="/" className="flex items-center gap-3">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" className="w-8 h-8 md:w-10 md:h-10">
+              <path d="M 50 15 A 35 35 0 1 0 85 50" fill="none" stroke="currentColor" strokeWidth="12" strokeLinecap="round" className="text-gray-900" />
+              <path d="M 50 15 L 85 15 L 85 50" fill="none" stroke="#22c55e" strokeWidth="12" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="font-extrabold text-xl md:text-2xl tracking-tight text-gray-900">
+              OKI<span className="text-[#22c55e]">CONSTRUCT</span>
+            </span>
+          </Link>
 
           <button 
             className="flex items-center gap-2 text-gray-900 hover:text-[#22c55e] transition-colors"
@@ -436,27 +470,6 @@ export default function Dashboard() {
 
         </div>
       </main>
-
-      <footer className="bg-white border-t border-gray-100 py-10 mt-16">
-        <div className="max-w-[1400px] mx-auto px-4 md:px-6 flex flex-col md:flex-row justify-between items-center gap-6">
-          
-          <div className="font-extrabold text-xl tracking-tight">
-            <span className="text-gray-900">OKI</span><span className="text-[#22c55e]">CONSTRUCT</span>
-          </div>
-
-          <nav className="flex flex-wrap justify-center gap-6 md:gap-8 font-medium text-sm text-gray-500">
-            <Link href="/terms" className="hover:text-gray-900 transition-colors">Terms</Link>
-            <Link href="/privacy" className="hover:text-gray-900 transition-colors">Privacy</Link>
-            <Link href="/about" className="hover:text-gray-900 transition-colors">About</Link>
-            <Link href="/faq" className="hover:text-gray-900 transition-colors">Help</Link>
-          </nav>
-
-          <div className="text-gray-400 font-medium text-xs">
-            © {new Date().getFullYear()} OkiConstruct.
-          </div>
-          
-        </div>
-      </footer>
     </div>
   );
 }

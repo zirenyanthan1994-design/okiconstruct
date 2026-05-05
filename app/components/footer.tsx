@@ -12,9 +12,15 @@ export default function Footer() {
           
           {/* Brand Section */}
           <div className="lg:col-span-1">
-            <Link href="/" className="font-extrabold text-2xl tracking-tight cursor-pointer inline-block mb-4">
-              <span className="text-gray-900">OKI</span><span className="text-[#22c55e]">CONSTRUCT</span>
-            </Link>
+          <Link href="/" className="flex items-center gap-3">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" className="w-10 h-10">
+    <path d="M 50 15 A 35 35 0 1 0 85 50" fill="none" stroke="currentColor" strokeWidth="12" strokeLinecap="round" className="text-gray-900" />
+    <path d="M 50 15 L 85 15 L 85 50" fill="none" stroke="#22c55e" strokeWidth="12" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+  <span className="font-extrabold text-2xl tracking-tight text-gray-900">
+    OKI<span className="text-[#22c55e]">CONSTRUCT</span>
+  </span>
+</Link>
             <p className="text-gray-500 font-medium text-sm leading-relaxed mb-6">
               The modern cloud platform for accurate construction estimation, intelligent BOQ generation, and real-time expense tracking.
             </p>
