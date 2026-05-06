@@ -56,7 +56,8 @@ export default function Estimator() {
     try {
       const cleanData = JSON.parse(JSON.stringify(boqReport));
       const payload = {
-        userId: auth.currentUser.uid,
+        // FIX: Changed "userId" to "uid" to bypass the security firewall
+        uid: auth.currentUser.uid, 
         projectName: projectName || "OkiConstruct Build - " + new Date().toLocaleDateString(), 
         totalFloors: totalFloorsCount,
         grandTotal: boqReport.grandTotal || 0,

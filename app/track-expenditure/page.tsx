@@ -7,14 +7,14 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Navbar from '../components/Navbar';
 
-const CATEGORIES = ["Footing & Foundation", "Plinth Beams", "Roof Beams", "Columns", "Roof Slab", "Staircase Structure", "Masonry, Joining & Plastering", "Doors & Windows", "Flooring & Tiles", "Painting Material", "Master Labor & Services", "Miscellaneous"];
-const UNITS = ["NOS", "BAG", "CFT", "SQFT", "LITER", "KG", "RFT", "%", "Lumbsum", "Meter", "Feet", "Inch", "Box", "Piece", "Milimeter", "CUM", "SQ/MT", "Matric Ton"];
+const CATEGORIES = ["Footing & Foundation", "Plinth Beams", "Roof Beams", "Columns", "Roof Slab", "Staircase Structure", "Masonry, Joining & Plastering", "Doors & Windows", "Flooring & Tiles", "Painting Material", "Master Labor & Services", "Miscellaneous"]; //[cite: 4]
+const UNITS = ["NOS", "BAG", "CFT", "SQFT", "LITER", "KG", "RFT", "%", "Lumbsum", "Meter", "Feet", "Inch", "Box", "Piece", "Milimeter", "CUM", "SQ/MT", "Matric Ton"]; //[cite: 4]
 
 const INITIAL_FORM = { 
   date: new Date().toISOString().split('T')[0], 
   materialName: '', category: CATEGORIES[0], unit: UNITS[0], 
   qty: '', rate: '', billableQty: '', billableRate: '' 
-};
+}; //[cite: 4]
 
 export default function TrackExpenditure() {
   const router = useRouter();
@@ -32,7 +32,7 @@ export default function TrackExpenditure() {
   const [isClientView, setIsClientView] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expenseForm, setExpenseForm] = useState(INITIAL_FORM);
-  const [isCreating, setIsCreating] = useState(false);
+  const [isCreating, setIsCreating] = useState(false); //[cite: 4]
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -49,11 +49,12 @@ export default function TrackExpenditure() {
       }
     });
     return () => unsubscribe();
-  }, [router]);
+  }, [router]); //[cite: 4]
 
   const fetchProjects = async (uid: string) => {
     try {
-      const q = query(collection(db, "boq_projects"), where("userId", "==", uid));
+      // Changed "userId" to "uid" to match your Firestore security rules
+      const q = query(collection(db, "boq_projects"), where("uid", "==", uid)); //[cite: 4]
       const querySnapshot = await getDocs(q);
       const fetchedProjects: any[] = [];
       querySnapshot.forEach((d) => fetchedProjects.push({ id: d.id, ...d.data() }));
@@ -63,7 +64,7 @@ export default function TrackExpenditure() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }; //[cite: 4]
 
   useEffect(() => {
     if (!selectedProject) { 
@@ -84,7 +85,7 @@ export default function TrackExpenditure() {
     });
     
     return () => unsubscribe();
-  }, [selectedProject]);
+  }, [selectedProject]); //[cite: 4]
 
   const handleProjectSelect = (e: any) => {
     const val = e.target.value;
@@ -94,7 +95,7 @@ export default function TrackExpenditure() {
       return; 
     }
     setSelectedProject(projects.find(p => p.id === val) || null);
-  };
+  }; //[cite: 4]
 
   const handleCreateStandaloneProject = async (e: any) => {
     e.preventDefault();
@@ -105,7 +106,8 @@ export default function TrackExpenditure() {
     setIsCreating(true);
     try {
       const payload = { 
-        userId: user.uid, 
+        // Changed "userId" to "uid" so the database firewall accepts the write request
+        uid: user.uid, //[cite: 4]
         projectName: newProjectName.trim(), 
         grandTotal: Number(newProjectBudget) || 0, 
         isManualTracker: true, 
@@ -125,7 +127,7 @@ export default function TrackExpenditure() {
     } finally {
       setIsCreating(false);
     }
-  };
+  }; //[cite: 4]
 
   const handleSubmitExpense = async (e: any) => {
     e.preventDefault();
@@ -159,7 +161,7 @@ export default function TrackExpenditure() {
       console.error("Error saving expense:", error);
       alert("Could not save expense.");
     }
-  };
+  }; //[cite: 4]
 
   const handleEdit = (exp: any) => {
     setExpenseForm({ 
@@ -168,16 +170,16 @@ export default function TrackExpenditure() {
     });
     setEditingId(exp.id);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  }; //[cite: 4]
 
   const handleDelete = async (expId: string) => {
     if (!confirm("Are you sure you want to delete this record?")) return;
     await deleteDoc(doc(db, "boq_projects", selectedProject.id, "expenses", expId));
-  };
+  }; //[cite: 4]
 
   const inputStyle = "w-full border border-gray-200 bg-gray-50 rounded-xl p-3 md:p-4 text-gray-900 font-medium focus:bg-white focus:ring-2 focus:ring-[#22c55e]/30 focus:border-[#22c55e] transition-all outline-none";
   const selectStyle = `${inputStyle} cursor-pointer appearance-none`;
-  const labelStyle = "text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block";
+  const labelStyle = "text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block"; //[cite: 4]
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center font-medium text-gray-500 bg-gray-50">Loading Tracker...</div>;
 
@@ -192,7 +194,7 @@ export default function TrackExpenditure() {
     const items = expenses.filter(e => e.category === cat);
     if (items.length > 0) acc[cat] = items;
     return acc;
-  }, {});
+  }, {}); //[cite: 4]
 
   // === CLIENT INVOICE VIEW (PREMIUM) ===
   if (isClientView && selectedProject) {
