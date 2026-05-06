@@ -1,27 +1,22 @@
 import * as admin from "firebase-admin";
 
-// Use a variable to prevent multiple initializations
-let app;
+// 1. Mandatory Project ID pulled directly from your firebase_2.ts configuration
+const projectId = "okiconstruct-app-v2";
 
 if (!admin.apps.length) {
-  // We check for the Project ID first. If it's missing, we don't crash the build.
-  const projectId = process.env.FIREBASE_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
-
-  if (projectId) {
-    app = admin.initializeApp({
+  // 2. Prevent the build from crashing if Vercel is missing the keys during compilation
+  if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+    admin.initializeApp({
       credential: admin.credential.cert({
         projectId: projectId,
         clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        // The replace() fix is mandatory for Vercel's private key handling
-        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+        privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
       }),
     });
   } else {
-    // This console log will show up in Vercel if the key is missing
-    console.warn("Firebase Admin: FIREBASE_PROJECT_ID is missing. Build might fail if database access is required.");
+    // 3. Safe fallback so the Vercel "collect page data" phase can successfully finish
+    admin.initializeApp({ projectId: projectId });
   }
-} else {
-  app = admin.app();
 }
 
 const adminDb = admin.firestore();
