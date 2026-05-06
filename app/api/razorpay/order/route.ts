@@ -4,8 +4,8 @@ import { adminDb } from '@/app/lib/firebase-admin'; // This imports your VIP con
 
 // 1. Initialize Razorpay with your secret keys
 const razorpay = new Razorpay({
-  key_id: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID!,
-  key_secret: process.env.RAZORPAY_KEY_SECRET!,
+  key_id: process.env.rzp_test_SlfoV2BijOVNwK!,
+  key_secret: process.env.ke1hpnjmpnYIzh8d70LkzQTF!,
 });
 
 export async function POST(request: Request) {
