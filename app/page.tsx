@@ -29,6 +29,7 @@ const GENDERS = ["Male", "Female", "Other", "Prefer not to say"];
 const PRESET_AVATARS = ["👨‍💼", "👩‍💼", "👷‍♂️", "👷‍♀️", "👤"];
 
 export default function Dashboard() {
+  const [showWelcome, setShowWelcome] = useState(true);
   const router = useRouter();
   
   const [user, setUser] = useState<User | null>(null);
@@ -193,6 +194,15 @@ export default function Dashboard() {
     } catch (error) {
       console.error("Logout Error:", error);
     }
+    // Auto-hide welcome text after 4.5 seconds
+  useEffect(() => {
+    if (userData && showWelcome) {
+      const timer = setTimeout(() => {
+        setShowWelcome(false);
+      }, 4500);
+      return () => clearTimeout(timer);
+    }
+  }, [userData, showWelcome]);
   };
 
   // VIEW 1: LOADING SCREEN
@@ -217,7 +227,7 @@ export default function Dashboard() {
             <h1 className="text-2xl font-bold text-gray-900 mb-2">
               Welcome To OkiConstruct
             </h1>
-            <p className="text-gray-500 text-sm">SECURE SYSTEM LOGIN</p>
+            <p className="text-gray-500 text-sm uppercase tracking-wider font-semibold">Generate BOQ & Track Expense</p>
           </div>
 
           {authError && <div className="bg-red-50 text-red-600 p-3 rounded-lg mb-6 text-sm font-medium">{authError}</div>}

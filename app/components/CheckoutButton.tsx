@@ -59,7 +59,7 @@ export default function CheckoutButton({ planId, label, price, userId }: { planI
               razorpay_payment_id: response.razorpay_payment_id,
               razorpay_signature: response.razorpay_signature,
               planId: planId,
-              userId: "REPLACE_WITH_ACTUAL_USER_ID" // We will connect this to your auth later!
+              userId: userId
             }),
           });
 
@@ -85,12 +85,12 @@ export default function CheckoutButton({ planId, label, price, userId }: { planI
     }
   };
 
+  // NEW THEME: Rounded-xl, bright green, sleek hover transition
   return (
     <button
       onClick={handleCheckout}
       disabled={isLoading}
-      // Minimalist styling: Black background, white text, green hover effect
-      className="w-full py-3 px-6 bg-black text-white font-semibold rounded-md shadow-sm hover:bg-green-600 transition-colors duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+      className="w-full bg-[#22c55e] text-white font-bold text-lg p-4 rounded-xl hover:bg-[#1ea950] transition-colors shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
     >
       {isLoading ? "Securely Processing..." : `Upgrade to ${label} (₹${price})`}
     </button>

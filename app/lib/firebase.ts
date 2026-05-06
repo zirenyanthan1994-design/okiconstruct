@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAf4q5vHh9r5Ta0LQsJvIA_6JckNfleogs",
@@ -11,9 +11,15 @@ const firebaseConfig = {
   appId: "1:590310575347:web:23e94dd18df2ea3bb8bb86"
 };
 
-// Clean singleton pattern to prevent crashes in Next.js
+// 2. Initialize Firebase securely
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
-const db = getFirestore(app);
 
-export { app, auth, db };
+// 3. THE MODERN MAGIC: Initialize Firestore with the new Offline Cache system
+const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager()
+  })
+});
+
+export { auth, db };
