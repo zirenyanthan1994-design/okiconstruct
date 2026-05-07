@@ -3,8 +3,7 @@ import { useState, useEffect } from 'react';
 
 // --- CLOUD ENGINE IMPORTS ---
 import { auth, db } from '../lib/firebase';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { doc, getDoc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, getDoc, query, where, getDocs } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import { onAuthStateChanged } from 'firebase/auth';
 import Navbar from '../components/Navbar';
@@ -20,12 +19,8 @@ export default function Estimator() {
   const [totalFloorsCount, setTotalFloorsCount] = useState(1);
   const [isAskingCopy, setIsAskingCopy] = useState(false);
   
-  // NEW: Dynamic Slab Overhang
   const [slabOverhang, setSlabOverhang] = useState("2"); 
-  
-  // NEW: Copy layout column height
   const [copyColumnHeight, setCopyColumnHeight] = useState("10");
-
   const [floorSnapshots, setFloorSnapshots] = useState<any[]>([]);
 
   const [hasStairs, setHasStairs] = useState(false);
@@ -36,7 +31,6 @@ export default function Estimator() {
   const [isSaved, setIsSaved] = useState(false);
   const router = useRouter();
 
-  // Fetch User Data for Custom Branding
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
@@ -55,10 +49,24 @@ export default function Estimator() {
     setIsSaving(true);
     try {
       const cleanData = JSON.parse(JSON.stringify(boqReport));
+      const cleanName = (projectName || "OkiConstruct Build - " + new Date().toLocaleDateString()).trim();
+      
+      // --- NEW VALIDATION: Prevent Duplicate Project Names ---
+      const checkQuery = query(
+        collection(db, "boq_projects"),
+        where("uid", "==", auth.currentUser.uid),
+        where("projectName", "==", cleanName)
+      );
+      const duplicateCheck = await getDocs(checkQuery);
+      
+      if (!duplicateCheck.empty) {
+        setIsSaving(false);
+        return alert(`A project named "${cleanName}" already exists. Please choose a unique name to ensure expenses sync correctly.`);
+      }
+
       const payload = {
-        // FIX: Changed "userId" to "uid" to bypass the security firewall
         uid: auth.currentUser.uid, 
-        projectName: projectName || "OkiConstruct Build - " + new Date().toLocaleDateString(), 
+        projectName: cleanName, 
         totalFloors: totalFloorsCount,
         grandTotal: boqReport.grandTotal || 0,
         boqData: cleanData, 
@@ -102,7 +110,7 @@ export default function Estimator() {
     tmt: { "8mm": '', "10mm": '', "12mm": '', "16mm": '', "20mm": '', "25mm": '' },
     cement: '', sand: '', gravel: '', boulder: '', bricks: '',
     windowMaterial: 'Aluminum Profile', windowRate: '',
-    mainDoorPrice: '', internalDoorPrice: ''
+    mainDoorPrice: '', internalDoorPrice: '', doorFramePrice: '' 
   });
 
   const [tiles, setTiles] = useState<Record<string, { size: string; type: string; price: string }>>({});
@@ -118,16 +126,8 @@ export default function Estimator() {
     let isValid = true;
     const isVal = (v: any) => Number(v) > 0;
 
+    // Structure Validation (Now Step 2)
     if (currentStep === 2) {
-      const f = floorsData[activeFloor];
-      if (!isVal(f.hall.l) || !isVal(f.hall.w) || !isVal(f.kitchen.l) || !isVal(f.kitchen.w)) isValid = false;
-      f.bedrooms.forEach(b => { if (!isVal(b.l) || !isVal(b.w)) isValid = false; });
-      f.bathrooms.forEach(b => { if (!isVal(b.l) || !isVal(b.w)) isValid = false; });
-      if (hasStairs && (!isVal(stairsDim.l) || !isVal(stairsDim.w))) isValid = false;
-      if (!isValid) return setErrorMsg("Please fill in all room dimensions with valid numbers.");
-    }
-
-    if (currentStep === 3) {
       if (!isVal(structure.column.height) || !isVal(structure.column.l) || !isVal(structure.column.w)) isValid = false;
       if (!isVal(structure.roofBeam.l) || !isVal(structure.roofBeam.w)) isValid = false;
       if (activeFloor === 0) {
@@ -137,6 +137,17 @@ export default function Estimator() {
       if (!isValid) return setErrorMsg("Please ensure all structural dimensions are filled out.");
     }
 
+    // Layout Validation (Now Step 3)
+    if (currentStep === 3) {
+      const f = floorsData[activeFloor];
+      if (!isVal(f.hall.l) || !isVal(f.hall.w) || !isVal(f.kitchen.l) || !isVal(f.kitchen.w)) isValid = false;
+      f.bedrooms.forEach(b => { if (!isVal(b.l) || !isVal(b.w)) isValid = false; });
+      f.bathrooms.forEach(b => { if (!isVal(b.l) || !isVal(b.w)) isValid = false; });
+      if (hasStairs && (!isVal(stairsDim.l) || !isVal(stairsDim.w))) isValid = false;
+      if (!isValid) return setErrorMsg("Please fill in all room dimensions with valid numbers.");
+    }
+
+    // Material Rates Validation
     if (currentStep === 5) {
       if (!isVal(rates.cement) || !isVal(rates.bricks) || !isVal(rates.sand) || !isVal(rates.tmt['10mm'])) {
         return setErrorMsg("Material rates cannot be empty. Please enter prices.");
@@ -154,7 +165,7 @@ export default function Estimator() {
     }
 
     if (activeFloor < totalFloorsCount - 1) {
-      setCopyColumnHeight(structure.column.height); // Auto-fill current height
+      setCopyColumnHeight(structure.column.height); 
       setIsAskingCopy(true); 
     } else {
       executeProcessBOQ('none');
@@ -191,7 +202,7 @@ export default function Estimator() {
             const clonedSnap = JSON.parse(JSON.stringify(currentSnap));
             clonedSnap.floorName = i === 1 ? "1st Floor" : i === 2 ? "2nd Floor" : i === 3 ? "3rd Floor" : `${i}th Floor`;
             clonedSnap.layout.floorName = clonedSnap.floorName;
-            clonedSnap.structure.column.height = copyColumnHeight; // Inject Custom Column Height
+            clonedSnap.structure.column.height = copyColumnHeight; 
             finalSnaps.push(clonedSnap);
         }
     }
@@ -218,9 +229,8 @@ export default function Estimator() {
       setActiveFloor(nextIdx);
       setIsAskingCopy(false);
       
-      // Update structure height for manual floor entry
       setStructure({...structure, column: {...structure.column, height: copyColumnHeight}});
-      setCurrentStep(2);
+      setCurrentStep(2); // Goes back to Structure for the new floor
       window.scrollTo(0,0);
     }
   };
@@ -312,10 +322,8 @@ export default function Estimator() {
 
       const standardWFactor = 1 + (masterSettings.percentages.materialWastage / 100);
 
-      // GLOBAL METRICS TRACKING
       let m_builtUp = 0, m_slab = 0, m_wall = 0, m_doors = 0, m_windows = 0, m_paint = 0;
 
-      // --- SNAPSHOT MAPPING ---
       const floorReports = finalSnaps.map((snap: any, idx: number) => {
         const currentLayout = snap.layout;
         const currentStructure = snap.structure;
@@ -329,7 +337,6 @@ export default function Estimator() {
         const sections: any[] = [];
         let floorBaseCost = 0; 
 
-        // AREA CALCULATIONS
         const staticRoomsArea = getRoomArea(currentLayout.hall) + getRoomArea(currentLayout.kitchen) + getRoomArea(currentLayout.dining) + getRoomArea(currentLayout.foyer);
         const dynamicBedroomsArea = currentLayout.bedrooms.reduce((sum: number, r: any) => sum + getRoomArea(r), 0);
         const dynamicBathsArea = currentLayout.bathrooms.reduce((sum: number, r: any) => sum + (r.isAttached && r.layoutType === 'inside' ? 0 : getRoomArea(r)), 0);
@@ -341,7 +348,6 @@ export default function Estimator() {
         const dynamicBathsPeri = currentLayout.bathrooms.reduce((sum: number, r: any) => sum + (r.isAttached && r.layoutType === 'inside' ? 0 : getRoomPerimeter(r)), 0);
         const layoutPerimeter = staticPeri + dynamicBedroomsPeri + dynamicBathsPeri;
 
-        // NEW: SLAB OVERHANG LOGIC
         const overhang = Number(slabOverhang) || 0;
         const baseSide = Math.sqrt(layoutArea);
         const slabSide = baseSide + overhang;
@@ -480,10 +486,8 @@ export default function Estimator() {
         const totalMortarVolCft = (netWallArea * masterSettings.consumption.plasterCftPerSqft * 2) + (netWallArea * (masterSettings.consumption.brickJoiningCftPerSqft || 0.05));
         const masonryConc = calculateConcrete(totalMortarVolCft, masterSettings.ratios.mortar);
 
-        // NEW: Advanced Paint Math (Wall * 2 + Ceiling + 10%)
         const floorPaintArea = ((netWallArea * 2) + layoutArea) * 1.10;
 
-        // Populate Master Metrics
         m_builtUp += layoutArea;
         m_slab += adjustedSlabArea;
         m_wall += netWallArea;
@@ -498,11 +502,18 @@ export default function Estimator() {
         ]);
 
         const doorsWindowsItems = [];
-        if (Number(currentOpenings.mainDoor.count) > 0) doorsWindowsItems.push({ name: "Main Door", qty: Number(currentOpenings.mainDoor.count), unit: "NOS", rate: Number(rates.mainDoorPrice) || 0 });
+        if (Number(currentOpenings.mainDoor.count) > 0) doorsWindowsItems.push({ name: "Main Door", qty: Number(currentOpenings.mainDoor.count), unit: "NOS", rate: Number(safeRates.mainDoorPrice) || 0 });
+        
         let internalDoorQty = currentOpenings.doors.reduce((sum: number, d: any) => sum + Number(d.count || 0), 0);
-        if (internalDoorQty > 0) doorsWindowsItems.push({ name: "Internal Doors", qty: internalDoorQty, unit: "NOS", rate: Number(rates.internalDoorPrice) || 0 });
-        if (windowsArea > 0) doorsWindowsItems.push({ name: `Windows (${rates.windowMaterial})`, qty: windowsArea, unit: "SQFT", rate: Number(rates.windowRate) || 0 });
-        if (ventArea > 0) doorsWindowsItems.push({ name: "Ventilations", qty: ventArea, unit: "SQFT", rate: Number(rates.windowRate) || 0 });
+        if (internalDoorQty > 0) doorsWindowsItems.push({ name: "Internal Doors", qty: internalDoorQty, unit: "NOS", rate: Number(safeRates.internalDoorPrice) || 0 });
+        
+        // --- NEW LOGIC: Add Door Frames ---
+        if (internalDoorQty > 0 && Number(safeRates.doorFramePrice) > 0) {
+          doorsWindowsItems.push({ name: "Internal Door Frames", qty: internalDoorQty, unit: "NOS", rate: Number(safeRates.doorFramePrice) });
+        }
+        
+        if (windowsArea > 0) doorsWindowsItems.push({ name: `Windows (${safeRates.windowMaterial})`, qty: windowsArea, unit: "SQFT", rate: Number(safeRates.windowRate) || 0 });
+        if (ventArea > 0) doorsWindowsItems.push({ name: "Ventilations", qty: ventArea, unit: "SQFT", rate: Number(safeRates.windowRate) || 0 });
         if (doorsWindowsItems.length > 0) addSection("7. Doors & Windows", doorsWindowsItems);
 
         const tileItems = [];
@@ -582,7 +593,8 @@ export default function Estimator() {
           <div className="mb-10 animate-in fade-in duration-500 print:hidden">
             <div className="flex items-center justify-between text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
               <span className={currentStep >= 0 ? "text-[#22c55e]" : ""}>Setup</span>
-              <span className={currentStep >= 2 ? "text-[#22c55e]" : ""}>Layout</span>
+              <span className={currentStep >= 2 ? "text-[#22c55e]" : ""}>Structure</span>
+              <span className={currentStep >= 3 ? "text-[#22c55e]" : ""}>Layout</span>
               <span className={currentStep >= 4 ? "text-[#22c55e]" : ""}>Openings</span>
               <span className={currentStep >= 6 ? "text-[#22c55e]" : ""}>Finishes</span>
               <span className={currentStep >= 8 ? "text-[#22c55e]" : ""}>Review</span>
@@ -687,7 +699,6 @@ export default function Estimator() {
               </h2>
               <p className="text-gray-500 font-medium mb-4">Save time by duplicating the entire layout and measurements.</p>
               
-              {/* NEW: Dynamic Height prompt for copied layouts */}
               <div className="bg-gray-50 p-6 rounded-2xl border border-gray-100 mt-6 text-left">
                 <label className={labelStyle}>What is the column height for this floor? (Feet)</label>
                 <input type="number" inputMode="decimal" className={inputStyle} value={copyColumnHeight} onChange={(e) => setCopyColumnHeight(e.target.value)} />
@@ -701,7 +712,102 @@ export default function Estimator() {
             </div>
           )}
 
+          {/* --- STEP 2 (NEW): STRUCTURE --- */}
           {currentStep === 2 && !isAskingCopy && (
+            <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-3xl mx-auto">
+              
+              <div className="mb-8 border-b border-gray-100 pb-6 text-center">
+                <h1 className="text-3xl font-bold text-gray-900 flex items-center justify-center gap-3">
+                  <span className="text-3xl">🏛️</span> Structural Elements
+                </h1>
+              </div>
+
+              {activeFloor === 0 && (
+                <div className="border border-gray-200 p-6 rounded-3xl bg-white shadow-sm">
+                  <h2 className="font-bold text-lg text-gray-900 mb-6 flex items-center gap-2">
+                    <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">1</span> 
+                    Footing (Ground Floor Only)
+                  </h2>
+                  <div className="space-y-5">
+                    <div>
+                      <label className={labelStyle}>Number of footings</label>
+                      <input type="number" inputMode="decimal" min="0" placeholder="e.g., 12" className={inputStyle} value={structure.footing.count} onChange={(e) => setStructure({ ...structure, footing: { ...structure.footing, count: e.target.value } })} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className={labelStyle}>Length (Feet)</label>
+                        <input type="number" inputMode="decimal" min="0" placeholder="L" className={inputStyle} value={structure.footing.l} onChange={(e) => setStructure({ ...structure, footing: { ...structure.footing, l: e.target.value } })} />
+                      </div>
+                      <div>
+                        <label className={labelStyle}>Width (Feet)</label>
+                        <input type="number" inputMode="decimal" min="0" placeholder="W" className={inputStyle} value={structure.footing.w} onChange={(e) => setStructure({ ...structure, footing: { ...structure.footing, w: e.target.value } })} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className={labelStyle}>Depth (Feet)</label>
+                      <input type="number" inputMode="decimal" min="0" placeholder="e.g., 4" className={inputStyle} value={structure.footing.depth} onChange={(e) => setStructure({ ...structure, footing: { ...structure.footing, depth: e.target.value } })} />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="border border-gray-200 p-6 rounded-3xl bg-white shadow-sm">
+                <h2 className="font-bold text-lg text-gray-900 mb-6 flex items-center gap-2">
+                  <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">{activeFloor === 0 ? '2' : '1'}</span> 
+                  Columns
+                </h2>
+                <div className="space-y-5">
+                  <div>
+                    <label className={labelStyle}>Height (Feet)</label>
+                    <input type="number" inputMode="decimal" min="0" placeholder="e.g., 10" className={inputStyle} value={structure.column.height} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, height: e.target.value } })} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelStyle}>Length (Inches)</label>
+                      <input type="number" inputMode="decimal" min="0" placeholder="e.g., 12" className={inputStyle} value={structure.column.l} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, l: e.target.value } })} />
+                    </div>
+                    <div>
+                      <label className={labelStyle}>Width (Inches)</label>
+                      <input type="number" inputMode="decimal" min="0" placeholder="e.g., 12" className={inputStyle} value={structure.column.w} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, w: e.target.value } })} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border border-gray-200 p-6 rounded-3xl bg-white shadow-sm">
+                <h2 className="font-bold text-lg text-gray-900 mb-6 flex items-center gap-2">
+                  <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">{activeFloor === 0 ? '3' : '2'}</span> 
+                  Beams (Inches)
+                </h2>
+                <div className="space-y-6">
+                  {activeFloor === 0 && (
+                    <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                      <span className="font-bold text-gray-700 block mb-3">Plinth Beam</span>
+                      <div className="grid grid-cols-2 gap-4">
+                        <input type="number" inputMode="decimal" min="0" placeholder="Length" className={inputStyle} value={structure.plinthBeam.l} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, l: e.target.value } })} />
+                        <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.plinthBeam.w} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, w: e.target.value } })} />
+                      </div>
+                    </div>
+                  )}
+                  <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                    <span className="font-bold text-gray-700 block mb-3">Roof Beam</span>
+                    <div className="grid grid-cols-2 gap-4">
+                      <input type="number" inputMode="decimal" min="0" placeholder="Length" className={inputStyle} value={structure.roofBeam.l} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, l: e.target.value } })} />
+                      <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.roofBeam.w} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, w: e.target.value } })} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-4 pt-4">
+                <button onClick={() => { setErrorMsg(""); setCurrentStep(1); }} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
+                <button onClick={() => validateAndProceed(3)} className="w-2/3 bg-[#22c55e] text-white font-bold text-lg p-4 rounded-xl hover:bg-[#1ea950] transition-colors shadow-md">Continue to Layout</button>
+              </div>
+            </div>
+          )}
+
+          {/* --- STEP 3 (NEW): LAYOUT --- */}
+          {currentStep === 3 && !isAskingCopy && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
               
               <div className="mb-8 border-b border-gray-100 pb-6 flex justify-between items-end">
@@ -713,7 +819,6 @@ export default function Estimator() {
                 </div>
               </div>
 
-              {/* NEW: Dynamic Slab Overhang Input */}
               <div className="bg-green-50/50 border border-[#22c55e]/20 p-5 rounded-2xl mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                   <h3 className="font-bold text-gray-900">Slab Overhang Extension</h3>
@@ -825,100 +930,6 @@ export default function Estimator() {
               </div>
 
               <div className="flex gap-4 pt-6">
-                <button onClick={() => { setErrorMsg(""); setCurrentStep(1); }} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
-                <button onClick={() => validateAndProceed(3)} className="w-2/3 bg-[#22c55e] text-white font-bold text-lg p-4 rounded-xl hover:bg-[#1ea950] transition-colors shadow-md">Continue to Structure</button>
-              </div>
-            </div>
-          )}
-
-          {/* --- STEP 3: STRUCTURE --- */}
-          {currentStep === 3 && !isAskingCopy && (
-            <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-3xl mx-auto">
-              
-              <div className="mb-8 border-b border-gray-100 pb-6 text-center">
-                <h1 className="text-3xl font-bold text-gray-900 flex items-center justify-center gap-3">
-                  <span className="text-3xl">🏛️</span> Structural Elements
-                </h1>
-              </div>
-
-              {activeFloor === 0 && (
-                <div className="border border-gray-200 p-6 rounded-3xl bg-white shadow-sm">
-                  <h2 className="font-bold text-lg text-gray-900 mb-6 flex items-center gap-2">
-                    <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">1</span> 
-                    Footing (Ground Floor Only)
-                  </h2>
-                  <div className="space-y-5">
-                    <div>
-                      <label className={labelStyle}>Number of footings</label>
-                      <input type="number" inputMode="decimal" min="0" placeholder="e.g., 12" className={inputStyle} value={structure.footing.count} onChange={(e) => setStructure({ ...structure, footing: { ...structure.footing, count: e.target.value } })} />
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className={labelStyle}>Length (Feet)</label>
-                        <input type="number" inputMode="decimal" min="0" placeholder="L" className={inputStyle} value={structure.footing.l} onChange={(e) => setStructure({ ...structure, footing: { ...structure.footing, l: e.target.value } })} />
-                      </div>
-                      <div>
-                        <label className={labelStyle}>Width (Feet)</label>
-                        <input type="number" inputMode="decimal" min="0" placeholder="W" className={inputStyle} value={structure.footing.w} onChange={(e) => setStructure({ ...structure, footing: { ...structure.footing, w: e.target.value } })} />
-                      </div>
-                    </div>
-                    <div>
-                      <label className={labelStyle}>Depth (Feet)</label>
-                      <input type="number" inputMode="decimal" min="0" placeholder="e.g., 4" className={inputStyle} value={structure.footing.depth} onChange={(e) => setStructure({ ...structure, footing: { ...structure.footing, depth: e.target.value } })} />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="border border-gray-200 p-6 rounded-3xl bg-white shadow-sm">
-                <h2 className="font-bold text-lg text-gray-900 mb-6 flex items-center gap-2">
-                  <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">{activeFloor === 0 ? '2' : '1'}</span> 
-                  Columns
-                </h2>
-                <div className="space-y-5">
-                  <div>
-                    <label className={labelStyle}>Height (Feet)</label>
-                    <input type="number" inputMode="decimal" min="0" placeholder="e.g., 10" className={inputStyle} value={structure.column.height} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, height: e.target.value } })} />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className={labelStyle}>Length (Inches)</label>
-                      <input type="number" inputMode="decimal" min="0" placeholder="e.g., 12" className={inputStyle} value={structure.column.l} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, l: e.target.value } })} />
-                    </div>
-                    <div>
-                      <label className={labelStyle}>Width (Inches)</label>
-                      <input type="number" inputMode="decimal" min="0" placeholder="e.g., 12" className={inputStyle} value={structure.column.w} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, w: e.target.value } })} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="border border-gray-200 p-6 rounded-3xl bg-white shadow-sm">
-                <h2 className="font-bold text-lg text-gray-900 mb-6 flex items-center gap-2">
-                  <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">{activeFloor === 0 ? '3' : '2'}</span> 
-                  Beams (Inches)
-                </h2>
-                <div className="space-y-6">
-                  {activeFloor === 0 && (
-                    <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                      <span className="font-bold text-gray-700 block mb-3">Plinth Beam</span>
-                      <div className="grid grid-cols-2 gap-4">
-                        <input type="number" inputMode="decimal" min="0" placeholder="Length" className={inputStyle} value={structure.plinthBeam.l} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, l: e.target.value } })} />
-                        <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.plinthBeam.w} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, w: e.target.value } })} />
-                      </div>
-                    </div>
-                  )}
-                  <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                    <span className="font-bold text-gray-700 block mb-3">Roof Beam</span>
-                    <div className="grid grid-cols-2 gap-4">
-                      <input type="number" inputMode="decimal" min="0" placeholder="Length" className={inputStyle} value={structure.roofBeam.l} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, l: e.target.value } })} />
-                      <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.roofBeam.w} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, w: e.target.value } })} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex gap-4 pt-4">
                 <button onClick={() => { setErrorMsg(""); setCurrentStep(2); }} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
                 <button onClick={() => validateAndProceed(4)} className="w-2/3 bg-[#22c55e] text-white font-bold text-lg p-4 rounded-xl hover:bg-[#1ea950] transition-colors shadow-md">Continue to Openings</button>
               </div>
@@ -935,7 +946,6 @@ export default function Estimator() {
                 </h1>
               </div>
 
-              {/* Helper for Openings Grid */}
               {[{ title: '1. Main Door', data: [openings.mainDoor], key: 'mainDoor', isArray: false },
                 { title: '2. Internal Doors', data: openings.doors, key: 'doors', isArray: true },
                 { title: '3. Windows', data: openings.windows, key: 'windows', isArray: true },
@@ -1051,7 +1061,7 @@ export default function Estimator() {
                       </div>
                     </div>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-gray-100">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-gray-100">
                     <div>
                       <label className={labelStyle}>Main Door Price</label>
                       <div className="relative">
@@ -1064,6 +1074,13 @@ export default function Estimator() {
                       <div className="relative">
                         <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">₹</span>
                         <input type="number" inputMode="decimal" min="0" className={`${inputStyle} pl-8`} value={rates.internalDoorPrice} onChange={(e) => setRates({ ...rates, internalDoorPrice: e.target.value })} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className={labelStyle}>Door Frame Price</label>
+                      <div className="relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">₹</span>
+                        <input type="number" inputMode="decimal" min="0" className={`${inputStyle} pl-8`} value={rates.doorFramePrice} onChange={(e) => setRates({ ...rates, doorFramePrice: e.target.value })} />
                       </div>
                     </div>
                   </div>
@@ -1216,7 +1233,6 @@ export default function Estimator() {
           {currentStep === 9 && boqReport?.floorReports && (
             <div className="animate-in fade-in slide-in-from-bottom-6 duration-700 printable-boq">
               
-              {/* UNIVERSAL PREMIUM HEADER (Logo for ALL users!) */}
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 border-b border-gray-100 pb-8 print:border-b-2 print:border-gray-300">
                 <div className="flex items-center gap-4 text-left">
                   {userData?.avatar && userData.avatar.length > 5 ? (
@@ -1236,7 +1252,6 @@ export default function Estimator() {
                 </div>
               </div>
 
-              {/* NEW: MASTER MEASUREMENT SUMMARY */}
               {boqReport.metrics && (
                 <div className="mb-12 print:break-inside-avoid">
                   <h3 className="text-lg font-bold text-gray-900 mb-4 border-l-4 border-[#22c55e] pl-3">Project Measurement Summary</h3>

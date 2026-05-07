@@ -51,7 +51,7 @@ export default function ProfilePage() {
     setActiveTab('boqs');
     setSelectedBOQ(null); // Always clear selection when returning to list
     try {
-      const q = query(collection(db, "boq_projects"), where("userId", "==", user.uid));
+      const q = query(collection(db, "boq_projects"), where("uid", "==", user.uid));
       const querySnapshot = await getDocs(q);
       const fetchedBOQs = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       

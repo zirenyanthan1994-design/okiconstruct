@@ -1,14 +1,20 @@
 "use client";
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { auth, db } from '../lib/firebase';
 import { collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc, getDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
+import { onAuthStateChanged } from 'firebase/auth';
 import Navbar from '../components/Navbar';
 
-const CATEGORIES = ["Footing & Foundation", "Plinth Beams", "Roof Beams", "Columns", "Roof Slab", "Staircase Structure", "Masonry, Joining & Plastering", "Doors & Windows", "Flooring & Tiles", "Painting Material", "Master Labor & Services", "Miscellaneous"];
-const UNITS = ["NOS", "BAG", "CFT", "SQFT", "LITER", "KG", "RFT", "%", "Lumbsum", "Meter", "Feet", "Inch", "Box", "Piece", "Milimeter", "CUM", "SQ/MT", "Matric Ton"];
+const CATEGORIES = [
+  "Footing & Foundation", "Plinth Beams", "Roof Beams", "Columns", "Roof Slab", 
+  "Staircase Structure", "Masonry, Joining & Plastering", "Doors & Windows", 
+  "Flooring & Tiles", "Painting Material", "Master Labor & Services", "Miscellaneous"
+];
+const UNITS = [
+  "NOS", "BAG", "CFT", "SQFT", "LITER", "KG", "RFT", "%", "Lumbsum", 
+  "Meter", "Feet", "Inch", "Box", "Piece", "Milimeter", "CUM", "SQ/MT", "Matric Ton"
+];
 
 const INITIAL_FORM = { 
   date: new Date().toISOString().split('T')[0], 
@@ -33,6 +39,10 @@ export default function TrackExpenditure() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expenseForm, setExpenseForm] = useState(INITIAL_FORM);
   const [isCreating, setIsCreating] = useState(false);
+
+  // 1. MOVED UP: Declared here to resolve "used before defined" TypeScript errors
+  const isPremium = userData?.tier === 'premium';
+  const estimatedBudget = selectedProject?.grandTotal || 0;
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -66,13 +76,11 @@ export default function TrackExpenditure() {
   };
 
   useEffect(() => {
-    // FIX 1: Ensure user is loaded, and added user to dependency array
     if (!selectedProject || !user) { 
       setExpenses([]); 
       return; 
     }
     
-    // FIX 2: Added the where("uid", "==", user.uid) clause so Firebase allows the read
     const q = query(
       collection(db, "boq_projects", selectedProject.id, "expenses"),
       where("uid", "==", user.uid)
@@ -110,9 +118,24 @@ export default function TrackExpenditure() {
     
     setIsCreating(true);
     try {
+      const cleanName = newProjectName.trim();
+      
+      // 2. NEW LOGIC: Prevent duplicate project names to keep BOQ synchronized
+      const checkQuery = query(
+        collection(db, "boq_projects"), 
+        where("uid", "==", user.uid),
+        where("projectName", "==", cleanName)
+      );
+      const duplicateCheck = await getDocs(checkQuery);
+      
+      if (!duplicateCheck.empty) {
+        setIsCreating(false);
+        return alert(`A project named "${cleanName}" already exists. Please choose a unique name to ensure expenses sync correctly.`);
+      }
+
       const payload = { 
         uid: user.uid,
-        projectName: newProjectName.trim(), 
+        projectName: cleanName, 
         grandTotal: Number(newProjectBudget) || 0, 
         isManualTracker: true, 
         createdAt: serverTimestamp() 
@@ -135,14 +158,13 @@ export default function TrackExpenditure() {
 
   const handleSubmitExpense = async (e: any) => {
     e.preventDefault();
-    if (!selectedProject || !user) return; // Make sure user exists
+    if (!selectedProject || !user) return; 
     
     try {
       const actualAmount = Number(expenseForm.qty) * Number(expenseForm.rate);
       const billQty = isPremium && expenseForm.billableQty ? Number(expenseForm.billableQty) : Number(expenseForm.qty);
       const billRate = isPremium && expenseForm.billableRate ? Number(expenseForm.billableRate) : Number(expenseForm.rate);
       
-      // FIX 3: Added uid: user.uid to the payload so it passes Firebase write rules
       const expenseData = {
         ...expenseForm, 
         qty: Number(expenseForm.qty), 
@@ -189,9 +211,6 @@ export default function TrackExpenditure() {
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center font-medium text-gray-500 bg-gray-50">Loading Tracker...</div>;
 
-  const isPremium = userData?.tier === 'premium';
-  const estimatedBudget = selectedProject?.grandTotal || 0;
-  
   const actualTotalSpent = expenses.reduce((sum: number, exp: any) => sum + (Number(exp.actualAmount) || 0), 0);
   const billableTotalSpent = expenses.reduce((sum: number, exp: any) => sum + (Number(exp.billableAmount) || 0), 0);
 
@@ -201,12 +220,9 @@ export default function TrackExpenditure() {
     return acc;
   }, {});
 
-  // === CLIENT INVOICE VIEW (PREMIUM) ===
   if (isClientView && selectedProject) {
     return (
       <main className="max-w-5xl mx-auto p-4 md:p-10 my-10 bg-white border border-gray-100 rounded-3xl shadow-xl print:shadow-none print:border-none print:p-0 print:my-0 animate-in fade-in duration-300">
-        
-        {/* PREMIUM BRANDING HEADER */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-gray-200 pb-6 mb-8 print:border-b-2 print:border-gray-300">
           {isPremium ? (
             <div className="flex items-center gap-4 text-left">
@@ -292,13 +308,11 @@ export default function TrackExpenditure() {
     );
   }
 
-  // === MASTER TRACKING VIEW ===
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
       <Navbar />
 
       <main className="max-w-[1400px] mx-auto p-4 md:p-8 mt-4 w-full flex-grow animate-in fade-in duration-500">
-        
         <div className="bg-white border border-gray-100 rounded-3xl p-6 md:p-8 shadow-sm flex flex-col md:flex-row justify-between md:items-center gap-6 mb-8">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold text-gray-900 tracking-tight flex items-center gap-3">
@@ -310,11 +324,7 @@ export default function TrackExpenditure() {
           </div>
           
           <div className="w-full md:w-80 relative">
-            <select 
-              className={selectStyle} 
-              value={selectedProject ? selectedProject.id : ""} 
-              onChange={handleProjectSelect}
-            >
+            <select className={selectStyle} value={selectedProject ? selectedProject.id : ""} onChange={handleProjectSelect}>
               <option value="" disabled>-- Select a Project --</option>
               <option value="NEW_PROJECT" className="font-bold text-[#22c55e]">＋ Create New Blank Project</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.projectName}</option>)}
@@ -324,7 +334,6 @@ export default function TrackExpenditure() {
         </div>
 
         {!selectedProject ? (
-          
           <div className="py-10 text-center animate-in fade-in slide-in-from-bottom-4 duration-500">
             <h2 className="text-3xl font-bold text-gray-900 mb-3">Start Tracking</h2>
             <p className="text-gray-500 font-medium mb-10 max-w-xl mx-auto">
@@ -333,9 +342,7 @@ export default function TrackExpenditure() {
             
             <div className="max-w-md mx-auto bg-white border border-gray-100 rounded-3xl p-8 text-left shadow-lg relative overflow-hidden">
               <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-[#22c55e] to-[#16a34a]"></div>
-              
               <h3 className="font-bold text-xl text-gray-900 mb-6">Create Blank Project</h3>
-              
               <form onSubmit={handleCreateStandaloneProject} className="space-y-6">
                 <div>
                   <label className={labelStyle}>Project Name</label>
@@ -354,11 +361,8 @@ export default function TrackExpenditure() {
               </form>
             </div>
           </div>
-
         ) : (
-
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            
             <div className="bg-white border border-gray-100 rounded-3xl p-6 md:p-8 shadow-sm print:hidden">
               <h2 className="font-bold text-xl text-gray-900 mb-6 flex items-center gap-2">
                 <span className="bg-green-50 text-[#22c55e] w-8 h-8 rounded-lg flex items-center justify-center text-sm">
@@ -425,7 +429,7 @@ export default function TrackExpenditure() {
                   </>
                 )}
 
-                <div className={`lg:col-span-${isPremium ? '4' : '8'} flex flex-col justify-end`}>
+                <div className={`${isPremium ? 'lg:col-span-4' : 'lg:col-span-8'} flex flex-col justify-end`}>
                   <button type="submit" className={`w-full text-white p-4 rounded-xl font-bold transition-all shadow-md flex items-center justify-center gap-2 ${editingId ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-900 hover:bg-[#22c55e]'}`}>
                     {editingId ? 'Save Update' : <>Add Expense <span>+</span></>}
                   </button>
@@ -437,7 +441,6 @@ export default function TrackExpenditure() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              
               <div className="bg-white border border-gray-100 rounded-3xl p-6 shadow-sm flex flex-col justify-center">
                 <div className="flex items-center gap-3 mb-2">
                   <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-sm">🎯</div>
