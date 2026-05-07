@@ -7,14 +7,14 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Navbar from '../components/Navbar';
 
-const CATEGORIES = ["Footing & Foundation", "Plinth Beams", "Roof Beams", "Columns", "Roof Slab", "Staircase Structure", "Masonry, Joining & Plastering", "Doors & Windows", "Flooring & Tiles", "Painting Material", "Master Labor & Services", "Miscellaneous"]; //[cite: 4]
-const UNITS = ["NOS", "BAG", "CFT", "SQFT", "LITER", "KG", "RFT", "%", "Lumbsum", "Meter", "Feet", "Inch", "Box", "Piece", "Milimeter", "CUM", "SQ/MT", "Matric Ton"]; //[cite: 4]
+const CATEGORIES = ["Footing & Foundation", "Plinth Beams", "Roof Beams", "Columns", "Roof Slab", "Staircase Structure", "Masonry, Joining & Plastering", "Doors & Windows", "Flooring & Tiles", "Painting Material", "Master Labor & Services", "Miscellaneous"];
+const UNITS = ["NOS", "BAG", "CFT", "SQFT", "LITER", "KG", "RFT", "%", "Lumbsum", "Meter", "Feet", "Inch", "Box", "Piece", "Milimeter", "CUM", "SQ/MT", "Matric Ton"];
 
 const INITIAL_FORM = { 
   date: new Date().toISOString().split('T')[0], 
   materialName: '', category: CATEGORIES[0], unit: UNITS[0], 
   qty: '', rate: '', billableQty: '', billableRate: '' 
-}; //[cite: 4]
+};
 
 export default function TrackExpenditure() {
   const router = useRouter();
@@ -32,7 +32,7 @@ export default function TrackExpenditure() {
   const [isClientView, setIsClientView] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expenseForm, setExpenseForm] = useState(INITIAL_FORM);
-  const [isCreating, setIsCreating] = useState(false); //[cite: 4]
+  const [isCreating, setIsCreating] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -49,12 +49,11 @@ export default function TrackExpenditure() {
       }
     });
     return () => unsubscribe();
-  }, [router]); //[cite: 4]
+  }, [router]);
 
   const fetchProjects = async (uid: string) => {
     try {
-      // Changed "userId" to "uid" to match your Firestore security rules
-      const q = query(collection(db, "boq_projects"), where("uid", "==", uid)); //[cite: 4]
+      const q = query(collection(db, "boq_projects"), where("uid", "==", uid));
       const querySnapshot = await getDocs(q);
       const fetchedProjects: any[] = [];
       querySnapshot.forEach((d) => fetchedProjects.push({ id: d.id, ...d.data() }));
@@ -64,19 +63,25 @@ export default function TrackExpenditure() {
     } finally {
       setIsLoading(false);
     }
-  }; //[cite: 4]
+  };
 
   useEffect(() => {
-    if (!selectedProject) { 
+    // FIX 1: Ensure user is loaded, and added user to dependency array
+    if (!selectedProject || !user) { 
       setExpenses([]); 
       return; 
     }
-    const q = query(collection(db, "boq_projects", selectedProject.id, "expenses"));
+    
+    // FIX 2: Added the where("uid", "==", user.uid) clause so Firebase allows the read
+    const q = query(
+      collection(db, "boq_projects", selectedProject.id, "expenses"),
+      where("uid", "==", user.uid)
+    );
+    
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const fetchedExpenses: any[] = [];
       querySnapshot.forEach((d) => fetchedExpenses.push({ id: d.id, ...d.data() }));
       
-      // Explicitly typed (a: any, b: any) to prevent TS build errors
       fetchedExpenses.sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
       
       setExpenses(fetchedExpenses);
@@ -85,7 +90,7 @@ export default function TrackExpenditure() {
     });
     
     return () => unsubscribe();
-  }, [selectedProject]); //[cite: 4]
+  }, [selectedProject, user]);
 
   const handleProjectSelect = (e: any) => {
     const val = e.target.value;
@@ -95,7 +100,7 @@ export default function TrackExpenditure() {
       return; 
     }
     setSelectedProject(projects.find(p => p.id === val) || null);
-  }; //[cite: 4]
+  };
 
   const handleCreateStandaloneProject = async (e: any) => {
     e.preventDefault();
@@ -106,8 +111,7 @@ export default function TrackExpenditure() {
     setIsCreating(true);
     try {
       const payload = { 
-        // Changed "userId" to "uid" so the database firewall accepts the write request
-        uid: user.uid, //[cite: 4]
+        uid: user.uid,
         projectName: newProjectName.trim(), 
         grandTotal: Number(newProjectBudget) || 0, 
         isManualTracker: true, 
@@ -127,17 +131,18 @@ export default function TrackExpenditure() {
     } finally {
       setIsCreating(false);
     }
-  }; //[cite: 4]
+  };
 
   const handleSubmitExpense = async (e: any) => {
     e.preventDefault();
-    if (!selectedProject) return;
+    if (!selectedProject || !user) return; // Make sure user exists
     
     try {
       const actualAmount = Number(expenseForm.qty) * Number(expenseForm.rate);
       const billQty = isPremium && expenseForm.billableQty ? Number(expenseForm.billableQty) : Number(expenseForm.qty);
       const billRate = isPremium && expenseForm.billableRate ? Number(expenseForm.billableRate) : Number(expenseForm.rate);
       
+      // FIX 3: Added uid: user.uid to the payload so it passes Firebase write rules
       const expenseData = {
         ...expenseForm, 
         qty: Number(expenseForm.qty), 
@@ -146,7 +151,8 @@ export default function TrackExpenditure() {
         billableQty: billQty, 
         billableRate: billRate, 
         billableAmount: (billQty * billRate), 
-        updatedAt: serverTimestamp()
+        updatedAt: serverTimestamp(),
+        uid: user.uid 
       };
       
       if (editingId) {
@@ -161,7 +167,7 @@ export default function TrackExpenditure() {
       console.error("Error saving expense:", error);
       alert("Could not save expense.");
     }
-  }; //[cite: 4]
+  };
 
   const handleEdit = (exp: any) => {
     setExpenseForm({ 
@@ -170,23 +176,22 @@ export default function TrackExpenditure() {
     });
     setEditingId(exp.id);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }; //[cite: 4]
+  };
 
   const handleDelete = async (expId: string) => {
     if (!confirm("Are you sure you want to delete this record?")) return;
     await deleteDoc(doc(db, "boq_projects", selectedProject.id, "expenses", expId));
-  }; //[cite: 4]
+  };
 
   const inputStyle = "w-full border border-gray-200 bg-gray-50 rounded-xl p-3 md:p-4 text-gray-900 font-medium focus:bg-white focus:ring-2 focus:ring-[#22c55e]/30 focus:border-[#22c55e] transition-all outline-none";
   const selectStyle = `${inputStyle} cursor-pointer appearance-none`;
-  const labelStyle = "text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block"; //[cite: 4]
+  const labelStyle = "text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block";
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center font-medium text-gray-500 bg-gray-50">Loading Tracker...</div>;
 
   const isPremium = userData?.tier === 'premium';
   const estimatedBudget = selectedProject?.grandTotal || 0;
   
-  // Explicitly typed (sum: number, exp: any) for TS strictness
   const actualTotalSpent = expenses.reduce((sum: number, exp: any) => sum + (Number(exp.actualAmount) || 0), 0);
   const billableTotalSpent = expenses.reduce((sum: number, exp: any) => sum + (Number(exp.billableAmount) || 0), 0);
 
@@ -194,7 +199,7 @@ export default function TrackExpenditure() {
     const items = expenses.filter(e => e.category === cat);
     if (items.length > 0) acc[cat] = items;
     return acc;
-  }, {}); //[cite: 4]
+  }, {});
 
   // === CLIENT INVOICE VIEW (PREMIUM) ===
   if (isClientView && selectedProject) {
