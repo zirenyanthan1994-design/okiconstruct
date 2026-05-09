@@ -29,7 +29,6 @@ const GENDERS = ["Male", "Female", "Other", "Prefer not to say"];
 const PRESET_AVATARS = ["👨‍💼", "👩‍💼", "👷‍♂️", "👷‍♀️", "👤"];
 
 export default function Dashboard() {
-  const [showWelcome, setShowWelcome] = useState(true);
   const router = useRouter();
   
   const [user, setUser] = useState<User | null>(null);
@@ -51,7 +50,6 @@ export default function Dashboard() {
     avatar: PRESET_AVATARS[0]
   });
 
-  // THE MASTER AUTH LISTENER (Robust & Crash-Proof)
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
@@ -66,7 +64,6 @@ export default function Dashboard() {
             setUserData(docSnap.data());
             setIsOnboarding(false);
           } else {
-            // Database empty? Send to onboarding and auto-fill Google Name if available.
             setProfileForm(prev => ({
               ...prev,
               name: currentUser.displayName || "", 
@@ -76,20 +73,19 @@ export default function Dashboard() {
         } catch (error: any) {
           console.error("Firestore Error:", error);
           setAuthError("Could not connect to the database. Check your internet connection.");
-          await signOut(auth); // Kick out if database fails to prevent infinite loading
+          await signOut(auth);
         }
       } else {
         setUser(null);
         setUserData(null);
         setIsOnboarding(false);
       }
-      setIsLoading(false); // ALWAYS turn off loading spinner
+      setIsLoading(false);
     });
 
     return () => unsubscribe();
   }, []);
 
-  // --- NEW GOOGLE AUTH HANDLER ---
   const handleGoogleAuth = async () => {
     setAuthError("");
     setIsLoading(true);
@@ -104,7 +100,6 @@ export default function Dashboard() {
     }
   };
 
-  // EMAIL & PASSWORD LOGIN/SIGNUP
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError("");
@@ -150,7 +145,6 @@ export default function Dashboard() {
     reader.readAsDataURL(file);
   };
 
-  // ONBOARDING SAVE
   const handleCompleteRegistration = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError("");
@@ -194,18 +188,8 @@ export default function Dashboard() {
     } catch (error) {
       console.error("Logout Error:", error);
     }
-    // Auto-hide welcome text after 4.5 seconds
-  useEffect(() => {
-    if (userData && showWelcome) {
-      const timer = setTimeout(() => {
-        setShowWelcome(false);
-      }, 4500);
-      return () => clearTimeout(timer);
-    }
-  }, [userData, showWelcome]);
   };
 
-  // VIEW 1: LOADING SCREEN
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
@@ -214,7 +198,6 @@ export default function Dashboard() {
     );
   }
 
-  // VIEW 2: LOGIN SCREEN
   if (!user) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
@@ -232,7 +215,6 @@ export default function Dashboard() {
 
           {authError && <div className="bg-red-50 text-red-600 p-3 rounded-lg mb-6 text-sm font-medium">{authError}</div>}
 
-          {/* GOOGLE SIGN IN BUTTON */}
           <button onClick={handleGoogleAuth} type="button" className="w-full bg-white text-gray-700 border border-gray-200 rounded-xl p-3 font-semibold flex items-center justify-center gap-3 hover:bg-gray-50 transition-colors shadow-sm mb-6">
             <svg className="w-5 h-5" viewBox="0 0 24 24">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -273,7 +255,6 @@ export default function Dashboard() {
     );
   }
 
-  // VIEW 3: ONBOARDING SCREEN
   if (isOnboarding) {
     const isSelectedPro = PRO_ROLES.includes(profileForm.role);
     
@@ -354,7 +335,6 @@ export default function Dashboard() {
     );
   }
 
-  // VIEW 4: THE DASHBOARD
   const isProRole = userData?.role && PRO_ROLES.includes(userData.role);
   const isPremium = userData?.tier === "premium";
 
@@ -452,9 +432,25 @@ export default function Dashboard() {
 
         <h3 className="font-bold text-xl text-gray-900 mb-6">Platform Tools</h3>
         
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           
-          <Link href="/estimate-boq" className="bg-white border border-gray-100 rounded-2xl p-8 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all group">
+          <Link href="/generate-2d-layout" className="bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-[#22c55e]/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none"></div>
+            
+            <div className="flex justify-between items-start mb-6 relative z-10">
+              <div className="w-14 h-14 bg-[#22c55e]/20 text-[#22c55e] rounded-xl flex items-center justify-center transition-colors">
+                <span className="text-2xl">📐</span>
+              </div>
+              <span className="bg-[#22c55e] text-black text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">Premium</span>
+            </div>
+            
+            <h2 className="text-2xl font-bold text-white mb-2 relative z-10">Generate 2D Layout</h2>
+            <p className="text-gray-400 text-sm font-medium leading-relaxed relative z-10">
+              Provide your plot dimensions and facing direction to auto-generate 3 distinct architectural floor plan concepts instantly.
+            </p>
+          </Link>
+          
+          <Link href="/estimate-boq" className="bg-white border border-gray-100 rounded-3xl p-8 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all group">
             <div className="w-14 h-14 bg-[#22c55e]/10 text-[#22c55e] rounded-xl flex items-center justify-center mb-6 transition-colors">
               <span className="text-2xl">🏗️</span>
             </div>
@@ -462,7 +458,7 @@ export default function Dashboard() {
             <p className="text-gray-500 text-sm font-medium leading-relaxed">Generate comprehensive material and labor estimates instantly based on your architectural parameters.</p>
           </Link>
 
-          <Link href="/track-expenditure" className="bg-white border border-gray-100 rounded-2xl p-8 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all group">
+          <Link href="/track-expenditure" className="bg-white border border-gray-100 rounded-3xl p-8 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all group">
             <div className="w-14 h-14 bg-[#22c55e]/10 text-[#22c55e] rounded-xl flex items-center justify-center mb-6 transition-colors">
               <span className="text-2xl">📊</span>
             </div>
@@ -470,7 +466,7 @@ export default function Dashboard() {
             <p className="text-gray-500 text-sm font-medium leading-relaxed">Add expenditure records, monitor material consumption, and ensure your project stays strictly under budget.</p>
           </Link>
 
-          <Link href="/contact-experts" className="bg-white border border-gray-100 rounded-2xl p-8 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all group">
+          <Link href="/contact-experts" className="bg-white border border-gray-100 rounded-3xl p-8 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all group">
             <div className="w-14 h-14 bg-[#22c55e]/10 text-[#22c55e] rounded-xl flex items-center justify-center mb-6 transition-colors">
               <span className="text-2xl">🤝</span>
             </div>

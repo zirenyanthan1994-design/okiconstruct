@@ -4,7 +4,7 @@ import { auth, db } from '../lib/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
-import Navbar from '../components/Navbar'; // Added the Modern Navbar!
+import Navbar from '../components/Navbar'; 
 
 // ==========================================
 // MASTER DEFAULT SETTINGS
@@ -14,19 +14,19 @@ const defaultSettings = {
     pcc: { c: 1, s: 3, g: 6 }, 
     slab: { c: 1, s: 2, g: 4 }, 
     footing: { c: 1, s: 2, g: 4 }, 
-    plinthBeam: { c: 1, s: 2, g: 4 }, 
-    beam: { c: 1, s: 1.5, g: 3 }, 
-    column: { c: 1, s: 1.5, g: 3 },
+    plinthBeam: { c: 1, s: 3, g: 4 }, 
+    beam: { c: 1, s: 3, g: 4 }, 
+    column: { c: 1, s: 3, g: 4 },
     mortar: { c: 1, s: 4, g: 0 }, 
     tileBedding: { c: 1, s: 4, g: 0 }
   },
   tmtSpecs: { 
-    '8mm': { length: 40, weight: 4.74 }, 
-    '10mm': { length: 40, weight: 7.40 }, 
-    '12mm': { length: 40, weight: 10.66 }, 
-    '16mm': { length: 40, weight: 18.96 }, 
-    '20mm': { length: 40, weight: 29.60 }, 
-    '25mm': { length: 40, weight: 46.20 } 
+    '8mm': { length: 38, weight: 4.74 }, 
+    '10mm': { length: 38, weight: 7.40 }, 
+    '12mm': { length: 38, weight: 10.66 }, 
+    '16mm': { length: 38, weight: 18.96 }, 
+    '20mm': { length: 38, weight: 29.60 }, 
+    '25mm': { length: 38, weight: 46.20 } 
   },
   dimensions: { 
     slabThickness: 5, 
@@ -35,17 +35,30 @@ const defaultSettings = {
     ringSpacing: 5 
   },
   percentages: { 
-    materialWastage: 7, 
-    slabExtraConcrete: 30 
+    // NEW STRUCTURE: Segregated Material Wastage
+    wastage: {
+      cement: 10,
+      sand: 10,
+      gravel: 10,
+      tmt: 10,
+      bricks: 10,
+      tiles: 10
+    },
+    slabExtraConcrete: 25,
+    electrical: 12, 
+    plumbing: 8, 
+    misc: 5, 
+    logistics: 10, 
+    contingency: 5 
   },
   consumption: { 
     puttyCoverage: 10, 
-    interiorPaintCoverage: 100, // <--- NEW: Interior Paint
-    exteriorPaintCoverage: 60,  // <--- NEW: Exterior Paint
+    interiorPaintCoverage: 50, 
+    exteriorPaintCoverage: 50,  
     bricksPerSqft: 5, 
-    plasterCftPerSqft: 0.08, 
-    brickJoiningCftPerSqft: 0.05, 
-    tileBeddingCftPerSqft: 0.15 
+    plasterCftPerSqft: 0.10, 
+    brickJoiningCftPerSqft: 0.10, 
+    tileBeddingCftPerSqft: 0.20 
   }
 };
 
@@ -64,15 +77,15 @@ const customLabels: Record<string, string> = {
   mortar: "Wall Plaster & Masonry Mortar (No Gravel)",
   tileBedding: "Floor Tile Bedding Mortar (No Gravel)",
   puttyCoverage: "Wall Putty Coverage (Sq.Ft per Kg)",
-  interiorPaintCoverage: "Interior Paint Coverage (Sq.Ft per Liter)", // <--- NEW UI LABEL
-  exteriorPaintCoverage: "Exterior Paint Coverage (Sq.Ft per Liter)", // <--- NEW UI LABEL
+  interiorPaintCoverage: "Interior Paint Coverage (Sq.Ft per Liter)",
+  exteriorPaintCoverage: "Exterior Paint Coverage (Sq.Ft per Liter)", 
   bricksPerSqft: "Bricks (Pcs per Sq.Ft of Wall)",
   plasterCftPerSqft: "Wall Plaster Volume (CFT per Sq.Ft)",
   brickJoiningCftPerSqft: "Brick Joining Mortar Volume (CFT per Sq.Ft)",
   tileBeddingCftPerSqft: "Tile Bedding Volume (CFT per Sq.Ft)"
 };
 
-// Premium Input Styling (Matching the Estimator)
+// Premium Input Styling
 const inputStyle = "w-full border border-gray-200 bg-gray-50 rounded-xl p-4 text-gray-900 font-medium focus:bg-white focus:ring-2 focus:ring-[#22c55e]/30 focus:border-[#22c55e] transition-all outline-none";
 const labelStyle = "text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block";
 
@@ -87,7 +100,7 @@ export default function AdminPortal() {
   const [users, setUsers] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [filter, setFilter] = useState<'ALL' | 'PREMIUM' | 'STANDARD'>('ALL');
-  const PREMIUM_PRICE_INR = 999; // Updated from 9999 to match your Phase 5 Pricing!
+  const PREMIUM_PRICE_INR = 999; 
 
   // --- ENGINE STATE ---
   const [settings, setSettings] = useState(defaultSettings);
@@ -102,7 +115,7 @@ export default function AdminPortal() {
         await fetchMasterData();
         loadEngineSettings();
       } else {
-        router.push('/home'); // Updated to use the correct dashboard route
+        router.push('/home');
       }
     });
     return () => unsubscribe();
@@ -144,7 +157,21 @@ export default function AdminPortal() {
           ratios: { ...defaultSettings.ratios, ...(parsed.ratios || {}) },
           tmtSpecs: { ...defaultSettings.tmtSpecs, ...(parsed.tmtSpecs || {}) },
           dimensions: { ...defaultSettings.dimensions, ...(parsed.dimensions || {}) },
-          percentages: { ...defaultSettings.percentages, ...(parsed.percentages || {}) },
+          percentages: { 
+             ...defaultSettings.percentages, 
+             ...(parsed.percentages || {}),
+             wastage: {
+                ...defaultSettings.percentages.wastage,
+                ...(parsed.percentages?.wastage || {
+                   cement: parsed.percentages?.materialWastage || 10,
+                   sand: parsed.percentages?.materialWastage || 10,
+                   gravel: parsed.percentages?.materialWastage || 10,
+                   tmt: parsed.percentages?.materialWastage || 10,
+                   bricks: 10,
+                   tiles: 10
+                })
+             }
+          },
           consumption: { ...defaultSettings.consumption, ...(parsed.consumption || {}) }
         });
       } catch (e) {
@@ -174,13 +201,15 @@ export default function AdminPortal() {
   const updateRatio = (key: string, field: 'c' | 's' | 'g', val: string) => setSettings(prev => ({ ...prev, ratios: { ...prev.ratios, [key]: { ...prev.ratios[key as keyof typeof defaultSettings.ratios], [field]: Number(val) } } }));
   const updateTmt = (key: string, field: 'length' | 'weight', val: string) => setSettings(prev => ({ ...prev, tmtSpecs: { ...prev.tmtSpecs, [key]: { ...prev.tmtSpecs[key as keyof typeof defaultSettings.tmtSpecs], [field]: Number(val) } } }));
   const updateDimension = (key: string, val: string) => setSettings(prev => ({ ...prev, dimensions: { ...prev.dimensions, [key]: Number(val) } }));
-  const updatePercentage = (key: string, val: string) => setSettings(prev => ({ ...prev, percentages: { ...prev.percentages, [key]: Number(val) } }));
+  
+  const updateWastage = (key: string, val: string) => setSettings((prev: any) => ({ ...prev, percentages: { ...prev.percentages, wastage: { ...prev.percentages.wastage, [key]: Number(val) } } }));
+  const updatePercentage = (key: string, val: string) => setSettings((prev: any) => ({ ...prev, percentages: { ...prev.percentages, [key]: Number(val) } }));
   const updateConsumption = (key: string, val: string) => setSettings(prev => ({ ...prev, consumption: { ...prev.consumption, [key]: Number(val) } }));
 
   if (isLoading) return <div className="min-h-screen bg-gray-50 flex items-center justify-center font-bold text-xl text-gray-400 uppercase tracking-widest">Initializing Master Portal...</div>;
 
   // --- ANALYTICS DERIVATIVES ---
-  const premiumUsers = users.filter(u => u.tier === 'premium' || u.planStatus === 'premium'); // Adjusted to check new planStatus field too
+  const premiumUsers = users.filter(u => u.tier === 'premium' || u.planStatus === 'premium'); 
   const standardUsers = users.filter(u => u.tier !== 'premium' && u.planStatus !== 'premium');
   const totalBOQs = projects.filter(p => !p.isManualTracker).length;
   const totalLedgers = projects.filter(p => p.isManualTracker).length;
@@ -338,16 +367,59 @@ export default function AdminPortal() {
 
             <div className="space-y-8">
               
+              {/* --- SECTION 1A: MATERIAL WASTAGE --- */}
               <section className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-sm">
-                <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-                  <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">1</span> 
-                  Master Percentages & Buffers
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {Object.keys(settings.percentages).map(key => (
+                <div className="mb-6 border-b border-gray-100 pb-4">
+                   <h2 className="text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">
+                    <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">1</span> 
+                    Material Wastage Ratios (%)
+                  </h2>
+                   <p className="text-sm font-medium text-gray-500 ml-10">Set distinct wastage buffers for each core material type.</p>
+                </div>
+                
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-6 ml-0 md:ml-10">
+                  {[
+                    { key: 'cement', label: 'Cement Wastage' },
+                    { key: 'sand', label: 'Sand Wastage' },
+                    { key: 'gravel', label: 'Gravel Wastage' },
+                    { key: 'tmt', label: 'TMT / Steel Wastage' },
+                    { key: 'bricks', label: 'Bricks Wastage' },
+                    { key: 'tiles', label: 'Tiles Wastage' }
+                  ].map((item) => (
+                    <div key={item.key}>
+                      <label className={labelStyle}>{item.label}</label>
+                      <div className="relative">
+                        <input 
+                          type="number" 
+                          inputMode="decimal"
+                          className={`${inputStyle} text-[#22c55e] pr-8`} 
+                          value={(settings.percentages.wastage as any)?.[item.key] ?? ''} 
+                          onChange={(e) => updateWastage(item.key, e.target.value)} 
+                        />
+                        <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">%</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              {/* --- SECTION 1B: SERVICE PERCENTAGES --- */}
+              <section className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-sm">
+                 <div className="mb-6 border-b border-gray-100 pb-4">
+                   <h2 className="text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">
+                    <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">2</span> 
+                    Service & Overhead Percentages (%)
+                  </h2>
+                   <p className="text-sm font-medium text-gray-500 ml-10">System-wide percentage multipliers applied to the base costs.</p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 ml-0 md:ml-10">
+                  {Object.keys(settings.percentages).filter(k => k !== 'wastage').map(key => (
                     <div key={key}>
-                      <label className={labelStyle}>{formatLabel(key)} (%)</label>
-                      <input type="number" value={(settings.percentages as any)[key]} onChange={(e) => updatePercentage(key, e.target.value)} className={inputStyle} />
+                      <label className={labelStyle}>{formatLabel(key)}</label>
+                      <div className="relative">
+                         <input type="number" value={(settings.percentages as any)[key]} onChange={(e) => updatePercentage(key, e.target.value)} className={`${inputStyle} pr-8`} />
+                         <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">%</span>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -356,7 +428,7 @@ export default function AdminPortal() {
               <section className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-sm">
                 <div className="mb-8">
                   <h2 className="text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">
-                    <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">2</span> 
+                    <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">3</span> 
                     Concrete & Mortar Ratios
                   </h2>
                   <p className="text-sm font-medium text-gray-500 ml-10">Define the parts of cement, sand, and gravel for each mixture.</p>
@@ -381,7 +453,7 @@ export default function AdminPortal() {
 
               <section className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-sm">
                 <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-                  <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">3</span> 
+                  <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">4</span> 
                   Standard TMT Specifications
                 </h2>
                 <div className="overflow-x-auto ml-0 md:ml-10">
@@ -411,7 +483,7 @@ export default function AdminPortal() {
 
               <section className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-sm">
                 <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-                  <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">4</span> 
+                  <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">5</span> 
                   Structural Dimensions (Inches)
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 ml-0 md:ml-10">
@@ -427,7 +499,7 @@ export default function AdminPortal() {
               <section className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-sm">
                 <div className="mb-8">
                    <h2 className="text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">
-                    <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">5</span> 
+                    <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">6</span> 
                     Consumption Metrics
                   </h2>
                    <p className="text-sm font-medium text-gray-500 ml-10">Set the required volume (CFT) per Sq.Ft.</p>
