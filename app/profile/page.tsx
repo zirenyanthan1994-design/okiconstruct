@@ -2,8 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { auth, db } from "../lib/firebase";
 import Navbar from "../components/Navbar";
-import { onAuthStateChanged, User } from 'firebase/auth';
-import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { onAuthStateChanged, User, deleteUser } from 'firebase/auth';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 
 export default function ProfilePage() {
   const [user, setUser] = useState<User | null>(null);
@@ -16,9 +16,12 @@ export default function ProfilePage() {
   // Database States
   const [savedBOQs, setSavedBOQs] = useState<any[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(false);
-  
-  // NEW: State to hold the actively opened BOQ document
   const [selectedBOQ, setSelectedBOQ] = useState<any>(null);
+
+  // Edit Profile & Deactivation States
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [editForm, setEditForm] = useState({ name: '', phone: '', address: '', avatar: '' });
 
   // Message Center State
   const [isMessageCenterOpen, setIsMessageCenterOpen] = useState(false);
@@ -34,7 +37,15 @@ export default function ProfilePage() {
         const docRef = doc(db, "users", currentUser.uid);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
-          setUserData(docSnap.data());
+          const data = docSnap.data();
+          setUserData(data);
+          // Initialize Edit Form with existing data
+          setEditForm({
+            name: data.name || '',
+            phone: data.phone || '',
+            address: data.address || '',
+            avatar: data.avatar || ''
+          });
         }
       } else {
         window.location.href = '/'; 
@@ -44,18 +55,102 @@ export default function ProfilePage() {
     return () => unsubscribe();
   }, []);
 
-  // Fetch Saved BOQs from Firebase
+  // Handle Profile Avatar Upload (compress and save to base64)
+  const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event: any) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_SIZE = 200;
+        let { width, height } = img;
+        if (width > height) {
+          if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; }
+        } else {
+          if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; }
+        }
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        setEditForm({ ...editForm, avatar: compressedDataUrl });
+      };
+      img.src = event.target.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleUpdateProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setIsSavingProfile(true);
+    try {
+      await updateDoc(doc(db, "users", user.uid), {
+        name: editForm.name,
+        phone: editForm.phone,
+        address: editForm.address,
+        avatar: editForm.avatar
+      });
+      setUserData({ ...userData, name: editForm.name, phone: editForm.phone, address: editForm.address, avatar: editForm.avatar });
+      setIsEditModalOpen(false);
+    } catch (error: any) {
+      alert("Error updating profile: " + error.message);
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
+  const handleDeactivateAccount = async () => {
+    if (!user || !userData) return;
+
+    // Logic for Premium Users
+    if (userData.tier === 'premium' || userData.planStatus === 'premium') {
+      const confirmRequest = window.confirm("As a Premium user, you have active services linked to your account. Do you want to submit a formal deactivation request to our admin team?");
+      if (!confirmRequest) return;
+
+      try {
+        await updateDoc(doc(db, "users", user.uid), {
+          deactivationRequested: true,
+          deactivationRequestDate: serverTimestamp()
+        });
+        alert("Deactivation request submitted. Our support team will process it and contact you shortly to ensure your active projects and plans are handled securely.");
+      } catch (error: any) {
+        alert("Error submitting request: " + error.message);
+      }
+      return;
+    }
+
+    // Logic for Standard/Free Users
+    const confirmDelete = window.confirm("Are you ABSOLUTELY sure you want to deactivate your account? This will permanently delete your profile data and cannot be undone.");
+    if (!confirmDelete) return;
+
+    try {
+      await deleteDoc(doc(db, "users", user.uid));
+      await deleteUser(user);
+      alert("Your account has been deactivated.");
+      window.location.href = '/';
+    } catch (error: any) {
+      if (error.code === 'auth/requires-recent-login') {
+        alert("For security reasons, please log out and log back in before deactivating your account.");
+      } else {
+        alert("Error deactivating account: " + error.message);
+      }
+    }
+  };
+
   const fetchSavedBOQs = async () => {
     if (!user) return;
     setIsLoadingData(true);
     setActiveTab('boqs');
-    setSelectedBOQ(null); // Always clear selection when returning to list
+    setSelectedBOQ(null); 
     try {
       const q = query(collection(db, "boq_projects"), where("uid", "==", user.uid));
       const querySnapshot = await getDocs(q);
       const fetchedBOQs = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
-      // Sort by newest first
       fetchedBOQs.sort((a: any, b: any) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       setSavedBOQs(fetchedBOQs);
     } catch (error) {
@@ -65,13 +160,14 @@ export default function ProfilePage() {
     }
   };
 
-  // Switch to Ledgers Tab 
   const openLedgers = () => {
     setActiveTab('ledgers');
   };
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center font-medium text-gray-500">Loading Profile...</div>;
   if (!user || !userData) return null;
+
+  const inputStyle = "w-full border border-gray-200 bg-gray-50 rounded-xl p-3 text-gray-900 font-medium focus:bg-white focus:ring-2 focus:ring-[#22c55e]/30 focus:border-[#22c55e] transition-all outline-none";
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
@@ -92,12 +188,15 @@ export default function ProfilePage() {
               </svg>
               <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 border-2 border-white rounded-full"></span>
             </button>
-            <button className="text-sm font-semibold text-gray-500 hover:text-gray-900 px-4 py-2 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors hidden md:block">
+            <button 
+              onClick={() => setIsEditModalOpen(true)}
+              className="text-sm font-semibold text-gray-600 hover:text-gray-900 px-4 py-2 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors shadow-sm"
+            >
               Edit Profile
             </button>
           </div>
 
-          <div className="flex flex-col md:flex-row items-center md:items-start gap-6">
+          <div className="flex flex-col md:flex-row items-center md:items-start gap-6 mt-8 md:mt-0">
             <div className="w-24 h-24 bg-gray-50 border border-gray-200 rounded-full flex items-center justify-center overflow-hidden shrink-0 shadow-sm">
               {userData.avatar?.length > 5 ? (
                 /* eslint-disable-next-line @next/next/no-img-element */
@@ -118,6 +217,9 @@ export default function ProfilePage() {
                 )}
                 <span className="bg-gray-100 text-gray-700 px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1">
                   📞 {userData.phone}
+                </span>
+                <span className="bg-gray-100 text-gray-700 px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1">
+                  📍 {userData.address || "No Address Provided"}
                 </span>
               </div>
             </div>
@@ -140,34 +242,41 @@ export default function ProfilePage() {
         {/* VIEW: OVERVIEW (Stats) */}
         {activeTab === 'overview' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 animate-in fade-in duration-300">
-            <div className="bg-white border border-gray-100 rounded-3xl p-6 shadow-sm hover:shadow-md transition-shadow">
-              <div className="flex items-center justify-between mb-6">
-                <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
+            
+            <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden flex flex-col">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-[#22c55e]/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none transition-all group-hover:bg-[#22c55e]/30"></div>
+              
+              <div className="flex items-center justify-between mb-6 relative z-10">
+                <div className="w-14 h-14 bg-[#22c55e]/20 text-[#22c55e] rounded-xl flex items-center justify-center">
                   <span className="text-2xl">🏗️</span>
                 </div>
-                <button onClick={fetchSavedBOQs} className="text-sm font-semibold text-blue-600 hover:text-blue-800 transition-colors">View All ➔</button>
+                <button onClick={fetchSavedBOQs} className="text-sm font-bold text-[#22c55e] hover:text-white transition-colors bg-[#22c55e]/10 hover:bg-[#22c55e] px-4 py-2 rounded-lg shadow-sm">View All ➔</button>
               </div>
-              <h3 className="text-gray-500 font-semibold text-sm uppercase tracking-wider mb-1">Estimate BOQs</h3>
-              <div className="flex items-end gap-3">
-                <span className="text-4xl font-bold text-gray-900">Active</span>
+              
+              <h3 className="text-gray-400 font-bold text-sm uppercase tracking-wider mb-1 relative z-10">Estimate BOQs</h3>
+              <div className="flex items-end gap-3 relative z-10">
+                <span className="text-4xl font-black text-white">Active</span>
               </div>
-              <div className="mt-4 pt-4 border-t border-gray-100 text-sm text-gray-500">
+              <div className="mt-4 pt-4 border-t border-gray-800 text-sm font-medium text-gray-500 relative z-10">
                 Generate and manage comprehensive material estimates.
               </div>
             </div>
 
-            <div className="bg-white border border-gray-100 rounded-3xl p-6 shadow-sm hover:shadow-md transition-shadow">
-              <div className="flex items-center justify-between mb-6">
-                <div className="w-12 h-12 bg-orange-50 text-orange-600 rounded-xl flex items-center justify-center">
+            <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden flex flex-col">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none transition-all group-hover:bg-blue-500/30"></div>
+              
+              <div className="flex items-center justify-between mb-6 relative z-10">
+                <div className="w-14 h-14 bg-blue-500/20 text-blue-400 rounded-xl flex items-center justify-center">
                   <span className="text-2xl">📊</span>
                 </div>
-                <button onClick={openLedgers} className="text-sm font-semibold text-orange-600 hover:text-orange-800 transition-colors">Open Ledgers ➔</button>
+                <button onClick={openLedgers} className="text-sm font-bold text-blue-400 hover:text-white transition-colors bg-blue-500/10 hover:bg-blue-500 px-4 py-2 rounded-lg shadow-sm">Open Ledgers ➔</button>
               </div>
-              <h3 className="text-gray-500 font-semibold text-sm uppercase tracking-wider mb-1">Expense Tracking</h3>
-              <div className="flex items-end gap-3">
-                <span className="text-4xl font-bold text-gray-900">Active</span>
+              
+              <h3 className="text-gray-400 font-bold text-sm uppercase tracking-wider mb-1 relative z-10">Expense Tracking</h3>
+              <div className="flex items-end gap-3 relative z-10">
+                <span className="text-4xl font-black text-white">Active</span>
               </div>
-              <div className="mt-4 pt-4 border-t border-gray-100 text-sm text-gray-500">
+              <div className="mt-4 pt-4 border-t border-gray-800 text-sm font-medium text-gray-500 relative z-10">
                 Track material purchases and daily site expenditures.
               </div>
             </div>
@@ -177,7 +286,6 @@ export default function ProfilePage() {
         {/* VIEW: BOQ HUB (List or Details) */}
         {activeTab === 'boqs' && (
           <>
-            {/* If a specific BOQ is NOT selected, show the Grid List */}
             {!selectedBOQ ? (
               <div className="bg-white border border-gray-100 rounded-3xl p-6 shadow-sm animate-in fade-in duration-300">
                 <h3 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-2">
@@ -189,14 +297,14 @@ export default function ProfilePage() {
                 ) : savedBOQs.length === 0 ? (
                   <div className="text-center py-10">
                     <p className="text-gray-500 font-medium mb-4">You haven't saved any BOQ estimates yet.</p>
-                    <a href="/estimate-boq" className="inline-block bg-gray-900 text-white font-semibold px-6 py-2 rounded-xl hover:bg-[#22c55e] transition-colors">Create New BOQ</a>
+                    <a href="/estimate-boq" className="inline-block bg-gray-900 text-white font-semibold px-6 py-2 rounded-xl hover:bg-[#22c55e] transition-colors shadow-md">Create New BOQ</a>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {savedBOQs.map((boq) => (
                       <div 
                         key={boq.id} 
-                        onClick={() => setSelectedBOQ(boq)} // NEW: Opens the detailed report
+                        onClick={() => setSelectedBOQ(boq)} 
                         className="border border-gray-200 rounded-2xl p-5 hover:border-[#22c55e] transition-all group cursor-pointer shadow-sm hover:shadow-md hover:-translate-y-1 bg-white"
                       >
                         <div className="flex justify-between items-start mb-4">
@@ -221,7 +329,7 @@ export default function ProfilePage() {
               </div>
             ) : (
               
-              /* NEW: DETAILED BOQ SHEET VIEW */
+              /* DETAILED BOQ SHEET VIEW */
               <div className="animate-in fade-in duration-300 printable-boq">
                 <button 
                   onClick={() => setSelectedBOQ(null)} 
@@ -250,7 +358,7 @@ export default function ProfilePage() {
                       onClick={() => window.print()} 
                       className="mt-4 md:mt-0 bg-gray-900 text-white px-6 py-2.5 rounded-xl font-semibold hover:bg-[#22c55e] transition-colors shadow-md print:hidden flex items-center gap-2"
                     >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
                       Download PDF
                     </button>
                   </div>
@@ -326,14 +434,79 @@ export default function ProfilePage() {
             </h3>
             <div className="text-center py-10 border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50">
                 <p className="text-gray-500 font-medium mb-4">Connect this to your Expense Tracking database.</p>
-                <a href="/track-expenditure" className="inline-block bg-gray-900 text-white font-semibold px-6 py-2 rounded-xl hover:bg-orange-500 transition-colors">Start Tracking Expenses</a>
+                <a href="/track-expenditure" className="inline-block bg-gray-900 text-white font-semibold px-6 py-2 rounded-xl hover:bg-blue-500 transition-colors shadow-md">Start Tracking Expenses</a>
             </div>
           </div>
         )}
 
       </main>
 
-      {/* --- MESSAGE CENTER MODAL (OVERLAY) --- */}
+      {/* --- EDIT PROFILE MODAL --- */}
+      {isEditModalOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 print:hidden">
+          <div className="bg-white w-full max-w-md rounded-3xl p-6 md:p-8 shadow-2xl relative animate-in fade-in zoom-in-95 duration-300 max-h-[90vh] overflow-y-auto">
+            <button onClick={() => setIsEditModalOpen(false)} className="absolute top-4 right-4 w-10 h-10 bg-gray-50 rounded-full flex items-center justify-center text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors">✕</button>
+            
+            <h2 className="text-2xl font-bold text-gray-900 mb-6">Edit Profile</h2>
+            
+            <form onSubmit={handleUpdateProfile} className="space-y-5">
+              <div className="flex items-center gap-4">
+                 <div className="w-16 h-16 bg-gray-50 border border-gray-200 rounded-full flex items-center justify-center overflow-hidden shrink-0 shadow-sm">
+                    {editForm.avatar.length > 5 ? <img src={editForm.avatar} alt="Avatar" className="w-full h-full object-cover" /> : <span className="text-3xl">{editForm.avatar || "👤"}</span>}
+                 </div>
+                 <div>
+                   <label className="bg-white text-gray-700 px-4 py-2 rounded-lg text-sm font-bold cursor-pointer border border-gray-200 hover:bg-gray-50 transition-colors inline-block shadow-sm">
+                     Change Photo
+                     <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
+                   </label>
+                 </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Full Name</label>
+                <input type="text" required value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} className={inputStyle} />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Phone Number</label>
+                <input type="tel" required value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} className={inputStyle} />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Full Address</label>
+                <textarea 
+                  rows={2} 
+                  value={editForm.address} 
+                  onChange={e => setEditForm({...editForm, address: e.target.value})} 
+                  className={inputStyle} 
+                  placeholder="Enter your complete address..."
+                />
+              </div>
+
+              <button type="submit" disabled={isSavingProfile} className="w-full bg-[#22c55e] text-white font-bold text-lg py-4 rounded-xl hover:bg-[#1ea950] transition-colors shadow-md disabled:opacity-50 mt-4">
+                {isSavingProfile ? "Saving..." : "Save Changes"}
+              </button>
+            </form>
+
+            <hr className="my-6 border-gray-100" />
+            
+            <div className="text-center pb-2">
+               <button 
+                  type="button" 
+                  onClick={handleDeactivateAccount} 
+                  className="text-red-500 hover:text-red-700 font-bold text-sm transition-colors border border-transparent hover:border-red-200 bg-transparent hover:bg-red-50 px-4 py-2 rounded-lg w-full"
+                >
+                  {(userData?.tier === 'premium' || userData?.planStatus === 'premium') 
+                    ? 'Request Account Deactivation' 
+                    : 'Deactivate & Delete Account'
+                  }
+               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- MESSAGE CENTER MODAL --- */}
       {isMessageCenterOpen && (
         <div className="fixed inset-0 z-[100] flex justify-end bg-black/20 backdrop-blur-sm print:hidden">
           <div className="w-full md:w-[450px] bg-white h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
