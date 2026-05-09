@@ -50,6 +50,9 @@ export default function Dashboard() {
     avatar: PRESET_AVATARS[0]
   });
 
+  // UX State for the Welcome Greeting
+  const [showWelcome, setShowWelcome] = useState(true);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
@@ -85,6 +88,16 @@ export default function Dashboard() {
 
     return () => unsubscribe();
   }, []);
+
+  // Timer to hide the "Welcome" portion of the greeting after 4 seconds
+  useEffect(() => {
+    if (userData) {
+      const timer = setTimeout(() => {
+        setShowWelcome(false);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [userData]);
 
   const handleGoogleAuth = async () => {
     setAuthError("");
@@ -407,8 +420,12 @@ export default function Dashboard() {
             )}
           </div>
           
-          <div>
-            <h1 className="text-3xl md:text-4xl font-bold text-gray-900 tracking-tight">Welcome back, {userData?.name || 'User'}</h1>
+          <div className="flex flex-col justify-center">
+            {/* 4-Second Dynamic Greeting */}
+            <h1 className="text-3xl md:text-4xl font-bold text-gray-900 tracking-tight transition-all duration-700">
+              {showWelcome ? `Welcome, ${userData?.name || 'User'}` : userData?.name || 'User'}
+            </h1>
+            
             <div className="flex items-center gap-3 mt-2">
               <p className="text-base text-gray-500 font-medium">
                 {userData?.role} Account
@@ -434,44 +451,56 @@ export default function Dashboard() {
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           
-          <Link href="/generate-2d-layout" className="bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden">
+          {/* SUSPENSE: 2D Layout - Coming Soon */}
+          <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-xl opacity-60 cursor-not-allowed relative overflow-hidden flex flex-col">
+            <div className="absolute top-6 right-6 bg-gray-800 text-[#22c55e] border border-[#22c55e]/30 text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full z-20">
+              Coming Soon
+            </div>
             <div className="absolute top-0 right-0 w-32 h-32 bg-[#22c55e]/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none"></div>
             
-            <div className="flex justify-between items-start mb-6 relative z-10">
-              <div className="w-14 h-14 bg-[#22c55e]/20 text-[#22c55e] rounded-xl flex items-center justify-center transition-colors">
-                <span className="text-2xl">📐</span>
-              </div>
-              <span className="bg-[#22c55e] text-black text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">Premium</span>
+            <div className="w-14 h-14 bg-gray-800 text-gray-500 rounded-xl flex items-center justify-center mb-6 relative z-10">
+              <span className="text-2xl grayscale">📐</span>
             </div>
-            
-            <h2 className="text-2xl font-bold text-white mb-2 relative z-10">Generate 2D Layout</h2>
-            <p className="text-gray-400 text-sm font-medium leading-relaxed relative z-10">
+            <h2 className="text-2xl font-bold text-gray-300 mb-2 relative z-10">Generate 2D Layout</h2>
+            <p className="text-gray-500 text-sm font-medium leading-relaxed relative z-10 flex-grow">
               Provide your plot dimensions and facing direction to auto-generate 3 distinct architectural floor plan concepts instantly.
             </p>
-          </Link>
+          </div>
           
-          <Link href="/estimate-boq" className="bg-white border border-gray-100 rounded-3xl p-8 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all group">
-            <div className="w-14 h-14 bg-[#22c55e]/10 text-[#22c55e] rounded-xl flex items-center justify-center mb-6 transition-colors">
+          {/* Estimate BOQ */}
+          <Link href="/estimate-boq" className="bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden flex flex-col">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-[#22c55e]/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none transition-all group-hover:bg-[#22c55e]/30"></div>
+            <div className="w-14 h-14 bg-[#22c55e]/20 text-[#22c55e] rounded-xl flex items-center justify-center mb-6 relative z-10">
               <span className="text-2xl">🏗️</span>
             </div>
-            <h2 className="text-xl font-bold text-gray-900 mb-2">Estimate BOQ</h2>
-            <p className="text-gray-500 text-sm font-medium leading-relaxed">Generate comprehensive material and labor estimates instantly based on your architectural parameters.</p>
+            <h2 className="text-2xl font-bold text-white mb-2 relative z-10">Estimate BOQ</h2>
+            <p className="text-gray-400 text-sm font-medium leading-relaxed relative z-10 flex-grow">
+              Generate comprehensive material and labor estimates instantly based on your architectural parameters.
+            </p>
           </Link>
 
-          <Link href="/track-expenditure" className="bg-white border border-gray-100 rounded-3xl p-8 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all group">
-            <div className="w-14 h-14 bg-[#22c55e]/10 text-[#22c55e] rounded-xl flex items-center justify-center mb-6 transition-colors">
+          {/* Track Expenditure */}
+          <Link href="/track-expenditure" className="bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden flex flex-col">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none transition-all group-hover:bg-blue-500/30"></div>
+            <div className="w-14 h-14 bg-blue-500/20 text-blue-400 rounded-xl flex items-center justify-center mb-6 relative z-10">
               <span className="text-2xl">📊</span>
             </div>
-            <h2 className="text-xl font-bold text-gray-900 mb-2">Track Expenditure</h2>
-            <p className="text-gray-500 text-sm font-medium leading-relaxed">Add expenditure records, monitor material consumption, and ensure your project stays strictly under budget.</p>
+            <h2 className="text-2xl font-bold text-white mb-2 relative z-10">Track Expenditure</h2>
+            <p className="text-gray-400 text-sm font-medium leading-relaxed relative z-10 flex-grow">
+              Add expenditure records, monitor material consumption, and ensure your project stays strictly under budget.
+            </p>
           </Link>
 
-          <Link href="/contact-experts" className="bg-white border border-gray-100 rounded-3xl p-8 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all group">
-            <div className="w-14 h-14 bg-[#22c55e]/10 text-[#22c55e] rounded-xl flex items-center justify-center mb-6 transition-colors">
+          {/* Contact Experts */}
+          <Link href="/contact-experts" className="bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden flex flex-col">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none transition-all group-hover:bg-orange-500/30"></div>
+            <div className="w-14 h-14 bg-orange-500/20 text-orange-400 rounded-xl flex items-center justify-center mb-6 relative z-10">
               <span className="text-2xl">🤝</span>
             </div>
-            <h2 className="text-xl font-bold text-gray-900 mb-2">Contact Experts</h2>
-            <p className="text-gray-500 text-sm font-medium leading-relaxed">Browse our directory of top-rated Architects, Engineers, and Builders to consult or hire for your next project.</p>
+            <h2 className="text-2xl font-bold text-white mb-2 relative z-10">Contact Experts</h2>
+            <p className="text-gray-400 text-sm font-medium leading-relaxed relative z-10 flex-grow">
+              Browse our directory of top-rated Architects, Engineers, and Builders to consult or hire for your next project.
+            </p>
           </Link>
 
         </div>

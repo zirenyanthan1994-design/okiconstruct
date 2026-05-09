@@ -77,9 +77,12 @@ export default function Estimator() {
         boqData: cleanData, 
         createdAt: serverTimestamp(),
       };
-      await addDoc(collection(db, "boq_projects"), payload);
+      
+      const docRef = await addDoc(collection(db, "boq_projects"), payload);
+      const pushKey = docRef.id; 
+
       setIsSaved(true); 
-      alert("Success! Estimate securely saved to the cloud.");
+      alert(`Success! Estimate securely saved to the cloud.\nProject ID: ${pushKey}`);
     } catch (error: any) {
       alert("Database Error: " + error.message);
     } finally {
@@ -88,7 +91,7 @@ export default function Estimator() {
   };
 
   const [structure, setStructure] = useState<any>({
-    footing: { count: '', breadth: '', width: '', depth: '' }, 
+    footing: { count: '', breadth: '', width: '', depth: '' },
     column: { height: '10', breadth: '', width: '' },
     plinthBeam: { depth: '', width: '' },
     roofBeam: { depth: '', width: '' }
@@ -124,7 +127,6 @@ export default function Estimator() {
   const [laborRates, setLaborRates] = useState<any>({ mason: '', painter: '', tiler: '' });
   const [boqReport, setBoqReport] = useState<any>(null);
 
-  // Deep update functions
   const updateFloorData = (roomType: string, index: number | null, field: string, value: string | boolean) => {
     setFloorsData(prev => {
       const d = JSON.parse(JSON.stringify(prev));
@@ -269,51 +271,22 @@ export default function Estimator() {
 
     setFloorSnapshots(finalSnaps);
     
-    // Exact match of Admin Default Settings
+    // Explicit sync to match updated percentage structure from Admin
     const defaultSettings = {
-      ratios: { 
-        pcc: { c: 1, s: 3, g: 6 }, 
-        slab: { c: 1, s: 2, g: 4 }, 
-        footing: { c: 1, s: 2, g: 4 }, 
-        plinthBeam: { c: 1, s: 3, g: 4 }, 
-        beam: { c: 1, s: 3, g: 4 }, 
-        column: { c: 1, s: 3, g: 4 },
-        mortar: { c: 1, s: 4, g: 0 }, 
-        tileBedding: { c: 1, s: 4, g: 0 }
-      },
-      tmtSpecs: { 
-        '8mm': { length: 38, weight: 4.74 }, 
-        '10mm': { length: 38, weight: 7.40 }, 
-        '12mm': { length: 38, weight: 10.66 }, 
-        '16mm': { length: 38, weight: 18.96 }, 
-        '20mm': { length: 38, weight: 29.60 }, 
-        '25mm': { length: 38, weight: 46.20 } 
-      },
-      dimensions: { 
-        slabThickness: 5, 
-        meshGap: 4, 
-        slabOverhang: 3, 
-        ringSpacing: 5 
-      },
+      ratios: { pcc: { c: 1, s: 3, g: 6 }, slab: { c: 1, s: 2, g: 4 }, footing: { c: 1, s: 2, g: 4 }, plinthBeam: { c: 1, s: 3, g: 4 }, beam: { c: 1, s: 3, g: 4 }, column: { c: 1, s: 3, g: 4 }, mortar: { c: 1, s: 4, g: 0 }, tileBedding: { c: 1, s: 4, g: 0 } },
+      tmtSpecs: { '8mm': { length: 38, weight: 4.74 }, '10mm': { length: 38, weight: 7.40 }, '12mm': { length: 38, weight: 10.66 }, '16mm': { length: 38, weight: 18.96 }, '20mm': { length: 38, weight: 29.60 }, '25mm': { length: 38, weight: 46.20 } },
+      dimensions: { slabThickness: 5, meshGap: 4, ringSpacing: 5 },
       percentages: { 
         wastage: { cement: 10, sand: 10, gravel: 10, tmt: 10, bricks: 10, tiles: 10 },
+        concreteAllowances: { footing: 5, column: 5, plinthBeam: 5, roofBeam: 5, slab: 25 },
         shuttering: 5,
-        slabExtraConcrete: 25,
         electrical: 12, 
         plumbing: 8, 
         misc: 5, 
         logistics: 10, 
         contingency: 5 
       },
-      consumption: { 
-        puttyCoverage: 10, 
-        interiorPaintCoverage: 50, 
-        exteriorPaintCoverage: 50,  
-        bricksPerSqft: 5, 
-        plasterCftPerSqft: 0.10, 
-        brickJoiningCftPerSqft: 0.10, 
-        tileBeddingCftPerSqft: 0.20 
-      }
+      consumption: { puttyCoverage: 10, interiorPaintCoverage: 50, exteriorPaintCoverage: 50, bricksPerSqft: 5, plasterCftPerSqft: 0.10, brickJoiningCftPerSqft: 0.10, tileBeddingCftPerSqft: 0.20 }
     };
 
     let masterSettings: any = defaultSettings;
@@ -328,10 +301,8 @@ export default function Estimator() {
           percentages: { 
             ...defaultSettings.percentages, 
             ...(parsed.percentages || {}),
-            wastage: {
-              ...defaultSettings.percentages.wastage,
-              ...(parsed.percentages?.wastage || {})
-            }
+            wastage: { ...defaultSettings.percentages.wastage, ...(parsed.percentages?.wastage || {}) },
+            concreteAllowances: { ...defaultSettings.percentages.concreteAllowances, ...(parsed.percentages?.concreteAllowances || {}) }
           },
           consumption: { ...defaultSettings.consumption, ...(parsed.consumption || {}) }
         };

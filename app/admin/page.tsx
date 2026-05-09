@@ -12,7 +12,7 @@ import Navbar from '../components/Navbar';
 const defaultSettings = {
   ratios: { 
     pcc: { c: 1, s: 3, g: 6 }, 
-    slab: { c: 1, s: 2, g: 4 }, 
+    slab: { c: 1, s: 2, g: 5 }, 
     footing: { c: 1, s: 2, g: 4 }, 
     plinthBeam: { c: 1, s: 3, g: 4 }, 
     beam: { c: 1, s: 3, g: 4 }, 
@@ -35,16 +35,16 @@ const defaultSettings = {
     ringSpacing: 5 
   },
   percentages: { 
-    // NEW STRUCTURE: Segregated Material Wastage
     wastage: {
-      cement: 10,
-      sand: 10,
-      gravel: 10,
+      cement: 15,
+      sand: 15,
+      gravel: 15,
       tmt: 10,
-      bricks: 10,
+      bricks: 15,
       tiles: 10
     },
     slabExtraConcrete: 25,
+    shuttering: 8,
     electrical: 12, 
     plumbing: 8, 
     misc: 5, 
@@ -56,9 +56,9 @@ const defaultSettings = {
     interiorPaintCoverage: 50, 
     exteriorPaintCoverage: 50,  
     bricksPerSqft: 5, 
-    plasterCftPerSqft: 0.10, 
-    brickJoiningCftPerSqft: 0.10, 
-    tileBeddingCftPerSqft: 0.20 
+    plasterCftPerSqft: 0.15, 
+    brickJoiningCftPerSqft: 0.15, 
+    tileBeddingCftPerSqft: 0.25 
   }
 };
 
@@ -85,30 +85,23 @@ const customLabels: Record<string, string> = {
   tileBeddingCftPerSqft: "Tile Bedding Volume (CFT per Sq.Ft)"
 };
 
-// Premium Input Styling
 const inputStyle = "w-full border border-gray-200 bg-gray-50 rounded-xl p-4 text-gray-900 font-medium focus:bg-white focus:ring-2 focus:ring-[#22c55e]/30 focus:border-[#22c55e] transition-all outline-none";
 const labelStyle = "text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block";
 
 export default function AdminPortal() {
   const router = useRouter();
   
-  // --- MASTER STATE ---
   const [activeTab, setActiveTab] = useState<'ANALYTICS' | 'ENGINE'>('ANALYTICS');
   const [isLoading, setIsLoading] = useState(true);
   
-  // --- ANALYTICS STATE ---
   const [users, setUsers] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [filter, setFilter] = useState<'ALL' | 'PREMIUM' | 'STANDARD'>('ALL');
   const PREMIUM_PRICE_INR = 999; 
 
-  // --- ENGINE STATE ---
   const [settings, setSettings] = useState(defaultSettings);
   const [saveStatus, setSaveStatus] = useState("");
 
-  // ==========================================
-  // INITIALIZATION
-  // ==========================================
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
@@ -163,11 +156,11 @@ export default function AdminPortal() {
              wastage: {
                 ...defaultSettings.percentages.wastage,
                 ...(parsed.percentages?.wastage || {
-                   cement: parsed.percentages?.materialWastage || 10,
-                   sand: parsed.percentages?.materialWastage || 10,
+                   cement: parsed.percentages?.materialWastage || 15,
+                   sand: parsed.percentages?.materialWastage || 15,
                    gravel: parsed.percentages?.materialWastage || 10,
                    tmt: parsed.percentages?.materialWastage || 10,
-                   bricks: 10,
+                   bricks: 15,
                    tiles: 10
                 })
              }
@@ -180,9 +173,6 @@ export default function AdminPortal() {
     }
   };
 
-  // ==========================================
-  // ENGINE ACTION HANDLERS
-  // ==========================================
   const handleSaveEngine = () => {
     localStorage.setItem("OkiConstruct_settings", JSON.stringify(settings));
     setSaveStatus("Settings Saved Successfully!");
@@ -208,7 +198,6 @@ export default function AdminPortal() {
 
   if (isLoading) return <div className="min-h-screen bg-gray-50 flex items-center justify-center font-bold text-xl text-gray-400 uppercase tracking-widest">Initializing Master Portal...</div>;
 
-  // --- ANALYTICS DERIVATIVES ---
   const premiumUsers = users.filter(u => u.tier === 'premium' || u.planStatus === 'premium'); 
   const standardUsers = users.filter(u => u.tier !== 'premium' && u.planStatus !== 'premium');
   const totalBOQs = projects.filter(p => !p.isManualTracker).length;
@@ -223,7 +212,6 @@ export default function AdminPortal() {
 
       <main className="max-w-[1400px] mx-auto p-4 md:p-8 mt-4 w-full flex-grow">
         
-        {/* TAB CONTROLS & HEADER */}
         <div className="mb-10 flex flex-col md:flex-row justify-between items-start md:items-end border-b border-gray-200 pb-6 gap-6">
           <div className="animate-in fade-in slide-in-from-left-4 duration-500">
             <h1 className="text-4xl md:text-5xl font-black tracking-tight text-gray-900">
@@ -247,12 +235,8 @@ export default function AdminPortal() {
           </div>
         </div>
 
-        {/* ========================================================= */}
-        {/* TAB 1: SYSTEM ANALYTICS */}
-        {/* ========================================================= */}
         {activeTab === 'ANALYTICS' && (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-            {/* TOP METRICS MATRIX */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
               <div className="bg-white border border-gray-100 rounded-3xl p-8 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-24 h-24 bg-blue-50 rounded-bl-[100px] -z-0"></div>
@@ -283,7 +267,6 @@ export default function AdminPortal() {
               </div>
             </div>
 
-            {/* USER DATABASE VIEWER */}
             <div className="bg-white border border-gray-100 rounded-3xl shadow-sm overflow-hidden">
               <div className="p-6 md:p-8 border-b border-gray-100 bg-white flex flex-col md:flex-row justify-between items-center gap-6">
                 <h2 className="font-bold text-2xl text-gray-900 flex items-center gap-3">
@@ -340,9 +323,6 @@ export default function AdminPortal() {
           </div>
         )}
 
-        {/* ========================================================= */}
-        {/* TAB 2: MASTER ENGINE CONFIG */}
-        {/* ========================================================= */}
         {activeTab === 'ENGINE' && (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
             
@@ -367,7 +347,6 @@ export default function AdminPortal() {
 
             <div className="space-y-8">
               
-              {/* --- SECTION 1A: MATERIAL WASTAGE --- */}
               <section className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-sm">
                 <div className="mb-6 border-b border-gray-100 pb-4">
                    <h2 className="text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">
@@ -403,7 +382,6 @@ export default function AdminPortal() {
                 </div>
               </section>
 
-              {/* --- SECTION 1B: SERVICE PERCENTAGES --- */}
               <section className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-sm">
                  <div className="mb-6 border-b border-gray-100 pb-4">
                    <h2 className="text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">

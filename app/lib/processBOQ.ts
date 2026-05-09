@@ -23,6 +23,11 @@ export const generateProjectBOQ = (
     return 1 + ((masterSettings?.percentages?.wastage?.[material] ?? defaultVal) / 100);
   };
 
+  // DYNAMIC CONCRETE CONSUMPTION ALLOWANCES (Buffers for spills, forms bulging, etc.)
+  const getAllowance = (element: string, defaultVal: number) => {
+    return 1 + ((masterSettings?.percentages?.concreteAllowances?.[element] ?? defaultVal) / 100);
+  };
+
   const wCement = getWastage('cement', 12);
   const wSand = getWastage('sand', 15);
   const wGravel = getWastage('gravel', 10);
@@ -35,11 +40,12 @@ export const generateProjectBOQ = (
     return spec ? (totalFeet / spec.length) * spec.weight * wTMT : 0;
   };
 
+  // The 'extraMultiplier' is now driven by your new Admin Consumption Metrics
   const calculateConcrete = (wetVolCft: number, ratio: any, extraMultiplier: number = 1) => {
-    const dryVol = wetVolCft * 1.50 * extraMultiplier;
+    const dryVol = wetVolCft * 1.54 * extraMultiplier; // Standard Civil 1.54 Dry Volume Factor
     const totalParts = (ratio?.c || 1) + (ratio?.s || 2) + (ratio?.g || 4);
     return {
-      cement: Math.ceil((((ratio?.c || 1) / totalParts) * dryVol / 1.20) * wCement),
+      cement: Math.ceil((((ratio?.c || 1) / totalParts) * dryVol / 1.25) * wCement),
       sand: Math.ceil((((ratio?.s || 2) / totalParts) * dryVol) * wSand),
       gravel: Math.ceil((((ratio?.g || 4) / totalParts) * dryVol) * wGravel)
     };
@@ -69,7 +75,6 @@ export const generateProjectBOQ = (
     const sections: any[] = [];
     let floorBaseCost = 0; 
 
-    // Clubbed kitchenDining calculation
     const staticRoomsArea = getRoomArea(currentLayout?.hall) + getRoomArea(currentLayout?.kitchenDining) + getRoomArea(currentLayout?.foyer);
     const dynamicBedroomsArea = (currentLayout?.bedrooms || []).reduce((sum: number, r: any) => sum + getRoomArea(r), 0);
     const dynamicBathsArea = (currentLayout?.bathrooms || []).reduce((sum: number, r: any) => sum + (r.isAttached && r.layoutType === 'inside' ? 0 : getRoomArea(r)), 0);
@@ -115,13 +120,13 @@ export const generateProjectBOQ = (
       
       const pitBoulderCft = colCount * (fB * fW * pitBoulderThicknessFt);
       const padVolume = colCount * (fB * fW * padThicknessFt);
-      const padConc = calculateConcrete(padVolume, masterSettings?.ratios?.footing);
+      const padConc = calculateConcrete(padVolume, masterSettings?.ratios?.footing, getAllowance('footing', 5));
 
       const pitColumnHeight = Math.max(0, depth - pitBoulderThicknessFt - padThicknessFt);
       const pitColumnVolume = colCount * ((colBIn / 12) * (colWIn / 12) * pitColumnHeight);
-      const starterConc = calculateConcrete(pitColumnVolume, masterSettings?.ratios?.column);
+      const starterConc = calculateConcrete(pitColumnVolume, masterSettings?.ratios?.column, getAllowance('column', 5));
 
-      const floorPccConc = calculateConcrete(gfFloorPccVol, masterSettings?.ratios?.pcc);
+      const floorPccConc = calculateConcrete(gfFloorPccVol, masterSettings?.ratios?.pcc, 1.0); // Flat allowance for floors
 
       const starterHt = 1 + depth + (pD / 12);
       const meshBarsL = (fW / 0.5) + 1;
@@ -153,7 +158,7 @@ export const generateProjectBOQ = (
         { name: "Starter Rings (8mm)", qty: Math.ceil(getWeight('8mm', starterRingsQty * calculateRingFt(colBIn, colWIn))), unit: "KG", rate: safeRates.tmt?.['8mm'] || 0 }
       ]);
 
-      const plConc = calculateConcrete(plinthPerimeter * (pD / 12 * plW / 12), masterSettings?.ratios?.plinthBeam);
+      const plConc = calculateConcrete(plinthPerimeter * (pD / 12 * plW / 12), masterSettings?.ratios?.plinthBeam, getAllowance('plinthBeam', 5));
       const plRings = (plinthPerimeter * 12) / (masterSettings?.dimensions?.ringSpacing || 5);
 
       addSection("2. Plinth Beams", [
@@ -167,7 +172,7 @@ export const generateProjectBOQ = (
 
     const rD = Number(currentStructure?.roofBeam?.depth) || 12;
     const rW = Number(currentStructure?.roofBeam?.width) || 12;
-    const roofConc = calculateConcrete(roofPerimeter * (rD / 12 * rW / 12), masterSettings?.ratios?.beam);
+    const roofConc = calculateConcrete(roofPerimeter * (rD / 12 * rW / 12), masterSettings?.ratios?.beam, getAllowance('roofBeam', 5));
     const roofRings = (roofPerimeter * 12) / (masterSettings?.dimensions?.ringSpacing || 5);
 
     addSection("3. Roof Beams", [
@@ -178,7 +183,7 @@ export const generateProjectBOQ = (
       { name: "TMT Rings (8mm)", qty: Math.ceil(getWeight('8mm', roofRings * calculateRingFt(rD, rW))), unit: "KG", rate: safeRates.tmt?.['8mm'] || 0 }
     ]);
 
-    const colConc = calculateConcrete((colBIn / 12 * colWIn / 12 * colHt) * colCount, masterSettings?.ratios?.column);
+    const colConc = calculateConcrete((colBIn / 12 * colWIn / 12 * colHt) * colCount, masterSettings?.ratios?.column, getAllowance('column', 5));
     const colRings = (colHt * 12 / (masterSettings?.dimensions?.ringSpacing || 5)) * colCount;
 
     addSection("4. Columns", [
@@ -192,8 +197,7 @@ export const generateProjectBOQ = (
     const pieces = (slabSide * 12) / (masterSettings?.dimensions?.meshGap || 4);
     const totalSlabSteelFt = (pieces * slabSide) + (pieces * slabSide);
 
-    const extraSlabMulti = 1 + ((masterSettings?.percentages?.slabExtraConcrete || 30) / 100);
-    const slabConc = calculateConcrete(adjustedSlabArea * ((masterSettings?.dimensions?.slabThickness || 5) / 12), masterSettings?.ratios?.slab, extraSlabMulti);
+    const slabConc = calculateConcrete(adjustedSlabArea * ((masterSettings?.dimensions?.slabThickness || 5) / 12), masterSettings?.ratios?.slab, getAllowance('slab', 25));
     
     addSection("5. Roof Slab", [
       { name: "Cement", qty: slabConc.cement, unit: "BAG", rate: safeRates.cement || 0 },
@@ -217,7 +221,7 @@ export const generateProjectBOQ = (
       const slabThickFt = (masterSettings?.dimensions?.slabThickness || 5) / 12;
 
       const totalStairsCft = (sW * landingL * slabThickFt) + (2 * (inclinedLength * flightWidth * slabThickFt)) + (2 * (stepsPerFlight * (0.5 * riserFt * treadFt * flightWidth)));
-      const stairsConc = calculateConcrete(totalStairsCft, masterSettings?.ratios?.slab, extraSlabMulti);
+      const stairsConc = calculateConcrete(totalStairsCft, masterSettings?.ratios?.slab, getAllowance('slab', 25));
 
       const totalStairArea = (sW * landingL) + (2 * (inclinedLength * flightWidth));
       const stairSteelFt = totalStairArea * 2 * (12 / (masterSettings?.dimensions?.meshGap || 4));
@@ -240,13 +244,11 @@ export const generateProjectBOQ = (
     const netWallArea = Math.max(0, grossWallArea - (mainDoorArea + roomDoorsArea + bathroomDoorsArea + windowsArea + ventArea));
     const estimatedBricks = Math.ceil(netWallArea * (masterSettings?.consumption?.bricksPerSqft || 5) * wBricks);
     
-    // Masonry Math
     const joiningVol = netWallArea * (masterSettings?.consumption?.brickJoiningCftPerSqft || 0.10);
     const plasterVol = netWallArea * (masterSettings?.consumption?.plasterCftPerSqft || 0.10) * 2; 
     const joiningConc = calculateConcrete(joiningVol, masterSettings?.ratios?.mortar);
     const plasterConc = calculateConcrete(plasterVol, masterSettings?.ratios?.mortar);
 
-    // Ceiling Plaster Math
     const ceilingPlasterVol = layoutArea * (masterSettings?.consumption?.plasterCftPerSqft || 0.10);
     const ceilingPlasterConc = calculateConcrete(ceilingPlasterVol, masterSettings?.ratios?.mortar);
 
@@ -287,10 +289,9 @@ export const generateProjectBOQ = (
     if (windowsArea > 0) doorsWindowsItems.push({ name: `Windows (${safeRates.windowMaterial || 'Standard'})`, qty: windowsArea, unit: "SQFT", rate: Number(safeRates.windowRate) || 0 });
     if (ventArea > 0) doorsWindowsItems.push({ name: "Ventilations", qty: ventArea, unit: "SQFT", rate: Number(safeRates.windowRate) || 0 });
     
-    // Hinges, Locks & Hardware Logic (15% of the total cost of Doors & Windows)
     const dwSubtotal = doorsWindowsItems.reduce((acc, item) => acc + (item.qty * item.rate), 0);
     if (dwSubtotal > 0) {
-      doorsWindowsItems.push({ name: "Hinges, Locks & Hardware", qty: 15, unit: "%", rate: Math.ceil(dwSubtotal / 100) });
+      doorsWindowsItems.push({ name: "Hinges, Locks & Hardware", qty: 15, unit: "%", rate: (dwSubtotal / 100) });
     }
 
     if (doorsWindowsItems.length > 0) addSection("7. Doors & Windows", doorsWindowsItems);
@@ -339,17 +340,26 @@ export const generateProjectBOQ = (
       { name: `Exterior Paint (${currentPaintData?.brand || 'Standard'})`, qty: Math.ceil(exteriorWallArea / (masterSettings?.consumption?.exteriorPaintCoverage || 50)), unit: "LITER", rate: Number(currentPaintData?.exteriorRate) || 0 }
     ]);
 
-    const percentageRateMultiplier = (floorBaseCost + (adjustedSlabArea * Number(currentLaborRates?.mason || 0)) + (layoutArea * Number(currentLaborRates?.tiler || 0)) + ((netWallArea + exteriorWallArea) * Number(currentLaborRates?.painter || 0))) / 100;
+    const masonQty = Math.ceil(adjustedSlabArea);
+    const tileQty = Math.ceil(layoutArea);
+    const painterQty = Math.ceil(floorPaintArea + exteriorWallArea);
+    
+    const masonRate = Number(currentLaborRates?.mason) || 0;
+    const tilerRate = Number(currentLaborRates?.tiler) || 0;
+    const painterRate = Number(currentLaborRates?.painter) || 0;
+
+    const baseCostForPercentages = floorBaseCost + (masonQty * masonRate) + (tileQty * tilerRate) + (painterQty * painterRate);
+    const percentageRateMultiplier = baseCostForPercentages / 100;
 
     addSection("10. Master Labor & Services", [
-      { name: "Mason Labor", qty: Math.ceil(adjustedSlabArea), unit: "SQFT (SLAB)", rate: Number(currentLaborRates?.mason) || 0 },
-      { name: "Tile Labor", qty: Math.ceil(layoutArea), unit: "SQFT (FLOOR)", rate: Number(currentLaborRates?.tiler) || 0 },
-      { name: "Painter Labor", qty: Math.ceil(floorPaintArea + exteriorWallArea), unit: "SQFT", rate: Number(currentLaborRates?.painter) || 0 },
-      { name: "Props & Shuttering Material", qty: Number(masterSettings?.percentages?.shuttering || 10), unit: "%", rate: Math.ceil(percentageRateMultiplier) },
-      { name: "Electrical System", qty: Number(masterSettings?.percentages?.electrical || 12), unit: "%", rate: Math.ceil(percentageRateMultiplier) },
-      { name: "Plumbing & Sanitary", qty: Number(masterSettings?.percentages?.plumbing || 8), unit: "%", rate: Math.ceil(percentageRateMultiplier) },
-      { name: "Logistics & Transport", qty: Number(masterSettings?.percentages?.logistics || 10), unit: "%", rate: Math.ceil(percentageRateMultiplier) },
-      { name: "Miscellaneous", qty: Number(masterSettings?.percentages?.misc || 5), unit: "%", rate: Math.ceil(percentageRateMultiplier) }
+      { name: "Mason Labor", qty: masonQty, unit: "SQFT (SLAB)", rate: masonRate },
+      { name: "Tile Labor", qty: tileQty, unit: "SQFT (FLOOR)", rate: tilerRate },
+      { name: "Painter Labor", qty: painterQty, unit: "SQFT", rate: painterRate },
+      { name: "Props & Shuttering Material", qty: Number(masterSettings?.percentages?.shuttering || 10), unit: "%", rate: percentageRateMultiplier },
+      { name: "Electrical System", qty: Number(masterSettings?.percentages?.electrical || 12), unit: "%", rate: percentageRateMultiplier },
+      { name: "Plumbing & Sanitary", qty: Number(masterSettings?.percentages?.plumbing || 8), unit: "%", rate: percentageRateMultiplier },
+      { name: "Logistics & Transport", qty: Number(masterSettings?.percentages?.logistics || 8), unit: "%", rate: percentageRateMultiplier },
+      { name: "Miscellaneous", qty: Number(masterSettings?.percentages?.misc || 5), unit: "%", rate: percentageRateMultiplier }
     ]);
 
     return { floorName: snap?.floorName || 'Floor', sections, layoutArea, adjustedSlabArea, floorTotal: floorBaseCost };
