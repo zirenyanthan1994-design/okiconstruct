@@ -23,7 +23,7 @@ export const generateProjectBOQ = (
     return 1 + ((masterSettings?.percentages?.wastage?.[material] ?? defaultVal) / 100);
   };
 
-  // DYNAMIC CONCRETE CONSUMPTION ALLOWANCES (Buffers for spills, forms bulging, etc.)
+  // DYNAMIC CONCRETE CONSUMPTION ALLOWANCES
   const getAllowance = (element: string, defaultVal: number) => {
     return 1 + ((masterSettings?.percentages?.concreteAllowances?.[element] ?? defaultVal) / 100);
   };
@@ -40,9 +40,8 @@ export const generateProjectBOQ = (
     return spec ? (totalFeet / spec.length) * spec.weight * wTMT : 0;
   };
 
-  // The 'extraMultiplier' is now driven by your new Admin Consumption Metrics
   const calculateConcrete = (wetVolCft: number, ratio: any, extraMultiplier: number = 1) => {
-    const dryVol = wetVolCft * 1.54 * extraMultiplier; // Standard Civil 1.54 Dry Volume Factor
+    const dryVol = wetVolCft * 1.54 * extraMultiplier; 
     const totalParts = (ratio?.c || 1) + (ratio?.s || 2) + (ratio?.g || 4);
     return {
       cement: Math.ceil((((ratio?.c || 1) / totalParts) * dryVol / 1.25) * wCement),
@@ -59,8 +58,8 @@ export const generateProjectBOQ = (
 
   let m_builtUp = 0, m_slab = 0, m_wall = 0, m_doors = 0, m_windows = 0, m_paint = 0;
 
-  const getRoomArea = (room: any) => (Number(room?.length) || 0) * (Number(room?.breadth) || 0);
-  const getRoomPerimeter = (room: any) => ((Number(room?.length) || 0) + (Number(room?.breadth) || 0)) * 2;
+  const getRoomArea = (room: any) => (Number(room?.length) || 0) * (Number(room?.breadth || room?.width) || 0);
+  const getRoomPerimeter = (room: any) => ((Number(room?.length) || 0) + (Number(room?.breadth || room?.width) || 0)) * 2;
 
   const floorReports = finalSnaps.map((snap: any, idx: number) => {
     const currentLayout = snap?.layout || {};
@@ -71,24 +70,117 @@ export const generateProjectBOQ = (
     const currentLaborRates = snap?.laborRates || {};
     const currentHasStairs = snap?.hasStairs || false;
     const currentStairsDim = snap?.stairsDim || { length: 0, width: 0 };
+    const buildingType = snap?.buildingType || 'residence';
 
     const sections: any[] = [];
     let floorBaseCost = 0; 
 
-    const staticRoomsArea = getRoomArea(currentLayout?.hall) + getRoomArea(currentLayout?.kitchenDining) + getRoomArea(currentLayout?.foyer);
-    const dynamicBedroomsArea = (currentLayout?.bedrooms || []).reduce((sum: number, r: any) => sum + getRoomArea(r), 0);
-    const dynamicBathsArea = (currentLayout?.bathrooms || []).reduce((sum: number, r: any) => sum + (r.isAttached && r.layoutType === 'inside' ? 0 : getRoomArea(r)), 0);
-    const stairsArea = currentHasStairs ? (Number(currentStairsDim?.length) * Number(currentStairsDim?.width) || 0) : 0;
-    const layoutArea = staticRoomsArea + dynamicBedroomsArea + dynamicBathsArea + stairsArea;
+    // ==========================================
+    // 1. ADVANCED AREA & PERIMETER PARSING ENGINE
+    // ==========================================
+    let layoutArea = 0;
+    let layoutPerimeter = 0;
+    let totalBathsPeri = 0;
 
-    const staticPeri = getRoomPerimeter(currentLayout?.hall) + getRoomPerimeter(currentLayout?.kitchenDining) + getRoomPerimeter(currentLayout?.foyer);
-    const dynamicBedroomsPeri = (currentLayout?.bedrooms || []).reduce((sum: number, r: any) => sum + getRoomPerimeter(r), 0);
-    const dynamicBathsPeri = (currentLayout?.bathrooms || []).reduce((sum: number, r: any) => sum + (r.isAttached && r.layoutType === 'inside' ? 0 : getRoomPerimeter(r)), 0);
-    const layoutPerimeter = staticPeri + dynamicBedroomsPeri + dynamicBathsPeri;
+    const tileAreas: Record<string, number> = {
+      hall: 0, kitchenDining: 0, foyer: 0, commercialShops: 0, commercialWashrooms: 0, corridor: 0,
+      bathroomWalls: 0, skirting: 0
+    };
 
+    if (buildingType === 'apartment') {
+      if (currentLayout.isCommercial) {
+        // Commercial Ground Floor
+        const shopCount = Number(currentLayout.shops?.count) || 0;
+        const washCount = Number(currentLayout.washrooms?.count) || 0;
+        
+        layoutArea += getRoomArea(currentLayout.shops) * shopCount;
+        layoutArea += getRoomArea(currentLayout.washrooms) * washCount;
+        
+        layoutPerimeter += getRoomPerimeter(currentLayout.shops) * shopCount;
+        layoutPerimeter += getRoomPerimeter(currentLayout.washrooms) * washCount;
+        
+        totalBathsPeri = getRoomPerimeter(currentLayout.washrooms) * washCount;
+        
+        tileAreas.commercialShops = getRoomArea(currentLayout.shops) * shopCount;
+        tileAreas.commercialWashrooms = getRoomArea(currentLayout.washrooms) * washCount;
+      } else {
+        // Residential Flats
+        (currentLayout.flats || []).forEach((flat: any) => {
+          const fHallArea = getRoomArea(flat.hall);
+          const fKitchenArea = getRoomArea(flat.kitchen);
+          layoutArea += fHallArea + fKitchenArea;
+          layoutPerimeter += getRoomPerimeter(flat.hall) + getRoomPerimeter(flat.kitchen);
+          
+          tileAreas.hall += fHallArea;
+          tileAreas.kitchenDining += fKitchenArea;
+
+          (flat.bedrooms || []).forEach((b: any, i: number) => {
+            layoutArea += getRoomArea(b);
+            layoutPerimeter += getRoomPerimeter(b);
+            tileAreas[`bedroom_${i}`] = (tileAreas[`bedroom_${i}`] || 0) + getRoomArea(b);
+          });
+
+          (flat.bathrooms || []).forEach((b: any, i: number) => {
+            if (!(b.isAttached && b.layoutType === 'inside')) layoutArea += getRoomArea(b);
+            layoutPerimeter += getRoomPerimeter(b);
+            totalBathsPeri += getRoomPerimeter(b);
+            tileAreas[`bathroom_${i}`] = (tileAreas[`bathroom_${i}`] || 0) + getRoomArea(b);
+          });
+        });
+      }
+
+      // Shared Apartment Circulation
+      if (snap.apartmentData?.corridor?.hasCorridor) {
+        layoutArea += getRoomArea(snap.apartmentData.corridor);
+        layoutPerimeter += getRoomPerimeter(snap.apartmentData.corridor);
+        tileAreas.corridor = getRoomArea(snap.apartmentData.corridor);
+      }
+      if (currentHasStairs) {
+        layoutArea += getRoomArea(currentStairsDim);
+        layoutPerimeter += getRoomPerimeter(currentStairsDim);
+      }
+      if (snap.apartmentData?.lift?.hasLift) {
+        const liftCount = Number(snap.apartmentData.lift.count) || 1;
+        layoutArea += getRoomArea(snap.apartmentData.lift) * liftCount;
+        layoutPerimeter += getRoomPerimeter(snap.apartmentData.lift) * liftCount;
+      }
+    } else {
+      // Standard Private Residence
+      const staticRoomsArea = getRoomArea(currentLayout?.hall) + getRoomArea(currentLayout?.kitchenDining) + getRoomArea(currentLayout?.foyer);
+      const dynamicBedroomsArea = (currentLayout?.bedrooms || []).reduce((sum: number, r: any) => sum + getRoomArea(r), 0);
+      const dynamicBathsArea = (currentLayout?.bathrooms || []).reduce((sum: number, r: any) => sum + (r.isAttached && r.layoutType === 'inside' ? 0 : getRoomArea(r)), 0);
+      const stairsArea = currentHasStairs ? getRoomArea(currentStairsDim) : 0;
+      layoutArea = staticRoomsArea + dynamicBedroomsArea + dynamicBathsArea + stairsArea;
+
+      const staticPeri = getRoomPerimeter(currentLayout?.hall) + getRoomPerimeter(currentLayout?.kitchenDining) + getRoomPerimeter(currentLayout?.foyer);
+      const dynamicBedroomsPeri = (currentLayout?.bedrooms || []).reduce((sum: number, r: any) => sum + getRoomPerimeter(r), 0);
+      const dynamicBathsPeri = (currentLayout?.bathrooms || []).reduce((sum: number, r: any) => sum + (r.isAttached && r.layoutType === 'inside' ? 0 : getRoomPerimeter(r)), 0);
+      const stairsPeri = currentHasStairs ? getRoomPerimeter(currentStairsDim) : 0;
+      layoutPerimeter = staticPeri + dynamicBedroomsPeri + dynamicBathsPeri + stairsPeri;
+
+      totalBathsPeri = (currentLayout?.bathrooms || []).reduce((sum: number, r: any) => sum + getRoomPerimeter(r), 0);
+      
+      tileAreas.hall = getRoomArea(currentLayout?.hall);
+      tileAreas.kitchenDining = getRoomArea(currentLayout?.kitchenDining);
+      tileAreas.foyer = getRoomArea(currentLayout?.foyer);
+      (currentLayout?.bedrooms || []).forEach((b: any, i: number) => tileAreas[`bedroom_${i}`] = getRoomArea(b));
+      (currentLayout?.bathrooms || []).forEach((b: any, i: number) => tileAreas[`bathroom_${i}`] = getRoomArea(b));
+    }
+
+    // Mathematical overrides from calculation
     const baseSide = Math.sqrt(layoutArea) || 0;
     const slabSide = baseSide + overhang;
-    const adjustedSlabArea = Math.pow(slabSide, 2);
+    let adjustedSlabArea = Math.pow(slabSide, 2);
+    
+    // Slab Void Deductions for Apartments
+    if (buildingType === 'apartment' && idx < totalFloorsCount - 1) {
+        let voidArea = 0;
+        if (currentHasStairs) voidArea += getRoomArea(currentStairsDim);
+        if (snap.apartmentData?.lift?.hasLift) {
+             voidArea += getRoomArea(snap.apartmentData.lift) * (Number(snap.apartmentData.lift.count) || 1);
+        }
+        adjustedSlabArea = Math.max(0, adjustedSlabArea - voidArea);
+    }
     
     const plinthPerimeter = baseSide * 4;
     const roofPerimeter = slabSide * 4;
@@ -126,7 +218,7 @@ export const generateProjectBOQ = (
       const pitColumnVolume = colCount * ((colBIn / 12) * (colWIn / 12) * pitColumnHeight);
       const starterConc = calculateConcrete(pitColumnVolume, masterSettings?.ratios?.column, getAllowance('column', 5));
 
-      const floorPccConc = calculateConcrete(gfFloorPccVol, masterSettings?.ratios?.pcc, 1.0); // Flat allowance for floors
+      const floorPccConc = calculateConcrete(gfFloorPccVol, masterSettings?.ratios?.pcc, 1.0); 
 
       const starterHt = 1 + depth + (pD / 12);
       const meshBarsL = (fW / 0.5) + 1;
@@ -238,10 +330,11 @@ export const generateProjectBOQ = (
     const mainDoorArea = Number(currentOpenings?.mainDoor?.height || 0) * Number(currentOpenings?.mainDoor?.width || 0) * Number(currentOpenings?.mainDoor?.count || 0);
     const roomDoorsArea = (currentOpenings?.roomDoors || []).reduce((sum: number, d: any) => sum + (Number(d?.height||0) * Number(d?.width||0) * Number(d?.count||0)), 0);
     const bathroomDoorsArea = (currentOpenings?.bathroomDoors || []).reduce((sum: number, d: any) => sum + (Number(d?.height||0) * Number(d?.width||0) * Number(d?.count||0)), 0);
+    const shutterArea = (currentOpenings?.shutters || []).reduce((sum: number, d: any) => sum + (Number(d?.height||0) * Number(d?.width||0) * Number(d?.count||0)), 0);
     const windowsArea = (currentOpenings?.windows || []).reduce((sum: number, w: any) => sum + (Number(w?.height||0) * Number(w?.width||0) * Number(w?.count||0)), 0);
     const ventArea = (currentOpenings?.ventilations || []).reduce((sum: number, v: any) => sum + (Number(v?.height||0) * Number(v?.width||0) * Number(v?.count||0)), 0);
     
-    const netWallArea = Math.max(0, grossWallArea - (mainDoorArea + roomDoorsArea + bathroomDoorsArea + windowsArea + ventArea));
+    const netWallArea = Math.max(0, grossWallArea - (mainDoorArea + roomDoorsArea + bathroomDoorsArea + shutterArea + windowsArea + ventArea));
     const estimatedBricks = Math.ceil(netWallArea * (masterSettings?.consumption?.bricksPerSqft || 5) * wBricks);
     
     const joiningVol = netWallArea * (masterSettings?.consumption?.brickJoiningCftPerSqft || 0.10);
@@ -257,7 +350,7 @@ export const generateProjectBOQ = (
     m_builtUp += layoutArea;
     m_slab += adjustedSlabArea;
     m_wall += netWallArea;
-    m_doors += (mainDoorArea + roomDoorsArea + bathroomDoorsArea);
+    m_doors += (mainDoorArea + roomDoorsArea + bathroomDoorsArea + shutterArea);
     m_windows += (windowsArea + ventArea);
     m_paint += floorPaintArea;
 
@@ -274,6 +367,9 @@ export const generateProjectBOQ = (
     const doorsWindowsItems = [];
     if (Number(currentOpenings?.mainDoor?.count) > 0) doorsWindowsItems.push({ name: "Main Door", qty: Number(currentOpenings.mainDoor.count), unit: "NOS", rate: Number(safeRates.mainDoorPrice) || 0 });
     
+    let shutterQty = (currentOpenings?.shutters || []).reduce((sum: number, d: any) => sum + Number(d?.count || 0), 0);
+    if (shutterQty > 0) doorsWindowsItems.push({ name: "Rolling Shutters", qty: shutterArea, unit: "SQFT", rate: Number(safeRates.windowRate) || Number(safeRates.roomDoorPrice) || 0 });
+
     let roomDoorQty = (currentOpenings?.roomDoors || []).reduce((sum: number, d: any) => sum + Number(d?.count || 0), 0);
     if (roomDoorQty > 0) doorsWindowsItems.push({ name: "Room Doors", qty: roomDoorQty, unit: "NOS", rate: Number(safeRates.roomDoorPrice) || 0 });
     if (roomDoorQty > 0 && Number(safeRates.doorFramePrice) > 0) {
@@ -297,30 +393,31 @@ export const generateProjectBOQ = (
     if (doorsWindowsItems.length > 0) addSection("7. Doors & Windows", doorsWindowsItems);
 
     const tileItems: any[] = [];
-    const rooms = [
-      { key: 'hall', area: getRoomArea(currentLayout?.hall), label: 'Hall' },
-      { key: 'kitchenDining', area: getRoomArea(currentLayout?.kitchenDining), label: 'Kitchen & Dining' },
-      { key: 'foyer', area: getRoomArea(currentLayout?.foyer), label: 'Foyer' },
-      ...(currentLayout?.bedrooms || []).map((r: any, i: number) => ({ key: `bedroom_${i}`, area: getRoomArea(r), label: `Bedroom ${i+1}` })),
-      ...(currentLayout?.bathrooms || []).map((r: any, i: number) => ({ key: `bathroom_${i}`, area: getRoomArea(r), label: `Bathroom ${i+1}` })),
-      { key: 'bathroomWalls', area: dynamicBathsPeri * colHt * 0.8, label: 'Bathroom Walls' },
-      { key: 'skirting', area: layoutPerimeter * 0.5, label: 'Internal Skirting (6in)' }
-    ];
     
+    tileAreas.bathroomWalls = totalBathsPeri * colHt * 0.8;
+    tileAreas.skirting = layoutPerimeter * 0.5;
+
     let totalTileArea = 0;
-    rooms.forEach(r => {
-      const t = currentTiles[r.key];
-      if (t && Number(t.price) > 0 && r.area > 0) {
-        if (!r.key.includes('bathroomWalls') && !r.key.includes('skirting')) {
-           totalTileArea += r.area;
+    Object.keys(currentTiles).forEach(key => {
+      const t = currentTiles[key];
+      const area = tileAreas[key] || 0;
+      if (t && Number(t.price) > 0 && area > 0) {
+        if (!key.includes('bathroomWalls') && !key.includes('skirting')) {
+           totalTileArea += area;
         }
         
         const sizeStr = t.size || '2x2';
         const [tl, tw] = sizeStr.split('x').map(Number);
         const sqftPerTile = (tl && tw) ? (tl * tw) : 4; 
-        const pieces = Math.ceil((r.area / sqftPerTile) * wTiles);
+        const pieces = Math.ceil((area / sqftPerTile) * wTiles);
         
-        tileItems.push({ name: `${r.label} Tiles (${sizeStr}, ${t.type || 'Standard'})`, qty: pieces, unit: "PIECES", rate: Number(t.price) });
+        const friendlyLabel = {
+            hall: 'Hall', kitchenDining: 'Kitchen/Dining', foyer: 'Foyer',
+            commercialShops: 'Shop Chambers', commercialWashrooms: 'Washrooms',
+            corridor: 'Corridor', bathroomWalls: 'Bathroom Walls', skirting: 'Internal Skirting'
+        }[key] || key.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+        tileItems.push({ name: `${friendlyLabel} Tiles (${sizeStr}, ${t.type || 'Standard'})`, qty: pieces, unit: "PIECES", rate: Number(t.price) });
       }
     });
 
