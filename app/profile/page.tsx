@@ -10,6 +10,9 @@ export default function ProfilePage() {
   const [userData, setUserData] = useState<Record<string, any> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   
+  // NEW: Payment status state for UPI verification workflow
+  const [paymentStatus, setPaymentStatus] = useState<string | null>(null);
+
   // Workspace Navigation State
   const [activeTab, setActiveTab] = useState<'overview' | 'boqs' | 'ledgers'>('overview');
   
@@ -46,6 +49,13 @@ export default function ProfilePage() {
             address: data.address || '',
             avatar: data.avatar || ''
           });
+
+          // UPI Workflow: Check for pending payment verification
+          const q = query(collection(db, "transactions"), where("uid", "==", currentUser.uid), where("status", "==", "Pending"));
+          const querySnapshot = await getDocs(q);
+          if (!querySnapshot.empty) {
+            setPaymentStatus("Verification Pending");
+          }
         }
       } else {
         window.location.href = '/'; 
@@ -212,8 +222,18 @@ export default function ProfilePage() {
               
               <div className="flex flex-wrap items-center justify-center md:justify-start gap-2 mt-4">
                 <span className="bg-gray-100 text-gray-700 px-3 py-1 rounded-lg text-xs font-semibold">{userData.role}</span>
-                {userData.tier === "premium" && (
+                
+                {/* UPI Workflow Status Badge */}
+                {userData.tier === "premium" ? (
                   <span className="bg-[#22c55e]/10 text-[#15803d] px-3 py-1 rounded-lg text-xs font-bold border border-[#22c55e]/20">Premium Pro</span>
+                ) : (
+                   <span className="bg-gray-100 text-gray-700 px-3 py-1 rounded-lg text-xs font-semibold">Standard Tier</span>
+                )}
+                
+                {paymentStatus && (
+                   <span className="bg-amber-100 text-amber-800 px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-widest border border-amber-200 animate-pulse">
+                     {paymentStatus}
+                   </span>
                 )}
                 <span className="bg-gray-100 text-gray-700 px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1">
                   📞 {userData.phone}

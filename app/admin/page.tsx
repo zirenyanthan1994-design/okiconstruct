@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from 'react';
 import { auth, db } from '../lib/firebase';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc, setDoc } from 'firebase/firestore'; // ADDED doc, getDoc, setDoc
 import { onAuthStateChanged } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
 import Navbar from '../components/Navbar'; 
@@ -62,6 +62,21 @@ const defaultSettings = {
   }
 };
 
+// ==========================================
+// DEFAULT GLOBAL PRICING PLANS (NEW)
+// ==========================================
+const DEFAULT_PRICING = [
+  { id: '1m', months: 1, label: '1 Month', price: 999, discount: 0 },
+  { id: '2m', months: 2, label: '2 Months', price: 1998, discount: 5 },
+  { id: '3m', months: 3, label: '3 Months', price: 2997, discount: 10 },
+  { id: '6m', months: 6, label: '6 Months', price: 5994, discount: 15 },
+  { id: '1y', months: 12, label: '1 Year', price: 11988, discount: 20 },
+  { id: '2y', months: 24, label: '2 Years', price: 23976, discount: 25 },
+  { id: '3y', months: 36, label: '3 Years', price: 35964, discount: 30 },
+  { id: '4y', months: 48, label: '4 Years', price: 47952, discount: 35 },
+  { id: '5y', months: 60, label: '5 Years', price: 59940, discount: 40 }
+];
+
 const formatLabel = (key: string) => {
   const result = key.replace(/([A-Z])/g, " $1");
   return result.charAt(0).toUpperCase() + result.slice(1);
@@ -100,6 +115,7 @@ export default function AdminPortal() {
   const PREMIUM_PRICE_INR = 999; 
 
   const [settings, setSettings] = useState(defaultSettings);
+  const [pricingPlans, setPricingPlans] = useState(DEFAULT_PRICING); // NEW STATE
   const [saveStatus, setSaveStatus] = useState("");
 
   useEffect(() => {
@@ -107,6 +123,7 @@ export default function AdminPortal() {
       if (currentUser) {
         await fetchMasterData();
         loadEngineSettings();
+        await fetchPricingPlans(); // FETCH CLOUD PRICING
       } else {
         router.push('/home');
       }
@@ -173,15 +190,38 @@ export default function AdminPortal() {
     }
   };
 
-  const handleSaveEngine = () => {
+  // NEW: Fetch Pricing from Cloud
+  const fetchPricingPlans = async () => {
+    try {
+      const pricingDoc = await getDoc(doc(db, "platform", "billing"));
+      if (pricingDoc.exists() && pricingDoc.data().plans) {
+        setPricingPlans(pricingDoc.data().plans);
+      }
+    } catch (err) {
+      console.error("Using default pricing.", err);
+    }
+  };
+
+  // REVISED: Saves both local formulas and cloud pricing
+  const handleSaveEngine = async () => {
     localStorage.setItem("OkiConstruct_settings", JSON.stringify(settings));
-    setSaveStatus("Settings Saved Successfully!");
+    
+    try {
+      await setDoc(doc(db, "platform", "billing"), { plans: pricingPlans }, { merge: true });
+      setSaveStatus("Settings & Pricing Saved Successfully!");
+    } catch(err) {
+      console.error(err);
+      setSaveStatus("Formulas saved, but failed to sync pricing to cloud.");
+    }
+    
     setTimeout(() => setSaveStatus(""), 3000);
   };
 
+  // REVISED: Resets pricing back to default too
   const handleResetEngine = () => {
-    if(confirm("Are you sure you want to reset all formulas to factory defaults?")) {
+    if(confirm("Are you sure you want to reset all formulas and pricing to factory defaults?")) {
       setSettings(defaultSettings);
+      setPricingPlans(DEFAULT_PRICING);
       localStorage.removeItem("OkiConstruct_settings");
       setSaveStatus("Reset to Defaults Successfully!");
       setTimeout(() => setSaveStatus(""), 3000);
@@ -195,6 +235,15 @@ export default function AdminPortal() {
   const updateWastage = (key: string, val: string) => setSettings((prev: any) => ({ ...prev, percentages: { ...prev.percentages, wastage: { ...prev.percentages.wastage, [key]: Number(val) } } }));
   const updatePercentage = (key: string, val: string) => setSettings((prev: any) => ({ ...prev, percentages: { ...prev.percentages, [key]: Number(val) } }));
   const updateConsumption = (key: string, val: string) => setSettings(prev => ({ ...prev, consumption: { ...prev.consumption, [key]: Number(val) } }));
+
+  // NEW: Pricing Update Handler
+  const updatePricing = (index: number, field: string, value: string) => {
+    setPricingPlans(prev => {
+      const newPlans = [...prev];
+      (newPlans[index] as any)[field] = Number(value);
+      return newPlans;
+    });
+  };
 
   if (isLoading) return <div className="min-h-screen bg-gray-50 flex items-center justify-center font-bold text-xl text-gray-400 uppercase tracking-widest">Initializing Master Portal...</div>;
 
@@ -331,11 +380,11 @@ export default function AdminPortal() {
                 <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
                   <span className="bg-gray-100 p-2 rounded-xl text-xl">⚙️</span> Engine Configuration
                 </h2>
-                <p className="font-medium text-gray-500 mt-2 text-sm">Update specific BOQ variables. These apply to all non-premium users globally.</p>
+                <p className="font-medium text-gray-500 mt-2 text-sm">Update specific BOQ variables and Platform Pricing globally.</p>
               </div>
               <div className="flex gap-4 mt-6 md:mt-0 w-full md:w-auto">
                  <button onClick={handleResetEngine} className="flex-1 md:flex-none border border-gray-200 bg-white text-gray-600 px-6 py-3 font-bold rounded-xl hover:bg-gray-50 transition-colors text-sm">Reset Defaults</button>
-                 <button onClick={handleSaveEngine} className="flex-1 md:flex-none bg-[#22c55e] text-white px-8 py-3 font-bold rounded-xl shadow-md hover:bg-[#1ea950] transition-colors text-sm">Save Settings</button>
+                 <button onClick={handleSaveEngine} className="flex-1 md:flex-none bg-[#22c55e] text-white px-8 py-3 font-bold rounded-xl shadow-md hover:bg-[#1ea950] transition-colors text-sm">Save All Settings</button>
               </div>
             </div>
 
@@ -347,6 +396,45 @@ export default function AdminPortal() {
 
             <div className="space-y-8">
               
+              {/* NEW SECTION 0: PRICING PLANS */}
+              <section className="bg-white border border-blue-100 rounded-3xl p-6 md:p-10 shadow-sm">
+                <div className="mb-6 border-b border-gray-100 pb-4">
+                   <h2 className="text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">
+                    <span className="bg-blue-100 text-blue-500 w-8 h-8 rounded-full flex items-center justify-center text-sm">0</span> 
+                    Global Subscription Pricing
+                  </h2>
+                   <p className="text-sm font-medium text-gray-500 ml-10">Control the base prices and discount incentives displayed on the Upgrade page.</p>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 ml-0 md:ml-10">
+                  {pricingPlans.map((plan, i) => {
+                    const finalPrice = Math.ceil(plan.price - (plan.price * (plan.discount/100)));
+                    return (
+                      <div key={plan.id} className="border border-gray-200 p-4 rounded-2xl bg-gray-50/50 hover:border-blue-300 transition-colors">
+                        <div className="font-black text-gray-900 mb-4 pb-2 border-b border-gray-200">{plan.label} VIP</div>
+                        <div className="space-y-4">
+                          <div>
+                            <label className="text-[10px] font-bold text-gray-400 uppercase">Base Price (₹)</label>
+                            <input type="number" className="w-full border border-gray-200 rounded-lg p-2 font-bold focus:border-[#22c55e] outline-none" value={plan.price} onChange={(e) => updatePricing(i, 'price', e.target.value)} />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-gray-400 uppercase">Discount (%)</label>
+                            <div className="relative">
+                              <input type="number" className="w-full border border-gray-200 rounded-lg p-2 font-bold focus:border-[#22c55e] outline-none pr-8" value={plan.discount} onChange={(e) => updatePricing(i, 'discount', e.target.value)} />
+                              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">%</span>
+                            </div>
+                          </div>
+                          <div className="pt-3 flex justify-between items-center text-sm">
+                            <span className="font-bold text-gray-500">Final Price:</span>
+                            <span className="font-black text-[#22c55e] text-lg">₹{finalPrice.toLocaleString()}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </section>
+
               <section className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-sm">
                 <div className="mb-6 border-b border-gray-100 pb-4">
                    <h2 className="text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">
