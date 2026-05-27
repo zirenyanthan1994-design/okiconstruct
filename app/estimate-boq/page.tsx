@@ -334,8 +334,12 @@ export default function Estimator() {
     window.scrollTo(0,0);
   };
 
+  // --- BOQ GENERATION ENGINE & TRANSLATION LAYER ---
   const handleGenerateBOQ = () => {
     setErrorMsg("");
+    if (!Number(laborRates.mason) || !Number(laborRates.painter)) {
+       return setErrorMsg("Please enter primary Labor Rates (Mason/Painter).");
+    }
 
     const finalSnaps = floorsData.map((f, i) => {
         const layoutWithAreas = JSON.parse(JSON.stringify(f));
@@ -404,7 +408,8 @@ export default function Estimator() {
         };
     });
     
-    const defaultSettings = {
+    // 100% ACCOUNT ISOLATION: Prefer Firebase Cloud Data tied to UID, fallback to UID-locked local storage
+    let masterSettings: any = {
       ratios: { pcc: { c: 1, s: 3, g: 6 }, slab: { c: 1, s: 2, g: 4 }, footing: { c: 1, s: 2, g: 4 }, plinthBeam: { c: 1, s: 3, g: 4 }, beam: { c: 1, s: 3, g: 4 }, column: { c: 1, s: 3, g: 4 }, mortar: { c: 1, s: 4, g: 0 }, tileBedding: { c: 1, s: 4, g: 0 } },
       tmtSpecs: { '8mm': { length: 38, weight: 4.74 }, '10mm': { length: 38, weight: 7.40 }, '12mm': { length: 38, weight: 10.66 }, '16mm': { length: 38, weight: 18.96 }, '20mm': { length: 38, weight: 29.60 }, '25mm': { length: 38, weight: 46.20 } },
       dimensions: { slabThickness: 5, meshGap: 4, ringSpacing: 5 },
@@ -413,14 +418,38 @@ export default function Estimator() {
     };
 
     try {
-      const report = generateProjectBOQ(finalSnaps, totalFloorsCount, slabOverhang, rates, defaultSettings);
+      // Physically bound to the current logged in user's ID
+      const localKey = auth.currentUser?.uid ? `OkiConstruct_settings_${auth.currentUser.uid}` : null;
+      const savedAdmin = localKey ? localStorage.getItem(localKey) : null;
+      
+      const customData = userData?.customFormulas || (savedAdmin ? JSON.parse(savedAdmin) : null);
+
+      if (customData) {
+        masterSettings = {
+          ratios: { ...masterSettings.ratios, ...(customData.ratios || {}) },
+          tmtSpecs: { ...masterSettings.tmtSpecs, ...(customData.tmtSpecs || {}) },
+          dimensions: { ...masterSettings.dimensions, ...(customData.dimensions || {}) },
+          percentages: { 
+            ...masterSettings.percentages, 
+            ...(customData.percentages || {}),
+            wastage: { ...masterSettings.percentages.wastage, ...(customData.percentages?.wastage || {}) },
+            concreteAllowances: { ...masterSettings.percentages.concreteAllowances, ...(customData.percentages?.concreteAllowances || {}) }
+          },
+          consumption: { ...masterSettings.consumption, ...(customData.consumption || {}) }
+        };
+      }
+    } catch (err) {
+       console.error("Settings Parsing Error", err);
+    }
+
+    try {
+      const report = generateProjectBOQ(finalSnaps, totalFloorsCount, slabOverhang, rates, masterSettings);
       setBoqReport(report);
       setCurrentStep(9); 
     } catch (err) {
       console.error("Calculation Error:", err);
     }
   };
-
   const saveEstimateToDatabase = async () => {
     if (!auth.currentUser) return alert("Please log in from the Dashboard to save your estimates!");
     if (!boqReport) return alert("Error: BOQ Report is empty. Please generate the report first!");
