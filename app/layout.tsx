@@ -9,7 +9,7 @@ import Footer from "./components/footer";
 const spaceGrotesk = Space_Grotesk({ subsets: ["latin"] });
 
 export const metadata = {
-  title: "OkiConstruct | Command Center",
+  title: "OkiConstruct | Log In/Sign Up",
   description: "The Professional Construction Management Suite.",
 };
 
