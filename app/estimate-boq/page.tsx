@@ -130,7 +130,7 @@ export default function Estimator() {
             if (isComm) {
                 initialFloors.push({
                     floorName, isCommercial: true,
-                    shops: { count: '', length: '', breadth: '' },
+                    shops: [{ id: Date.now(), length: '', breadth: '' }], // 🟢 UPDATE: Initiated as an array
                     washrooms: { count: '', length: '', breadth: '' }
                 });
             } else {
@@ -200,6 +200,23 @@ export default function Estimator() {
     });
   };
 
+  // 🟢 NEW: Shop Engines for Commercial Floor
+  const addShop = () => {
+    setFloorsData(prev => {
+      const d = JSON.parse(JSON.stringify(prev));
+      if (!Array.isArray(d[activeFloor].shops)) d[activeFloor].shops = [];
+      d[activeFloor].shops.push({ id: Date.now(), length: '', breadth: '' });
+      return d;
+    });
+  };
+  const removeShop = (index: number) => {
+    setFloorsData(prev => {
+      const d = JSON.parse(JSON.stringify(prev));
+      d[activeFloor].shops.splice(index, 1);
+      return d;
+    });
+  };
+
   const addFlatBedroom = (fIdx: number) => {
     setFloorsData(prev => {
       const d = JSON.parse(JSON.stringify(prev));
@@ -256,7 +273,8 @@ export default function Estimator() {
     let area = 0;
     if (buildingType === 'apartment') {
       if (f.isCommercial) {
-        area += (Number(f.shops?.count || 0) * getRoomArea(f.shops));
+        // 🟢 UPDATE: Area calculation now dynamically adds all shop areas
+        (f.shops || []).forEach((s: any) => area += getRoomArea(s));
         area += (Number(f.washrooms?.count || 0) * getRoomArea(f.washrooms));
       } else {
         (f.flats || []).forEach((flat: any) => {
@@ -353,9 +371,9 @@ export default function Estimator() {
             let mainKitchen = { length: '0', breadth: '0' };
 
             if (f.isCommercial) {
-                for (let s = 0; s < Number(f.shops?.count || 0); s++) {
-                    flattenedBedrooms.push({ length: f.shops.length, breadth: f.shops.breadth });
-                }
+                // 🟢 UPDATE: Flatten dynamically added shops 
+                f.shops?.forEach((s: any) => flattenedBedrooms.push({ length: s.length, breadth: s.breadth }));
+                
                 for (let w = 0; w < Number(f.washrooms?.count || 0); w++) {
                     flattenedBathrooms.push({ length: f.washrooms.length, breadth: f.washrooms.breadth, isAttached: false, layoutType: 'outside' });
                 }
@@ -418,7 +436,6 @@ export default function Estimator() {
     };
 
     try {
-      // Physically bound to the current logged in user's ID
       const localKey = auth.currentUser?.uid ? `OkiConstruct_settings_${auth.currentUser.uid}` : null;
       const savedAdmin = localKey ? localStorage.getItem(localKey) : null;
       
@@ -450,6 +467,7 @@ export default function Estimator() {
       console.error("Calculation Error:", err);
     }
   };
+  
   const saveEstimateToDatabase = async () => {
     if (!auth.currentUser) return alert("Please log in from the Dashboard to save your estimates!");
     if (!boqReport) return alert("Error: BOQ Report is empty. Please generate the report first!");
@@ -741,16 +759,26 @@ export default function Estimator() {
                   {floorsData[activeFloor].isCommercial ? (
                     <div className="p-6 border-2 border-orange-200 bg-orange-50 rounded-3xl">
                       <h3 className="text-xl font-black text-orange-900 mb-6 border-b border-orange-200 pb-4">Commercial Space Configuration</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-                        <div className="bg-white p-4 rounded-xl border border-orange-100"><label className={labelStyle}>Number of Shops/Chambers</label><input type="number" className={inputStyle} value={floorsData[activeFloor].shops.count} onChange={(e) => updateFloorData('shops', null, 'count', e.target.value)} /></div>
-                        <div className="bg-white p-4 rounded-xl border border-orange-100">
-                          <label className={labelStyle}>Avg Chamber Size (ft)</label>
-                          <div className="flex gap-4">
-                            <input type="number" placeholder="Length" className={inputStyle} value={floorsData[activeFloor].shops.length} onChange={(e) => updateFloorData('shops', null, 'length', e.target.value)} />
-                            <input type="number" placeholder="Breadth" className={inputStyle} value={floorsData[activeFloor].shops.breadth} onChange={(e) => updateFloorData('shops', null, 'breadth', e.target.value)} />
-                          </div>
+                      
+                      {/* 🟢 UPDATE: Dynamic Multiple Shops Section */}
+                      <div className="space-y-4 mb-8">
+                        <div className="flex justify-between items-center">
+                          <h4 className="font-bold text-orange-800">Shops / Chambers (ft)</h4>
+                          <button onClick={addShop} className="text-sm font-semibold text-[#22c55e] bg-green-50 px-4 py-2 rounded-lg hover:bg-green-100 transition-colors">+ Add Chamber</button>
                         </div>
+                        {floorsData[activeFloor]?.shops?.map((shop: any, sIdx: number) => (
+                          <div key={shop.id || sIdx} className="flex flex-col md:flex-row gap-4 items-center p-4 border border-orange-100 bg-white rounded-xl shadow-sm">
+                            <span className="text-sm font-bold text-gray-500 w-full md:w-24">Shop {sIdx + 1}</span>
+                            <div className="flex gap-4 w-full items-center">
+                              <input type="number" inputMode="decimal" min="0" placeholder="Length" className={inputStyle} value={shop.length} onChange={(e) => updateFloorData('shops', sIdx, 'length', e.target.value)} />
+                              <span className="font-bold text-gray-300">×</span>
+                              <input type="number" inputMode="decimal" min="0" placeholder="Breadth" className={inputStyle} value={shop.breadth} onChange={(e) => updateFloorData('shops', sIdx, 'breadth', e.target.value)} />
+                            </div>
+                            <button onClick={() => removeShop(sIdx)} className="text-red-400 hover:text-red-600 bg-red-50 p-3 rounded-lg md:ml-auto">🗑️</button>
+                          </div>
+                        ))}
                       </div>
+
                       <h4 className="font-bold text-orange-800 mb-3">Common Washrooms</h4>
                       <div className="bg-white p-4 rounded-xl border border-orange-100 grid grid-cols-3 gap-4">
                         <div><label className={labelStyle}>Count</label><input type="number" className={inputStyle} value={floorsData[activeFloor].washrooms.count} onChange={(e) => updateFloorData('washrooms', null, 'count', e.target.value)} /></div>
