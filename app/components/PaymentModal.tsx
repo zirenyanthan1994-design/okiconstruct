@@ -19,7 +19,7 @@ export default function PaymentModal({ paymentType, amount, onClose, onSuccess }
   const [copied, setCopied] = useState(false);
 
   // Your UPI Credentials
-  const UPI_ID = "okiconstruct@upi"; 
+  const UPI_ID = "9619067768@pthdfc"; 
   const UPI_NAME = "OkiConstruct";
   
   // Native OS Deep Link for UPI (Triggers GPay, PhonePe, Paytm drawer on mobile)

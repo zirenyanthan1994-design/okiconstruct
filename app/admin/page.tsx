@@ -1,8 +1,8 @@
 "use client";
 import { useState, useEffect } from 'react';
 import { auth, db } from '../lib/firebase';
-import { collection, getDocs, doc, getDoc, setDoc } from 'firebase/firestore'; 
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { collection, getDocs, doc, getDoc, setDoc, updateDoc, Timestamp } from 'firebase/firestore'; 
+import { onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Navbar from '../components/Navbar'; 
@@ -18,33 +18,18 @@ const ADMIN_PASS = "Okiconstruct@2026";
 // ==========================================
 const defaultSettings = {
   ratios: { 
-    pcc: { c: 1, s: 3, g: 6 }, 
-    slab: { c: 1, s: 2, g: 5 }, 
-    footing: { c: 1, s: 2, g: 4 }, 
-    plinthBeam: { c: 1, s: 3, g: 4 }, 
-    beam: { c: 1, s: 3, g: 4 }, 
-    column: { c: 1, s: 3, g: 4 },
-    mortar: { c: 1, s: 4, g: 0 }, 
-    tileBedding: { c: 1, s: 4, g: 0 }
+    pcc: { c: 1, s: 3, g: 6 }, slab: { c: 1, s: 2, g: 5 }, footing: { c: 1, s: 2, g: 4 }, 
+    plinthBeam: { c: 1, s: 3, g: 4 }, beam: { c: 1, s: 3, g: 4 }, column: { c: 1, s: 3, g: 4 },
+    mortar: { c: 1, s: 4, g: 0 }, tileBedding: { c: 1, s: 4, g: 0 }
   },
   tmtSpecs: { 
-    '8mm': { length: 38, weight: 4.74 }, 
-    '10mm': { length: 38, weight: 7.40 }, 
-    '12mm': { length: 38, weight: 10.66 }, 
-    '16mm': { length: 38, weight: 18.96 }, 
-    '20mm': { length: 38, weight: 29.60 }, 
-    '25mm': { length: 38, weight: 46.20 } 
+    '8mm': { length: 38, weight: 4.74 }, '10mm': { length: 38, weight: 7.40 }, '12mm': { length: 38, weight: 10.66 }, 
+    '16mm': { length: 38, weight: 18.96 }, '20mm': { length: 38, weight: 29.60 }, '25mm': { length: 38, weight: 46.20 } 
   },
-  dimensions: { 
-    slabThickness: 5, 
-    meshGap: 4, 
-    slabOverhang: 3, 
-    ringSpacing: 5 
-  },
+  dimensions: { slabThickness: 5, meshGap: 4, slabOverhang: 3, ringSpacing: 5 },
   percentages: { 
     wastage: { cement: 15, sand: 15, gravel: 15, tmt: 10, bricks: 15, tiles: 10 },
-    slabExtraConcrete: 25,
-    shuttering: 8, electrical: 12, plumbing: 8, misc: 5, logistics: 10, contingency: 5 
+    slabExtraConcrete: 25, shuttering: 8, electrical: 12, plumbing: 8, misc: 5, logistics: 10, contingency: 5 
   },
   consumption: { 
     puttyCoverage: 10, interiorPaintCoverage: 50, exteriorPaintCoverage: 50,  
@@ -92,13 +77,16 @@ export default function AdminPortal() {
   const [loginError, setLoginError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
+  // UI STATES
   const [activeTab, setActiveTab] = useState<'ANALYTICS' | 'PRICING' | 'ENGINE'>('ANALYTICS');
+  const [analyticsFilter, setAnalyticsFilter] = useState<'ALL' | 'PENDING' | 'ACTIVE_SUBS' | 'USERS'>('ALL');
   
+  // DATA STATES
   const [users, setUsers] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
-  const [filter, setFilter] = useState<'ALL' | 'PREMIUM' | 'STANDARD'>('ALL');
-  const PREMIUM_PRICE_INR = 999; 
-
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [selectedUser, setSelectedUser] = useState<any | null>(null); // For CRM Modal
+  
   const [settings, setSettings] = useState(defaultSettings);
   const [pricingPlans, setPricingPlans] = useState(DEFAULT_PRICING);
   const [saveStatus, setSaveStatus] = useState("");
@@ -124,24 +112,17 @@ export default function AdminPortal() {
     setIsLoggingIn(true);
     setLoginError('');
 
-    // 1. Hardcoded Strict Check
     if (adminLoginEmail.toLowerCase() !== ADMIN_EMAIL.toLowerCase() || adminLoginPassword !== ADMIN_PASS) {
         setLoginError('Access Denied: Incorrect Admin Credentials.');
         setIsLoggingIn(false);
         return;
     }
 
-    // 2. Firebase Authentication Connection
     try {
         await signInWithEmailAndPassword(auth, adminLoginEmail, adminLoginPassword);
-        // The onAuthStateChanged listener will automatically redirect you into the dashboard upon success
     } catch (error: any) {
         console.error("Login Error:", error);
-        if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found') {
-            setLoginError('Error: Please register this exact email and password in your Firebase Authentication console first.');
-        } else {
-            setLoginError('Database connection error.');
-        }
+        setLoginError('Database connection error. Check credentials.');
     } finally {
         setIsLoggingIn(false);
     }
@@ -157,11 +138,19 @@ export default function AdminPortal() {
       const fetchedProjects: any[] = [];
       projectsSnap.forEach((doc) => fetchedProjects.push({ id: doc.id, ...doc.data() }));
 
+      // Fetch Transaction History
+      const txSnap = await getDocs(collection(db, "transactions"));
+      const fetchedTx: any[] = [];
+      txSnap.forEach(doc => fetchedTx.push({ id: doc.id, ...doc.data() }));
+      fetchedTx.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+      setTransactions(fetchedTx);
+
       const enrichedUsers = fetchedUsers.map(user => {
         const userProjects = fetchedProjects.filter(p => p.userId === user.id);
+        const userTx = fetchedTx.filter(t => t.uid === user.id);
         const boqCount = userProjects.filter(p => !p.isManualTracker).length;
         const ledgerCount = userProjects.filter(p => p.isManualTracker).length;
-        return { ...user, totalBOQs: boqCount, totalLedgers: ledgerCount, totalProjects: userProjects.length };
+        return { ...user, totalBOQs: boqCount, totalLedgers: ledgerCount, totalProjects: userProjects.length, transactions: userTx };
       });
 
       enrichedUsers.sort((a, b) => b.totalProjects - a.totalProjects);
@@ -207,35 +196,94 @@ export default function AdminPortal() {
     }
   };
 
-  // ✅ FIXED TYPESCRIPT ERRORS: Simplified state updaters to bypass strict nested typing
+  // ==========================================
+  // CRM ACTIONS (Approve, Reject, Manage)
+  // ==========================================
+  const handleApproveTransaction = async (tx: any) => {
+    if(!confirm(`Approve this payment of ₹${tx.amount}?`)) return;
+    try {
+      await updateDoc(doc(db, "transactions", tx.id), { status: "Approved", approvedAt: Timestamp.now() });
+      
+      // Calculate Expiry Date based on plan
+      let addDays = 30; // Default 1 month
+      if (tx.paymentType.includes("2 Month")) addDays = 60;
+      if (tx.paymentType.includes("3 Month")) addDays = 90;
+      if (tx.paymentType.includes("6 Month")) addDays = 180;
+      if (tx.paymentType.includes("1 Year")) addDays = 365;
+      if (tx.paymentType.includes("2 Year")) addDays = 730;
+      if (tx.paymentType.includes("3 Year")) addDays = 1095;
+      if (tx.paymentType.includes("4 Year")) addDays = 1460;
+      if (tx.paymentType.includes("5 Year")) addDays = 1825;
+
+      const expiryDate = new Date();
+      expiryDate.setDate(expiryDate.getDate() + addDays);
+
+      await updateDoc(doc(db, "users", tx.uid), {
+        tier: "premium",
+        planExpiry: Timestamp.fromDate(expiryDate),
+        lastPaymentAmount: tx.amount
+      });
+
+      alert("User successfully upgraded to Premium!");
+      fetchMasterData();
+    } catch (err) { console.error("Approval failed:", err); alert("Failed to approve transaction."); }
+  };
+
+  const handleRejectTransaction = async (txId: string) => {
+    const reason = prompt("Enter reason for rejection (e.g., Invalid screenshot, Incorrect amount):");
+    if (reason === null) return;
+    try {
+      await updateDoc(doc(db, "transactions", txId), { 
+        status: "Rejected", 
+        rejectionReason: reason || "Verification failed.",
+        rejectedAt: Timestamp.now()
+      });
+      alert("Transaction rejected.");
+      fetchMasterData();
+    } catch (err) { console.error("Rejection failed:", err); }
+  };
+
+  const handleToggleUserStatus = async (userId: string, currentStatus: string) => {
+    const newStatus = currentStatus === "suspended" ? "active" : "suspended";
+    if(!confirm(`Are you sure you want to ${newStatus === 'suspended' ? 'SUSPEND' : 'ACTIVATE'} this user?`)) return;
+    try {
+      await updateDoc(doc(db, "users", userId), { accountStatus: newStatus });
+      alert(`User is now ${newStatus}.`);
+      fetchMasterData();
+      if (selectedUser?.id === userId) setSelectedUser({...selectedUser, accountStatus: newStatus});
+    } catch (err) { console.error(err); }
+  };
+
+  const handleDeleteUser = async (userId: string) => {
+    const code = prompt('DANGER: To delete this profile, type "DELETE"');
+    if (code !== "DELETE") return;
+    try {
+      await updateDoc(doc(db, "users", userId), { isDeleted: true, accountStatus: 'deleted' });
+      alert("User soft-deleted from the system.");
+      setSelectedUser(null);
+      fetchMasterData();
+    } catch (err) { console.error(err); }
+  };
+
+  // State updaters
   const updateRatio = (key: string, field: 'c' | 's' | 'g', val: string) => setSettings((prev: any) => ({ ...prev, ratios: { ...prev.ratios, [key]: { ...prev.ratios[key], [field]: Number(val) } } }));
   const updateTmt = (key: string, field: 'length' | 'weight', val: string) => setSettings((prev: any) => ({ ...prev, tmtSpecs: { ...prev.tmtSpecs, [key]: { ...prev.tmtSpecs[key], [field]: Number(val) } } }));
   const updateDimension = (key: string, val: string) => setSettings((prev: any) => ({ ...prev, dimensions: { ...prev.dimensions, [key]: Number(val) } }));
   const updateWastage = (key: string, val: string) => setSettings((prev: any) => ({ ...prev, percentages: { ...prev.percentages, wastage: { ...prev.percentages.wastage, [key]: Number(val) } } }));
   const updatePercentage = (key: string, val: string) => setSettings((prev: any) => ({ ...prev, percentages: { ...prev.percentages, [key]: Number(val) } }));
   const updateConsumption = (key: string, val: string) => setSettings((prev: any) => ({ ...prev, consumption: { ...prev.consumption, [key]: Number(val) } }));
-
-  const updatePricing = (index: number, field: string, value: string) => {
-    setPricingPlans((prev: any) => {
-      const newPlans = [...prev];
-      newPlans[index][field] = Number(value);
-      return newPlans;
-    });
-  };
+  const updatePricing = (index: number, field: string, value: string) => { setPricingPlans((prev: any) => { const newPlans = [...prev]; newPlans[index][field] = Number(value); return newPlans; }); };
 
   // ==========================================
   // RENDER BLOCKS: SECURITY ROUTING
   // ==========================================
 
-  // 1. Loading State
   if (authStatus === 'LOADING') return (
       <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center font-bold text-xl text-gray-500 uppercase tracking-widest">
-          <span className="text-4xl animate-pulse mb-4">🛡️</span>
-          Verifying Clearance...
+          <span className="text-4xl animate-pulse mb-4">🛡️</span> Verifying Clearance...
       </div>
   );
 
-  // 2. Invisible 404 Cloak for Regular Users
   if (authStatus === 'NORMAL_USER') return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center text-center p-4">
           <h1 className="text-7xl font-black text-gray-900 mb-4 tracking-tighter">404</h1>
@@ -246,7 +294,6 @@ export default function AdminPortal() {
       </div>
   );
 
-  // 3. Strict Admin Login Gateway
   if (authStatus === 'NOT_LOGGED_IN') return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4 font-sans">
           <form onSubmit={handleAdminLogin} className="bg-gray-800 border border-gray-700 p-8 md:p-10 rounded-3xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-300">
@@ -268,9 +315,7 @@ export default function AdminPortal() {
               </div>
 
               <button type="submit" disabled={isLoggingIn} className="w-full bg-[#22c55e] text-white font-bold text-lg py-4 rounded-xl mt-8 hover:bg-[#1ea950] transition-colors shadow-lg shadow-green-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                  {isLoggingIn ? (
-                      <><svg className="animate-spin h-5 w-5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Authenticating...</>
-                  ) : 'Secure Login'}
+                  {isLoggingIn ? 'Authenticating...' : 'Secure Login'}
               </button>
               
               <div className="mt-8 text-center">
@@ -284,15 +329,17 @@ export default function AdminPortal() {
   // 4. MAIN ADMIN DASHBOARD 
   // ==========================================
   
-  const premiumUsers = users.filter(u => u.tier === 'premium' || u.planStatus === 'premium'); 
-  const standardUsers = users.filter(u => u.tier !== 'premium' && u.planStatus !== 'premium');
+  // Computed Dashboard Stats
+  const activePremiumUsers = users.filter(u => u.tier === 'premium' && !u.isDeleted && (!u.planExpiry || u.planExpiry.seconds * 1000 > Date.now())); 
+  const activeStandardUsers = users.filter(u => u.tier !== 'premium' && !u.isDeleted);
   const totalBOQs = projects.filter(p => !p.isManualTracker).length;
   const totalLedgers = projects.filter(p => p.isManualTracker).length;
-  const estimatedRevenue = premiumUsers.length * PREMIUM_PRICE_INR;
-  const filteredUsers = users.filter(u => filter === 'ALL' ? true : filter === 'PREMIUM' ? (u.tier === 'premium' || u.planStatus === 'premium') : (u.tier !== 'premium' && u.planStatus !== 'premium'));
+  
+  const pendingTransactions = transactions.filter(t => t.status === 'Pending');
+  const allTimeRevenue = transactions.filter(t => t.status === 'Approved').reduce((sum, t) => sum + (t.amount || 0), 0);
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col font-sans pb-20">
+    <div className="min-h-screen bg-gray-50 flex flex-col font-sans pb-20 relative">
       
       <Navbar />
 
@@ -300,31 +347,14 @@ export default function AdminPortal() {
         
         <div className="mb-10 flex flex-col md:flex-row justify-between items-start md:items-end border-b border-gray-200 pb-6 gap-6">
           <div className="animate-in fade-in slide-in-from-left-4 duration-500">
-            <h1 className="text-4xl md:text-5xl font-black tracking-tight text-gray-900">
-               System Admin
-            </h1>
-            <p className="font-bold text-gray-500 uppercase tracking-widest text-xs mt-2">Master Override & Analytics Dashboard</p>
+            <h1 className="text-4xl md:text-5xl font-black tracking-tight text-gray-900">System Admin</h1>
+            <p className="font-bold text-gray-500 uppercase tracking-widest text-xs mt-2">Master Override & CRM Dashboard</p>
           </div>
           
           <div className="flex gap-2 w-full md:w-auto bg-gray-200 p-1 rounded-2xl animate-in fade-in slide-in-from-right-4 duration-500 overflow-x-auto">
-             <button 
-               onClick={() => setActiveTab('ANALYTICS')} 
-               className={`flex-1 md:flex-none px-6 py-3 rounded-xl font-bold uppercase text-sm transition-all ${activeTab === 'ANALYTICS' ? 'bg-white text-[#22c55e] shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
-             >
-               Analytics
-             </button>
-             <button 
-               onClick={() => setActiveTab('PRICING')} 
-               className={`flex-1 md:flex-none px-6 py-3 rounded-xl font-bold uppercase text-sm transition-all ${activeTab === 'PRICING' ? 'bg-white text-[#22c55e] shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
-             >
-               Pricing
-             </button>
-             <button 
-               onClick={() => setActiveTab('ENGINE')} 
-               className={`flex-1 md:flex-none px-6 py-3 rounded-xl font-bold uppercase text-sm transition-all ${activeTab === 'ENGINE' ? 'bg-white text-[#22c55e] shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
-             >
-               Engine
-             </button>
+             <button onClick={() => setActiveTab('ANALYTICS')} className={`flex-1 md:flex-none px-6 py-3 rounded-xl font-bold uppercase text-sm transition-all ${activeTab === 'ANALYTICS' ? 'bg-white text-[#22c55e] shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>Analytics & CRM</button>
+             <button onClick={() => setActiveTab('PRICING')} className={`flex-1 md:flex-none px-6 py-3 rounded-xl font-bold uppercase text-sm transition-all ${activeTab === 'PRICING' ? 'bg-white text-[#22c55e] shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>Pricing</button>
+             <button onClick={() => setActiveTab('ENGINE')} className={`flex-1 md:flex-none px-6 py-3 rounded-xl font-bold uppercase text-sm transition-all ${activeTab === 'ENGINE' ? 'bg-white text-[#22c55e] shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>Engine</button>
           </div>
         </div>
 
@@ -334,90 +364,145 @@ export default function AdminPortal() {
           </div>
         )}
 
-        {/* TAB 1: ANALYTICS */}
+        {/* TAB 1: ANALYTICS & CRM */}
         {activeTab === 'ANALYTICS' && (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+            
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
-              <div className="bg-white border border-gray-100 rounded-3xl p-8 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-24 h-24 bg-blue-50 rounded-bl-[100px] -z-0"></div>
+              <div className="bg-white border border-gray-100 rounded-3xl p-6 shadow-sm flex flex-col justify-between">
+                <h3 className="font-bold text-gray-400 uppercase tracking-widest text-xs mb-2">Pending Approvals</h3>
+                <p className="text-5xl font-black text-[#22c55e]">{pendingTransactions.length}</p>
+                <p className="text-[10px] font-bold mt-4 uppercase tracking-widest text-gray-400">Requires Action</p>
+              </div>
+              
+              <div className="bg-white border border-gray-100 rounded-3xl p-6 shadow-sm flex flex-col justify-between relative overflow-hidden">
                 <h3 className="font-bold text-gray-400 uppercase tracking-widest text-xs mb-2 relative z-10">Total Operators</h3>
-                <p className="text-5xl font-black text-gray-900 relative z-10">{users.length}</p>
-                <div className="flex items-center gap-3 mt-4 relative z-10">
-                  <span className="bg-green-50 text-[#22c55e] text-xs font-bold px-2 py-1 rounded-md">{premiumUsers.length} Pro</span>
-                  <span className="bg-gray-100 text-gray-500 text-xs font-bold px-2 py-1 rounded-md">{standardUsers.length} Free</span>
+                <p className="text-5xl font-black text-gray-900 relative z-10">{users.filter(u => !u.isDeleted).length}</p>
+                <div className="flex items-center gap-2 mt-4 relative z-10">
+                  <span className="bg-green-50 text-[#22c55e] text-[10px] font-bold px-2 py-1 rounded-md">{activePremiumUsers.length} VIP</span>
+                  <span className="bg-gray-100 text-gray-500 text-[10px] font-bold px-2 py-1 rounded-md">{activeStandardUsers.length} Free</span>
                 </div>
               </div>
               
-              <div className="bg-white border border-gray-100 rounded-3xl p-8 shadow-sm hover:shadow-md transition-shadow">
+              <div className="bg-white border border-gray-100 rounded-3xl p-6 shadow-sm flex flex-col justify-between">
                 <h3 className="font-bold text-gray-400 uppercase tracking-widest text-xs mb-2">Total BOQs Generated</h3>
                 <p className="text-5xl font-black text-gray-900">{totalBOQs}</p>
-                <p className="text-xs font-bold mt-4 uppercase tracking-widest text-gray-400">System Wide Database</p>
+                <p className="text-[10px] font-bold mt-4 uppercase tracking-widest text-gray-400">System Wide</p>
               </div>
               
-              <div className="bg-white border border-gray-100 rounded-3xl p-8 shadow-sm hover:shadow-md transition-shadow">
-                <h3 className="font-bold text-gray-400 uppercase tracking-widest text-xs mb-2">Active Expense Ledgers</h3>
-                <p className="text-5xl font-black text-gray-900">{totalLedgers}</p>
-                <p className="text-xs font-bold mt-4 uppercase tracking-widest text-gray-400">System Wide Database</p>
-              </div>
-              
-              <div className="bg-[#22c55e] rounded-3xl p-8 shadow-md hover:shadow-lg transition-shadow text-white">
-                <h3 className="font-bold text-white/80 uppercase tracking-widest text-xs mb-2">Est. Gross Revenue</h3>
-                <p className="text-4xl md:text-5xl font-black text-white tracking-tight">₹{(estimatedRevenue).toLocaleString()}</p>
-                <p className="text-xs font-bold mt-4 uppercase tracking-widest text-white/80">Based on Active Pro Tiers</p>
+              <div className="bg-gray-900 text-white rounded-3xl p-6 shadow-md flex flex-col justify-between relative overflow-hidden">
+                <div className="absolute -right-4 -top-4 text-8xl opacity-10">₹</div>
+                <h3 className="font-bold text-gray-400 uppercase tracking-widest text-xs mb-2 relative z-10">Total Revenue</h3>
+                <p className="text-4xl font-black text-white relative z-10">₹{allTimeRevenue.toLocaleString()}</p>
+                <p className="text-[10px] font-bold mt-4 uppercase tracking-widest text-gray-500 relative z-10">All Time Approved</p>
               </div>
             </div>
 
+            {/* CRM DATABASE */}
             <div className="bg-white border border-gray-100 rounded-3xl shadow-sm overflow-hidden">
-              <div className="p-6 md:p-8 border-b border-gray-100 bg-white flex flex-col md:flex-row justify-between items-center gap-6">
+              <div className="p-6 md:p-8 border-b border-gray-100 bg-white flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
                 <h2 className="font-bold text-2xl text-gray-900 flex items-center gap-3">
-                  <span className="bg-gray-100 p-2 rounded-xl text-xl">👥</span> Operator Database
+                  <span className="bg-gray-100 p-2 rounded-xl text-xl">👥</span> User Management (CRM)
                 </h2>
-                <div className="flex gap-2 w-full md:w-auto bg-gray-50 p-1 rounded-xl border border-gray-200">
-                  {['ALL', 'PREMIUM', 'STANDARD'].map((t) => (
+                <div className="flex gap-2 w-full lg:w-auto bg-gray-50 p-1 rounded-xl border border-gray-200 overflow-x-auto">
+                  {['ALL', 'PENDING', 'ACTIVE_SUBS', 'USERS'].map((t) => (
                     <button 
                       key={t} 
-                      onClick={() => setFilter(t as any)} 
-                      className={`flex-1 md:flex-none px-6 py-2.5 font-bold uppercase text-xs rounded-lg transition-colors ${filter === t ? 'bg-white text-[#22c55e] shadow-sm border border-gray-100' : 'text-gray-500 hover:text-gray-900'}`}
+                      onClick={() => setAnalyticsFilter(t as any)} 
+                      className={`flex-1 md:flex-none px-4 py-2.5 font-bold uppercase text-[10px] tracking-wider rounded-lg transition-colors whitespace-nowrap ${analyticsFilter === t ? 'bg-white text-[#22c55e] shadow-sm border border-gray-100' : 'text-gray-500 hover:text-gray-900'}`}
                     >
-                      {t}
+                      {t.replace('_', ' ')}
                     </button>
                   ))}
                 </div>
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse min-w-[800px]">
-                  <thead>
-                    <tr className="bg-gray-50">
-                      <th className="p-5 font-bold uppercase tracking-wider text-xs text-gray-500">User Details</th>
-                      <th className="p-5 font-bold uppercase tracking-wider text-xs text-gray-500 text-center">Tier</th>
-                      <th className="p-5 font-bold uppercase tracking-wider text-xs text-gray-500 text-center">BOQs</th>
-                      <th className="p-5 font-bold uppercase tracking-wider text-xs text-gray-500 text-center">Ledgers</th>
-                      <th className="p-5 font-bold uppercase tracking-wider text-xs text-gray-500 text-right">Join Date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredUsers.map((u, i) => (
-                      <tr key={u.id} className="border-b border-gray-50 hover:bg-gray-50/80 transition-colors">
-                        <td className="p-5">
-                          <p className="font-bold text-base text-gray-900">{u.name || 'Unknown Builder'}</p>
-                          <p className="font-medium text-gray-500 text-sm">{u.email}</p>
-                          <p className="font-medium text-gray-400 text-xs mt-1">ID: {u.id}</p>
-                        </td>
-                        <td className="p-5 text-center">
-                          <span className={`inline-block px-3 py-1 font-bold text-xs uppercase tracking-widest rounded-md ${u.tier === 'premium' || u.planStatus === 'premium' ? 'bg-green-50 text-[#22c55e]' : 'bg-gray-100 text-gray-500'}`}>
-                            {u.tier === 'premium' || u.planStatus === 'premium' ? 'PRO VIP' : 'FREE'}
-                          </span>
-                        </td>
-                        <td className="p-5 text-center font-bold text-xl text-gray-700">{u.totalBOQs}</td>
-                        <td className="p-5 text-center font-bold text-xl text-gray-700">{u.totalLedgers}</td>
-                        <td className="p-5 text-right font-medium text-gray-500 text-sm">
-                          {u.createdAt ? new Date(u.createdAt.seconds * 1000).toLocaleDateString() : 'Legacy Account'}
-                        </td>
+                {analyticsFilter === 'PENDING' ? (
+                  // PENDING TRANSACTIONS VIEW
+                  <table className="w-full text-left border-collapse min-w-[1000px]">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-100">
+                        <th className="p-5 font-bold uppercase tracking-wider text-xs text-gray-500">Date</th>
+                        <th className="p-5 font-bold uppercase tracking-wider text-xs text-gray-500">User / UTR</th>
+                        <th className="p-5 font-bold uppercase tracking-wider text-xs text-gray-500 text-center">Amount</th>
+                        <th className="p-5 font-bold uppercase tracking-wider text-xs text-gray-500 text-center">Receipt</th>
+                        <th className="p-5 font-bold uppercase tracking-wider text-xs text-gray-500 text-right">Actions</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {pendingTransactions.length === 0 ? (
+                        <tr><td colSpan={5} className="p-8 text-center text-gray-400 font-bold">No pending approvals required.</td></tr>
+                      ) : pendingTransactions.map((tx) => (
+                        <tr key={tx.id} className="border-b border-gray-50 hover:bg-gray-50/80 transition-colors">
+                          <td className="p-5 font-medium text-gray-500 text-sm">{tx.createdAt ? new Date(tx.createdAt.seconds * 1000).toLocaleString() : 'N/A'}</td>
+                          <td className="p-5">
+                            <p className="font-bold text-gray-900">{tx.userName}</p>
+                            <p className="text-xs text-[#22c55e] font-bold my-1">{tx.paymentType}</p>
+                            <p className="text-xs text-gray-400 font-mono">UTR: {tx.utrNumber}</p>
+                          </td>
+                          <td className="p-5 text-center font-black text-xl text-gray-900">₹{tx.amount?.toLocaleString()}</td>
+                          <td className="p-5 text-center">
+                            <a href={tx.screenshotUrl} target="_blank" rel="noreferrer" className="inline-block bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-blue-100 transition-colors">View Image ↗</a>
+                          </td>
+                          <td className="p-5 flex justify-end gap-2">
+                             <button onClick={() => handleRejectTransaction(tx.id)} className="bg-red-50 text-red-600 px-4 py-2 rounded-lg font-bold text-xs hover:bg-red-100">Reject</button>
+                             <button onClick={() => handleApproveTransaction(tx)} className="bg-[#22c55e] text-white px-4 py-2 rounded-lg font-bold text-xs hover:bg-[#1ea950] shadow-sm">Approve</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  // STANDARD USERS VIEW
+                  <table className="w-full text-left border-collapse min-w-[1000px]">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-100">
+                        <th className="p-5 font-bold uppercase tracking-wider text-[10px] text-gray-500">Builder Profile</th>
+                        <th className="p-5 font-bold uppercase tracking-wider text-[10px] text-gray-500 text-center">System Status</th>
+                        <th className="p-5 font-bold uppercase tracking-wider text-[10px] text-gray-500 text-center">Subscription Tier</th>
+                        <th className="p-5 font-bold uppercase tracking-wider text-[10px] text-gray-500 text-center">Expiry Date</th>
+                        <th className="p-5 font-bold uppercase tracking-wider text-[10px] text-gray-500 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {users.filter(u => {
+                        if (analyticsFilter === 'ACTIVE_SUBS') return u.tier === 'premium';
+                        if (analyticsFilter === 'USERS') return u.tier !== 'premium';
+                        return true;
+                      }).map((u) => {
+                        const isExpired = u.tier === 'premium' && u.planExpiry && u.planExpiry.seconds * 1000 < Date.now();
+                        const isSuspended = u.accountStatus === 'suspended';
+                        return (
+                          <tr key={u.id} className={`border-b border-gray-50 hover:bg-gray-50/80 transition-colors ${u.isDeleted ? 'opacity-40' : ''}`}>
+                            <td className="p-5">
+                              <p className="font-bold text-base text-gray-900">{u.name || 'Unknown Builder'} {u.isDeleted && <span className="text-red-500 text-xs">(Deleted)</span>}</p>
+                              <p className="font-medium text-gray-500 text-sm">{u.email}</p>
+                            </td>
+                            <td className="p-5 text-center">
+                              {isSuspended ? <span className="text-[10px] font-black text-red-500 bg-red-50 px-2 py-1 rounded uppercase tracking-widest">Suspended</span> : <span className="text-[10px] font-black text-[#22c55e] bg-green-50 px-2 py-1 rounded uppercase tracking-widest">Active</span>}
+                            </td>
+                            <td className="p-5 text-center">
+                              <span className={`inline-block px-3 py-1 font-bold text-xs uppercase tracking-widest rounded-md ${u.tier === 'premium' ? 'bg-gray-900 text-[#22c55e]' : 'bg-gray-100 text-gray-500'}`}>
+                                {u.tier === 'premium' ? 'PRO VIP' : 'FREE'}
+                              </span>
+                            </td>
+                            <td className="p-5 text-center font-medium text-sm">
+                              {u.tier === 'premium' && u.planExpiry ? (
+                                <span className={isExpired ? 'text-red-500 font-bold' : 'text-gray-700'}>
+                                  {new Date(u.planExpiry.seconds * 1000).toLocaleDateString()} {isExpired && '(Expired)'}
+                                </span>
+                              ) : <span className="text-gray-300">-</span>}
+                            </td>
+                            <td className="p-5 text-right">
+                              <button onClick={() => setSelectedUser(u)} className="bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg font-bold text-xs hover:border-[#22c55e] hover:text-[#22c55e] transition-colors shadow-sm">View & Manage</button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )}
               </div>
             </div>
           </div>
@@ -428,9 +513,7 @@ export default function AdminPortal() {
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 bg-white p-6 md:p-8 rounded-3xl border border-gray-100 shadow-sm">
               <div>
-                <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
-                  <span className="bg-gray-100 p-2 rounded-xl text-xl">💳</span> Global Pricing
-                </h2>
+                <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-3"><span className="bg-gray-100 p-2 rounded-xl text-xl">💳</span> Global Pricing</h2>
                 <p className="font-medium text-gray-500 mt-2 text-sm">Control the base prices and discount incentives displayed on the Upgrade page.</p>
               </div>
               <div className="flex gap-4 mt-6 md:mt-0 w-full md:w-auto">
@@ -440,11 +523,6 @@ export default function AdminPortal() {
             </div>
 
             <section className="bg-white border border-blue-100 rounded-3xl p-6 md:p-10 shadow-sm mb-8">
-              <div className="mb-6 border-b border-gray-100 pb-4">
-                  <h2 className="text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">Subscription Tiers</h2>
-                  <p className="text-sm font-medium text-gray-500">Adjust the raw price and percentage discount for each duration.</p>
-              </div>
-              
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {pricingPlans.map((plan, i) => {
                   const finalPrice = Math.ceil(plan.price - (plan.price * (plan.discount/100)));
@@ -452,21 +530,12 @@ export default function AdminPortal() {
                     <div key={plan.id} className="border border-gray-200 p-4 rounded-2xl bg-gray-50/50 hover:border-blue-300 transition-colors">
                       <div className="font-black text-gray-900 mb-4 pb-2 border-b border-gray-200">{plan.label} VIP</div>
                       <div className="space-y-4">
-                        <div>
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Base Price (₹)</label>
-                          <input type="number" className="w-full border border-gray-200 rounded-lg p-2 font-bold focus:border-[#22c55e] outline-none" value={plan.price} onChange={(e) => updatePricing(i, 'price', e.target.value)} />
-                        </div>
+                        <div><label className="text-[10px] font-bold text-gray-400 uppercase">Base Price (₹)</label><input type="number" className="w-full border border-gray-200 rounded-lg p-2 font-bold focus:border-[#22c55e] outline-none" value={plan.price} onChange={(e) => updatePricing(i, 'price', e.target.value)} /></div>
                         <div>
                           <label className="text-[10px] font-bold text-gray-400 uppercase">Discount (%)</label>
-                          <div className="relative">
-                            <input type="number" className="w-full border border-gray-200 rounded-lg p-2 font-bold focus:border-[#22c55e] outline-none pr-8" value={plan.discount} onChange={(e) => updatePricing(i, 'discount', e.target.value)} />
-                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">%</span>
-                          </div>
+                          <div className="relative"><input type="number" className="w-full border border-gray-200 rounded-lg p-2 font-bold focus:border-[#22c55e] outline-none pr-8" value={plan.discount} onChange={(e) => updatePricing(i, 'discount', e.target.value)} /><span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">%</span></div>
                         </div>
-                        <div className="pt-3 flex justify-between items-center text-sm border-t border-gray-100">
-                          <span className="font-bold text-gray-500">Final Price:</span>
-                          <span className="font-black text-[#22c55e] text-lg">₹{finalPrice.toLocaleString()}</span>
-                        </div>
+                        <div className="pt-3 flex justify-between items-center text-sm border-t border-gray-100"><span className="font-bold text-gray-500">Final Price:</span><span className="font-black text-[#22c55e] text-lg">₹{finalPrice.toLocaleString()}</span></div>
                       </div>
                     </div>
                   )
@@ -479,12 +548,9 @@ export default function AdminPortal() {
         {/* TAB 3: ENGINE */}
         {activeTab === 'ENGINE' && (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-            
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 bg-white p-6 md:p-8 rounded-3xl border border-gray-100 shadow-sm">
               <div>
-                <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
-                  <span className="bg-gray-100 p-2 rounded-xl text-xl">⚙️</span> Engine Configuration
-                </h2>
+                <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-3"><span className="bg-gray-100 p-2 rounded-xl text-xl">⚙️</span> Engine Configuration</h2>
                 <p className="font-medium text-gray-500 mt-2 text-sm">Sync specific BOQ formulas and material constants directly to the cloud.</p>
               </div>
               <div className="flex gap-4 mt-6 md:mt-0 w-full md:w-auto">
@@ -494,71 +560,26 @@ export default function AdminPortal() {
             </div>
 
             <div className="space-y-8">
-              
               <section className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-sm">
-                <div className="mb-6 border-b border-gray-100 pb-4">
-                   <h2 className="text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">
-                    <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">1</span> 
-                    Material Wastage Ratios (%)
-                  </h2>
-                   <p className="text-sm font-medium text-gray-500 ml-10">Set distinct wastage buffers for each core material type.</p>
-                </div>
-                
+                <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2"><span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">1</span> Material Wastage Ratios (%)</h2>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-6 ml-0 md:ml-10">
-                  {[
-                    { key: 'cement', label: 'Cement Wastage' },
-                    { key: 'sand', label: 'Sand Wastage' },
-                    { key: 'gravel', label: 'Gravel Wastage' },
-                    { key: 'tmt', label: 'TMT / Steel Wastage' },
-                    { key: 'bricks', label: 'Bricks Wastage' },
-                    { key: 'tiles', label: 'Tiles Wastage' }
-                  ].map((item) => (
-                    <div key={item.key}>
-                      <label className={labelStyle}>{item.label}</label>
-                      <div className="relative">
-                        <input 
-                          type="number" 
-                          inputMode="decimal"
-                          className={`${inputStyle} text-[#22c55e] pr-8`} 
-                          value={(settings.percentages.wastage as any)?.[item.key] ?? ''} 
-                          onChange={(e) => updateWastage(item.key, e.target.value)} 
-                        />
-                        <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">%</span>
-                      </div>
-                    </div>
+                  {['cement', 'sand', 'gravel', 'tmt', 'bricks', 'tiles'].map((key) => (
+                    <div key={key}><label className={labelStyle}>{key} Wastage</label><div className="relative"><input type="number" inputMode="decimal" className={`${inputStyle} text-[#22c55e] pr-8`} value={(settings.percentages.wastage as any)?.[key] ?? ''} onChange={(e) => updateWastage(key, e.target.value)} /><span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">%</span></div></div>
                   ))}
                 </div>
               </section>
 
               <section className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-sm">
-                 <div className="mb-6 border-b border-gray-100 pb-4">
-                   <h2 className="text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">
-                    <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">2</span> 
-                    Service & Overhead Percentages (%)
-                  </h2>
-                   <p className="text-sm font-medium text-gray-500 ml-10">System-wide percentage multipliers applied to the base costs.</p>
-                </div>
+                 <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2"><span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">2</span> Service & Overhead Percentages (%)</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 ml-0 md:ml-10">
                   {Object.keys(settings.percentages).filter(k => k !== 'wastage').map(key => (
-                    <div key={key}>
-                      <label className={labelStyle}>{formatLabel(key)}</label>
-                      <div className="relative">
-                         <input type="number" value={(settings.percentages as any)[key]} onChange={(e) => updatePercentage(key, e.target.value)} className={`${inputStyle} pr-8`} />
-                         <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">%</span>
-                      </div>
-                    </div>
+                    <div key={key}><label className={labelStyle}>{formatLabel(key)}</label><div className="relative"><input type="number" value={(settings.percentages as any)[key]} onChange={(e) => updatePercentage(key, e.target.value)} className={`${inputStyle} pr-8`} /><span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">%</span></div></div>
                   ))}
                 </div>
               </section>
 
               <section className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-sm">
-                <div className="mb-8">
-                  <h2 className="text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">
-                    <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">3</span> 
-                    Concrete & Mortar Ratios
-                  </h2>
-                  <p className="text-sm font-medium text-gray-500 ml-10">Define the parts of cement, sand, and gravel for each mixture.</p>
-                </div>
+                  <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2"><span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">3</span> Concrete & Mortar Ratios</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 ml-0 md:ml-10">
                   {Object.keys(settings.ratios).map(key => {
                     const ratio = (settings.ratios as any)[key];
@@ -578,19 +599,10 @@ export default function AdminPortal() {
               </section>
 
               <section className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-sm">
-                <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-                  <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">4</span> 
-                  Standard TMT Specifications
-                </h2>
+                <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2"><span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">4</span> Standard TMT Specifications</h2>
                 <div className="overflow-x-auto ml-0 md:ml-10">
                   <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-gray-50 border-y border-gray-100">
-                        <th className="p-4 font-bold text-xs text-gray-500 uppercase tracking-wider">Bar Size</th>
-                        <th className="p-4 font-bold text-xs text-gray-500 uppercase tracking-wider text-center">Length (Ft)</th>
-                        <th className="p-4 font-bold text-xs text-gray-500 uppercase tracking-wider text-center">Weight (Kg)</th>
-                      </tr>
-                    </thead>
+                    <thead><tr className="bg-gray-50 border-y border-gray-100"><th className="p-4 font-bold text-xs text-gray-500 uppercase tracking-wider">Bar Size</th><th className="p-4 font-bold text-xs text-gray-500 uppercase tracking-wider text-center">Length (Ft)</th><th className="p-4 font-bold text-xs text-gray-500 uppercase tracking-wider text-center">Weight (Kg)</th></tr></thead>
                     <tbody>
                       {Object.keys(settings.tmtSpecs).map((key) => {
                         const spec = (settings.tmtSpecs as any)[key];
@@ -608,45 +620,104 @@ export default function AdminPortal() {
               </section>
 
               <section className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-sm">
-                <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-                  <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">5</span> 
-                  Structural Dimensions (Inches)
-                </h2>
+                <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2"><span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">5</span> Structural Dimensions (Inches)</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 ml-0 md:ml-10">
                   {Object.keys(settings.dimensions).map(key => (
-                    <div key={key}>
-                      <label className={labelStyle}>{formatLabel(key)}</label>
-                      <input type="number" value={(settings.dimensions as any)[key]} onChange={(e) => updateDimension(key, e.target.value)} className={inputStyle} />
-                    </div>
+                    <div key={key}><label className={labelStyle}>{formatLabel(key)}</label><input type="number" value={(settings.dimensions as any)[key]} onChange={(e) => updateDimension(key, e.target.value)} className={inputStyle} /></div>
                   ))}
                 </div>
               </section>
 
               <section className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-sm">
-                <div className="mb-8">
-                   <h2 className="text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">
-                    <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">6</span> 
-                    Consumption Metrics
-                  </h2>
-                   <p className="text-sm font-medium text-gray-500 ml-10">Set the required volume (CFT) per Sq.Ft.</p>
-                </div>
+                   <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2"><span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">6</span> Consumption Metrics</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 ml-0 md:ml-10">
                   {Object.keys(settings.consumption).map(key => {
                     const displayTitle = customLabels[key] || formatLabel(key);
                     return (
-                      <div key={key}>
-                        <label className={labelStyle}>{displayTitle}</label>
-                        <input type="number" step="0.01" value={(settings.consumption as any)[key]} onChange={(e) => updateConsumption(key, e.target.value)} className={`${inputStyle} text-[#22c55e]`} />
-                      </div>
+                      <div key={key}><label className={labelStyle}>{displayTitle}</label><input type="number" step="0.01" value={(settings.consumption as any)[key]} onChange={(e) => updateConsumption(key, e.target.value)} className={`${inputStyle} text-[#22c55e]`} /></div>
                     )
                   })}
                 </div>
               </section>
-              
             </div>
           </div>
         )}
       </main>
+
+      {/* ========================================== */}
+      {/* CRM MODAL: DETAILED USER VIEW */}
+      {/* ========================================== */}
+      {selectedUser && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl flex flex-col animate-in zoom-in-95 duration-300">
+            
+            {/* Header */}
+            <div className="bg-gray-900 text-white p-6 md:p-8 flex justify-between items-start">
+              <div>
+                <h2 className="text-3xl font-black">{selectedUser.name || 'Unknown User'}</h2>
+                <p className="text-gray-400 font-medium text-sm mt-1">{selectedUser.email} • ID: {selectedUser.id}</p>
+                <div className="flex gap-2 mt-4">
+                  <span className={`px-3 py-1 text-[10px] font-black uppercase tracking-widest rounded ${selectedUser.tier === 'premium' ? 'bg-[#22c55e] text-white' : 'bg-gray-700 text-gray-300'}`}>{selectedUser.tier === 'premium' ? 'Premium VIP' : 'Standard Free'}</span>
+                  <span className={`px-3 py-1 text-[10px] font-black uppercase tracking-widest rounded ${selectedUser.accountStatus === 'suspended' ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{selectedUser.accountStatus === 'suspended' ? 'Suspended' : 'Active Account'}</span>
+                </div>
+              </div>
+              <button onClick={() => setSelectedUser(null)} className="text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 rounded-full w-10 h-10 flex items-center justify-center transition-colors font-bold">✕</button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-6 md:p-8 bg-gray-50">
+              <div className="grid grid-cols-3 gap-4 mb-8">
+                <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm text-center">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">BOQs Created</p>
+                  <p className="text-3xl font-black text-gray-900">{selectedUser.totalBOQs}</p>
+                </div>
+                <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm text-center">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Ledgers</p>
+                  <p className="text-3xl font-black text-gray-900">{selectedUser.totalLedgers}</p>
+                </div>
+                <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm text-center">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Joined Date</p>
+                  <p className="text-lg font-black text-gray-900 mt-2">{selectedUser.createdAt ? new Date(selectedUser.createdAt.seconds * 1000).toLocaleDateString() : 'N/A'}</p>
+                </div>
+              </div>
+
+              <h3 className="text-sm font-bold text-gray-900 uppercase tracking-widest mb-4 border-b border-gray-200 pb-2">Transaction History</h3>
+              {selectedUser.transactions && selectedUser.transactions.length > 0 ? (
+                <div className="space-y-3 mb-8">
+                  {selectedUser.transactions.map((tx: any) => (
+                    <div key={tx.id} className="bg-white border border-gray-200 rounded-xl p-4 flex justify-between items-center">
+                      <div>
+                        <p className="font-bold text-sm text-gray-900">{tx.paymentType}</p>
+                        <p className="text-xs text-gray-500 font-mono mt-1">UTR: {tx.utrNumber} • {new Date(tx.createdAt.seconds * 1000).toLocaleDateString()}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-black text-lg text-gray-900">₹{tx.amount}</p>
+                        <p className={`text-[10px] font-bold uppercase tracking-widest ${tx.status === 'Approved' ? 'text-[#22c55e]' : tx.status === 'Rejected' ? 'text-red-500' : 'text-amber-500'}`}>{tx.status}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm font-bold text-gray-400 italic mb-8 bg-white border border-gray-100 p-6 rounded-xl text-center">No payment history found for this user.</p>
+              )}
+            </div>
+
+            {/* Footer Actions */}
+            <div className="bg-white p-6 border-t border-gray-100 flex justify-between items-center">
+              <button onClick={() => handleDeleteUser(selectedUser.id)} className="text-red-500 hover:text-red-700 hover:bg-red-50 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-widest transition-colors">
+                Delete Profile
+              </button>
+              
+              <div className="flex gap-3">
+                <button onClick={() => handleToggleUserStatus(selectedUser.id, selectedUser.accountStatus)} className="bg-gray-100 text-gray-700 hover:bg-gray-200 px-6 py-3 rounded-xl font-bold text-sm transition-colors shadow-sm">
+                  {selectedUser.accountStatus === 'suspended' ? 'Re-Activate User' : 'Suspend / Deactivate'}
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 }
