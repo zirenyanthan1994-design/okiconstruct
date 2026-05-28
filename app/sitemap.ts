@@ -1,4 +1,7 @@
 import { MetadataRoute } from 'next'
+
+// THIS IS THE FIX: Forces Next.js to build this statically
+export const dynamic = 'force-static';
  
 export default function sitemap(): MetadataRoute.Sitemap {
   return [
@@ -9,7 +12,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 1,
     },
     {
-      url: 'https://okiconstruct.com/profile',
+      url: 'https://okiconstruct.com/upgrade',
       lastModified: new Date(),
       changeFrequency: 'monthly',
       priority: 0.8,
