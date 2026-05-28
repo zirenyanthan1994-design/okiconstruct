@@ -157,7 +157,8 @@ export default function ProfilePage() {
     setActiveTab('boqs');
     setSelectedBOQ(null); 
     try {
-      const q = query(collection(db, "boq_projects"), where("uid", "==", user.uid));
+      // 🟢 FIXED: Querying by 'userId' to satisfy strict Firebase Security Rules
+      const q = query(collection(db, "boq_projects"), where("userId", "==", user.uid));
       const querySnapshot = await getDocs(q);
       const fetchedBOQs = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
