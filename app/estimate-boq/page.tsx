@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from 'react';
 import { auth, db } from '../lib/firebase';
-import { collection, addDoc, serverTimestamp, doc, getDoc, query, where, getDocs } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, serverTimestamp, doc, getDoc, query, where, getDocs } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import { onAuthStateChanged } from 'firebase/auth';
 import Navbar from '../components/Navbar';
@@ -9,6 +9,9 @@ import { generateProjectBOQ } from '../lib/processBOQ';
 
 export default function Estimator() {
   const [userData, setUserData] = useState<any>(null);
+  
+  // 🟢 NEW: Tracks if we are editing an existing project
+  const [existingProjectId, setExistingProjectId] = useState<string | null>(null);
 
   const [siteDetails, setSiteDetails] = useState({
     roadFacing: 'East',
@@ -43,18 +46,6 @@ export default function Estimator() {
   const [isSaved, setIsSaved] = useState(false);
   const router = useRouter();
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      if (currentUser) {
-        const docRef = doc(db, "users", currentUser.uid);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) setUserData(docSnap.data());
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // 🟢 UPDATE: Added tmtSize and tmtCount for custom structural overrides
   const [structure, setStructure] = useState<any>({
     footing: { count: '', breadth: '', width: '', depth: '' },
     column: { height: '10', breadth: '', width: '', tmtSize: '', tmtCount: '' },
@@ -76,6 +67,64 @@ export default function Estimator() {
   const [paintData, setPaintData] = useState<any>({ puttyRate: '', brand: '', interiorRate: '', exteriorRate: '' });
   const [laborRates, setLaborRates] = useState<any>({ mason: '', painter: '', tiler: '' });
   const [boqReport, setBoqReport] = useState<any>(null);
+
+  // 🟢 NEW: Session Loader Engine
+  useEffect(() => {
+    const loadSession = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const editId = params.get('edit');
+      
+      if (editId) {
+        try {
+          const docSnap = await getDoc(doc(db, "boq_projects", editId));
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data.inputs) {
+               setExistingProjectId(editId);
+               setProjectName(data.projectName);
+               setBuildingType(data.buildingType);
+               setTotalFloorsCount(data.totalFloors);
+               setSiteDetails(data.siteDetails);
+               
+               // Restore all raw inputs
+               setStructure(data.inputs.structure);
+               setFloorsData(data.inputs.floorsData);
+               setOpeningsData(data.inputs.openingsData);
+               setRates(data.inputs.rates);
+               setTiles(data.inputs.tiles);
+               setPaintData(data.inputs.paintData);
+               setLaborRates(data.inputs.laborRates);
+               setApartmentData(data.inputs.apartmentData);
+               setApartmentFlats(data.inputs.apartmentFlats || []);
+               setFlatsCount(data.inputs.flatsCount || "1");
+               setCommercialGroundFloor(data.inputs.commercialGroundFloor || false);
+               setHasStairs(data.inputs.hasStairs);
+               setStairsDim(data.inputs.stairsDim);
+               setSlabOverhang(data.inputs.slabOverhang || "2");
+
+               setCurrentStep(1); // Drop them at Step 1 so they can review their data
+            } else {
+               alert("This BOQ was saved with an older version of the software and cannot be dynamically edited.");
+            }
+          }
+        } catch (error) {
+          console.error("Failed to load BOQ session:", error);
+        }
+      }
+    };
+    loadSession();
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        const docRef = doc(db, "users", currentUser.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) setUserData(docSnap.data());
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   const handleFlatsCountChange = (val: string) => {
     setFlatsCount(val);
@@ -103,48 +152,51 @@ export default function Estimator() {
         return;
     }
     
-    const initialFloors = [];
-    const initialOpenings = [];
+    // 🟢 NEW: Only generate empty floors if we are NOT editing an existing project, or if they changed the floor count.
+    if (!existingProjectId || floorsData.length !== totalFloorsCount) {
+        const initialFloors = [];
+        const initialOpenings = [];
 
-    for (let i = 0; i < totalFloorsCount; i++) {
-        const floorName = i === 0 ? "Ground Floor" : i === 1 ? "1st Floor" : i === 2 ? "2nd Floor" : i === 3 ? "3rd Floor" : `${i}th Floor`;
-        const isComm = (i === 0 && buildingType === 'apartment' && commercialGroundFloor);
+        for (let i = 0; i < totalFloorsCount; i++) {
+            const floorName = i === 0 ? "Ground Floor" : i === 1 ? "1st Floor" : i === 2 ? "2nd Floor" : i === 3 ? "3rd Floor" : `${i}th Floor`;
+            const isComm = (i === 0 && buildingType === 'apartment' && commercialGroundFloor);
 
-        initialOpenings.push({
-            mainDoor: { count: '1', height: '', width: '' },
-            roomDoors: [{ id: Date.now(), count: '', height: '', width: '' }],
-            bathroomDoors: [{ id: Date.now() + 1, count: '', height: '', width: '' }],
-            shutters: [{ id: Date.now() + 4, count: '', height: '', width: '' }],
-            windows: [{ id: Date.now() + 2, count: '', height: '', width: '' }],
-            ventilations: [{ id: Date.now() + 3, count: '', height: '', width: '' }]
-        });
-
-        if (buildingType === 'residence') {
-            const bhkCount = parseInt(siteDetails.bhkType.charAt(0)) || 1;
-            initialFloors.push({
-                floorName, isCommercial: false,
-                hall: { length: '', breadth: '' }, kitchenDining: { length: '', breadth: '' }, foyer: { length: '', breadth: '' },
-                bedrooms: Array.from({length: bhkCount}).map((_, j) => ({ id: Date.now() + j, length: '', breadth: '' })),
-                bathrooms: Array.from({length: bhkCount === 1 ? 1 : bhkCount}).map((_, j) => ({ id: Date.now() + 100 + j, length: '', breadth: '', isAttached: false, layoutType: 'outside', attachedTo: '' }))
+            initialOpenings.push({
+                mainDoor: { count: '1', height: '', width: '' },
+                roomDoors: [{ id: Date.now(), count: '', height: '', width: '' }],
+                bathroomDoors: [{ id: Date.now() + 1, count: '', height: '', width: '' }],
+                shutters: [{ id: Date.now() + 4, count: '', height: '', width: '' }],
+                windows: [{ id: Date.now() + 2, count: '', height: '', width: '' }],
+                ventilations: [{ id: Date.now() + 3, count: '', height: '', width: '' }]
             });
-        } else {
-            if (isComm) {
-                initialFloors.push({
-                    floorName, isCommercial: true,
-                    shops: [{ id: Date.now(), length: '', breadth: '' }], 
-                    washrooms: { count: '', length: '', breadth: '' }
-                });
-            } else {
+
+            if (buildingType === 'residence') {
+                const bhkCount = parseInt(siteDetails.bhkType.charAt(0)) || 1;
                 initialFloors.push({
                     floorName, isCommercial: false,
-                    flats: apartmentFlats.map(f => generateEmptyFlat(f.id, f.type))
+                    hall: { length: '', breadth: '' }, kitchenDining: { length: '', breadth: '' }, foyer: { length: '', breadth: '' },
+                    bedrooms: Array.from({length: bhkCount}).map((_, j) => ({ id: Date.now() + j, length: '', breadth: '' })),
+                    bathrooms: Array.from({length: bhkCount === 1 ? 1 : bhkCount}).map((_, j) => ({ id: Date.now() + 100 + j, length: '', breadth: '', isAttached: false, layoutType: 'outside', attachedTo: '' }))
                 });
+            } else {
+                if (isComm) {
+                    initialFloors.push({
+                        floorName, isCommercial: true,
+                        shops: [{ id: Date.now(), length: '', breadth: '' }], 
+                        washrooms: { count: '', length: '', breadth: '' }
+                    });
+                } else {
+                    initialFloors.push({
+                        floorName, isCommercial: false,
+                        flats: apartmentFlats.map(f => generateEmptyFlat(f.id, f.type))
+                    });
+                }
             }
         }
+        setFloorsData(initialFloors);
+        setOpeningsData(initialOpenings);
     }
-
-    setFloorsData(initialFloors);
-    setOpeningsData(initialOpenings);
+    
     setErrorMsg("");
     setCurrentStep(2); 
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -170,81 +222,16 @@ export default function Estimator() {
     });
   };
 
-  const addBedroom = () => {
-    setFloorsData(prev => {
-      const d = JSON.parse(JSON.stringify(prev));
-      d[activeFloor].bedrooms.push({ id: Date.now(), length: '', breadth: '' });
-      return d;
-    });
-  };
-  const removeBedroom = (index: number) => {
-    setFloorsData(prev => {
-      const d = JSON.parse(JSON.stringify(prev));
-      d[activeFloor].bedrooms.splice(index, 1);
-      return d;
-    });
-  };
-
-  const addBathroom = () => {
-    setFloorsData(prev => {
-      const d = JSON.parse(JSON.stringify(prev));
-      d[activeFloor].bathrooms.push({ id: Date.now() + 1, length: '', breadth: '', isAttached: false, layoutType: 'outside', attachedTo: '' });
-      return d;
-    });
-  };
-  const removeBathroom = (index: number) => {
-    setFloorsData(prev => {
-      const d = JSON.parse(JSON.stringify(prev));
-      d[activeFloor].bathrooms.splice(index, 1);
-      return d;
-    });
-  };
-
-  const addShop = () => {
-    setFloorsData(prev => {
-      const d = JSON.parse(JSON.stringify(prev));
-      if (!Array.isArray(d[activeFloor].shops)) d[activeFloor].shops = [];
-      d[activeFloor].shops.push({ id: Date.now(), length: '', breadth: '' });
-      return d;
-    });
-  };
-  const removeShop = (index: number) => {
-    setFloorsData(prev => {
-      const d = JSON.parse(JSON.stringify(prev));
-      d[activeFloor].shops.splice(index, 1);
-      return d;
-    });
-  };
-
-  const addFlatBedroom = (fIdx: number) => {
-    setFloorsData(prev => {
-      const d = JSON.parse(JSON.stringify(prev));
-      d[activeFloor].flats[fIdx].bedrooms.push({ id: Date.now(), length: '', breadth: '' });
-      return d;
-    });
-  };
-  const removeFlatBedroom = (fIdx: number, bIdx: number) => {
-    setFloorsData(prev => {
-      const d = JSON.parse(JSON.stringify(prev));
-      d[activeFloor].flats[fIdx].bedrooms.splice(bIdx, 1);
-      return d;
-    });
-  };
-
-  const addFlatBathroom = (fIdx: number) => {
-    setFloorsData(prev => {
-      const d = JSON.parse(JSON.stringify(prev));
-      d[activeFloor].flats[fIdx].bathrooms.push({ id: Date.now() + 1, length: '', breadth: '', isAttached: false, layoutType: 'outside', attachedTo: '' });
-      return d;
-    });
-  };
-  const removeFlatBathroom = (fIdx: number, bIdx: number) => {
-    setFloorsData(prev => {
-      const d = JSON.parse(JSON.stringify(prev));
-      d[activeFloor].flats[fIdx].bathrooms.splice(bIdx, 1);
-      return d;
-    });
-  };
+  const addBedroom = () => setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); d[activeFloor].bedrooms.push({ id: Date.now(), length: '', breadth: '' }); return d; });
+  const removeBedroom = (index: number) => setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); d[activeFloor].bedrooms.splice(index, 1); return d; });
+  const addBathroom = () => setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); d[activeFloor].bathrooms.push({ id: Date.now() + 1, length: '', breadth: '', isAttached: false, layoutType: 'outside', attachedTo: '' }); return d; });
+  const removeBathroom = (index: number) => setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); d[activeFloor].bathrooms.splice(index, 1); return d; });
+  const addShop = () => setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); if (!Array.isArray(d[activeFloor].shops)) d[activeFloor].shops = []; d[activeFloor].shops.push({ id: Date.now(), length: '', breadth: '' }); return d; });
+  const removeShop = (index: number) => setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); d[activeFloor].shops.splice(index, 1); return d; });
+  const addFlatBedroom = (fIdx: number) => setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); d[activeFloor].flats[fIdx].bedrooms.push({ id: Date.now(), length: '', breadth: '' }); return d; });
+  const removeFlatBedroom = (fIdx: number, bIdx: number) => setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); d[activeFloor].flats[fIdx].bedrooms.splice(bIdx, 1); return d; });
+  const addFlatBathroom = (fIdx: number) => setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); d[activeFloor].flats[fIdx].bathrooms.push({ id: Date.now() + 1, length: '', breadth: '', isAttached: false, layoutType: 'outside', attachedTo: '' }); return d; });
+  const removeFlatBathroom = (fIdx: number, bIdx: number) => setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); d[activeFloor].flats[fIdx].bathrooms.splice(bIdx, 1); return d; });
 
   const updateOpening = (key: string, index: number | null, field: string, value: string) => {
     setOpeningsData(prev => {
@@ -255,20 +242,12 @@ export default function Estimator() {
     });
   };
 
-  const addOpening = (key: string) => {
-    setOpeningsData(prev => {
-      const d = JSON.parse(JSON.stringify(prev));
-      d[activeFloor][key].push({ id: Date.now(), count: '', height: '', width: '' });
-      return d;
-    });
-  };
-
+  const addOpening = (key: string) => setOpeningsData(prev => { const d = JSON.parse(JSON.stringify(prev)); d[activeFloor][key].push({ id: Date.now(), count: '', height: '', width: '' }); return d; });
   const getRoomArea = (room: any) => (Number(room?.length) || 0) * (Number(room?.breadth) || 0);
 
   const calculateFloorArea = (index: number) => {
     const f = floorsData[index];
     if (!f) return 0;
-
     let area = 0;
     if (buildingType === 'apartment') {
       if (f.isCommercial) {
@@ -278,21 +257,16 @@ export default function Estimator() {
         (f.flats || []).forEach((flat: any) => {
           area += getRoomArea(flat.hall) + getRoomArea(flat.kitchen);
           (flat.bedrooms || []).forEach((b: any) => area += getRoomArea(b));
-          (flat.bathrooms || []).forEach((b: any) => {
-            if (!(b.isAttached && b.layoutType === 'inside')) area += getRoomArea(b);
-          });
+          (flat.bathrooms || []).forEach((b: any) => { if (!(b.isAttached && b.layoutType === 'inside')) area += getRoomArea(b); });
         });
       }
-
       if (apartmentData.corridor.hasCorridor) area += (Number(apartmentData.corridor.length) * Number(apartmentData.corridor.width));
       if (hasStairs) area += (Number(stairsDim.length) * Number(stairsDim.width));
       if (apartmentData.lift.hasLift) area += (Number(apartmentData.lift.count) * Number(apartmentData.lift.length) * Number(apartmentData.lift.width));
     } else {
       area += getRoomArea(f.hall) + getRoomArea(f.kitchenDining) + getRoomArea(f.foyer);
       (f.bedrooms || []).forEach((b: any) => area += getRoomArea(b));
-      (f.bathrooms || []).forEach((b: any) => {
-        if (!(b.isAttached && b.layoutType === 'inside')) area += getRoomArea(b);
-      });
+      (f.bathrooms || []).forEach((b: any) => { if (!(b.isAttached && b.layoutType === 'inside')) area += getRoomArea(b); });
       if (hasStairs) area += (Number(stairsDim.length) * Number(stairsDim.width));
     }
     return area;
@@ -301,7 +275,6 @@ export default function Estimator() {
   const calculateAdjustedSlabArea = (index: number) => {
     const grossArea = calculateFloorArea(index);
     let baseSlab = Math.pow(Math.sqrt(grossArea) + (Number(slabOverhang) || 0), 2);
-
     if (buildingType === 'apartment' && index < totalFloorsCount - 1) {
       let voidArea = 0;
       if (hasStairs) voidArea += (Number(stairsDim.length) * Number(stairsDim.width));
@@ -369,7 +342,6 @@ export default function Estimator() {
 
             if (f.isCommercial) {
                 f.shops?.forEach((s: any) => flattenedBedrooms.push({ length: s.length, breadth: s.breadth }));
-                
                 for (let w = 0; w < Number(f.washrooms?.count || 0); w++) {
                     flattenedBathrooms.push({ length: f.washrooms.length, breadth: f.washrooms.breadth, isAttached: false, layoutType: 'outside' });
                 }
@@ -394,7 +366,6 @@ export default function Estimator() {
                     flattenedBedrooms.push({ length: apartmentData.lift.length, breadth: apartmentData.lift.width });
                 }
             }
-
             layoutWithAreas.hall = mainHall;
             layoutWithAreas.kitchenDining = mainKitchen;
             layoutWithAreas.foyer = { length: '0', breadth: '0' };
@@ -403,22 +374,12 @@ export default function Estimator() {
         }
 
         const processedOpenings = JSON.parse(JSON.stringify(openingsData[i]));
-        if (buildingType === 'apartment' && f.isCommercial) {
-            processedOpenings.roomDoors = processedOpenings.shutters;
-        }
+        if (buildingType === 'apartment' && f.isCommercial) processedOpenings.roomDoors = processedOpenings.shutters;
 
         return {
-            floorName: f.floorName,
-            layout: layoutWithAreas,
-            buildingType,
-            apartmentData: apartmentData,
-            structure: structure,
-            openings: processedOpenings,
-            tiles: tiles,
-            paintData: paintData,
-            laborRates: laborRates,
-            hasStairs,
-            stairsDim: { ...stairsDim }
+            floorName: f.floorName, layout: layoutWithAreas, buildingType, apartmentData: apartmentData,
+            structure: structure, openings: processedOpenings, tiles: tiles, paintData: paintData,
+            laborRates: laborRates, hasStairs, stairsDim: { ...stairsDim }
         };
     });
     
@@ -433,42 +394,37 @@ export default function Estimator() {
     try {
       const localKey = auth.currentUser?.uid ? `OkiConstruct_settings_${auth.currentUser.uid}` : null;
       const savedAdmin = localKey ? localStorage.getItem(localKey) : null;
-      
       const customData = userData?.customFormulas || (savedAdmin ? JSON.parse(savedAdmin) : null);
-
       if (customData) {
         masterSettings = {
           ratios: { ...masterSettings.ratios, ...(customData.ratios || {}) },
           tmtSpecs: { ...masterSettings.tmtSpecs, ...(customData.tmtSpecs || {}) },
           dimensions: { ...masterSettings.dimensions, ...(customData.dimensions || {}) },
           percentages: { 
-            ...masterSettings.percentages, 
-            ...(customData.percentages || {}),
+            ...masterSettings.percentages, ...(customData.percentages || {}),
             wastage: { ...masterSettings.percentages.wastage, ...(customData.percentages?.wastage || {}) },
             concreteAllowances: { ...masterSettings.percentages.concreteAllowances, ...(customData.percentages?.concreteAllowances || {}) }
           },
           consumption: { ...masterSettings.consumption, ...(customData.consumption || {}) }
         };
       }
-    } catch (err) {
-       console.error("Settings Parsing Error", err);
-    }
+    } catch (err) { console.error("Settings Parsing Error", err); }
 
     try {
       const report = generateProjectBOQ(finalSnaps, totalFloorsCount, slabOverhang, rates, masterSettings);
       setBoqReport(report);
       setCurrentStep(9); 
-    } catch (err) {
-      console.error("Calculation Error:", err);
-    }
+    } catch (err) { console.error("Calculation Error:", err); }
   };
   
+  // 🟢 NEW: Handles Updates vs New Saves smoothly
   const saveEstimateToDatabase = async () => {
     if (!auth.currentUser) return alert("Please log in from the Dashboard to save your estimates!");
     if (!boqReport) return alert("Error: BOQ Report is empty. Please generate the report first!");
     setIsSaving(true);
+    
     try {
-      const payload = {
+      const payload: any = {
         userId: auth.currentUser.uid, 
         uid: auth.currentUser.uid, 
         projectName: (projectName || "OkiConstruct Build").trim(), 
@@ -477,11 +433,26 @@ export default function Estimator() {
         buildingType: buildingType,
         grandTotal: boqReport.grandTotal || 0,
         boqData: JSON.parse(JSON.stringify(boqReport)), 
-        createdAt: serverTimestamp(),
+        
+        // 🟢 SAVE RAW INPUTS: So we can edit this project again later
+        inputs: {
+          structure, floorsData, openingsData, rates, tiles, paintData, laborRates,
+          apartmentData, apartmentFlats, flatsCount, commercialGroundFloor, hasStairs, stairsDim, slabOverhang
+        }
       };
-      const docRef = await addDoc(collection(db, "boq_projects"), payload);
-      setIsSaved(true); 
-      alert(`Success! Estimate securely saved to the cloud.\nProject ID: ${docRef.id}`);
+
+      if (existingProjectId) {
+         payload.updatedAt = serverTimestamp();
+         await updateDoc(doc(db, "boq_projects", existingProjectId), payload);
+         setIsSaved(true); 
+         alert(`Success! Modifications to your BOQ have been saved to the cloud.\nProject ID: ${existingProjectId}`);
+      } else {
+         payload.createdAt = serverTimestamp();
+         const docRef = await addDoc(collection(db, "boq_projects"), payload);
+         setExistingProjectId(docRef.id);
+         setIsSaved(true); 
+         alert(`Success! Estimate securely saved to the cloud.\nProject ID: ${docRef.id}`);
+      }
     } catch (error: any) { alert("Database Error: " + error.message); } 
     finally { setIsSaving(false); }
   };
@@ -490,22 +461,12 @@ export default function Estimator() {
     setTiles(prev => ({ ...prev, [roomKey]: { ...(prev[roomKey] || { size: '', type: '', price: '' }), [field]: value } }));
   };
 
-  const validateAndProceed = (targetStep: number) => {
-    setErrorMsg("");
-    setCurrentStep(targetStep);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  const validateAndProceed = (targetStep: number) => { setErrorMsg(""); setCurrentStep(targetStep); window.scrollTo({ top: 0, behavior: 'smooth' }); };
 
-  // Reusable UI components
   const inputStyle = "w-full border border-gray-200 bg-gray-50 rounded-xl p-4 text-gray-900 font-medium focus:bg-white focus:ring-2 focus:ring-[#22c55e]/30 focus:border-[#22c55e] transition-all outline-none";
   const selectStyle = "w-full border border-gray-200 bg-gray-50 rounded-xl p-4 text-gray-900 font-medium focus:bg-white focus:ring-2 focus:ring-[#22c55e]/30 focus:border-[#22c55e] transition-all outline-none cursor-pointer appearance-none";
   const labelStyle = "text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block";
-  
-  const ErrorDisplay = () => errorMsg ? (
-    <div className="bg-red-50 text-red-600 border border-red-200 rounded-xl p-4 mt-8 mb-4 font-medium flex items-center gap-3 animate-in slide-in-from-bottom-2 print:hidden">
-      <span className="text-xl">⚠️</span> {errorMsg}
-    </div>
-  ) : null;
+  const ErrorDisplay = () => errorMsg ? (<div className="bg-red-50 text-red-600 border border-red-200 rounded-xl p-4 mt-8 mb-4 font-medium flex items-center gap-3 animate-in slide-in-from-bottom-2 print:hidden"><span className="text-xl">⚠️</span> {errorMsg}</div>) : null;
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
@@ -534,7 +495,11 @@ export default function Estimator() {
           {currentStep === 1 && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-2xl mx-auto">
               <div className="text-center mb-8">
-                <h1 className="text-3xl font-bold text-gray-900 mb-2">Project Setup & Context</h1>
+                {existingProjectId ? (
+                   <h1 className="text-3xl font-bold text-blue-600 mb-2">Editing Project Setup</h1>
+                ) : (
+                   <h1 className="text-3xl font-bold text-gray-900 mb-2">Project Setup & Context</h1>
+                )}
                 <p className="text-gray-500 font-medium">Define your project requirements and building scale.</p>
               </div>
 
@@ -555,7 +520,7 @@ export default function Estimator() {
                     <div>
                       <label className={labelStyle}>Total Floors</label>
                       <div className="relative">
-                        <select className={selectStyle} onChange={(e) => setTotalFloorsCount(e.target.value === 'G' ? 1 : parseInt(e.target.value.replace('G+', '')) + 1)}>
+                        <select className={selectStyle} value={totalFloorsCount === 1 ? 'G' : `G+${totalFloorsCount - 1}`} onChange={(e) => setTotalFloorsCount(e.target.value === 'G' ? 1 : parseInt(e.target.value.replace('G+', '')) + 1)}>
                           <option value="G">Ground Floor Only</option>
                           {Array.from({ length: 9 }, (_, i) => (<option key={i + 1} value={`G+${i + 1}`}>G + {i + 1} Floor</option>))}
                         </select>
@@ -632,7 +597,7 @@ export default function Estimator() {
 
               <ErrorDisplay />
               <button type="button" onClick={handleSetupComplete} className="w-full bg-gray-900 text-white font-bold text-lg p-4 rounded-xl mt-4 hover:bg-[#22c55e] transition-colors shadow-md">
-                Start BOQ Estimation ➔
+                Continue to Structural Setup ➔
               </button>
             </div>
           )}
@@ -694,7 +659,7 @@ export default function Estimator() {
                     </div>
                   </div>
                   
-                  {/* 🟢 NEW: Custom Reinforcement for Column */}
+                  {/* Custom Reinforcement for Column */}
                   <div className="mt-4 p-4 border border-blue-100 bg-blue-50/50 rounded-2xl">
                     <span className="text-xs font-bold text-blue-600 uppercase tracking-wider block mb-3">Custom Reinforcement (Optional)</span>
                     <p className="text-xs text-gray-500 mb-3 font-medium">Leave blank to auto-calculate based on total floors.</p>
@@ -702,7 +667,7 @@ export default function Estimator() {
                        <div>
                           <label className={labelStyle}>TMT Size</label>
                           <div className="relative">
-                            <select className={selectStyle} value={structure.column.tmtSize} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, tmtSize: e.target.value } })}>
+                            <select className={selectStyle} value={structure.column.tmtSize || ''} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, tmtSize: e.target.value } })}>
                               <option value="">Auto</option>
                               <option value="12mm">12mm</option>
                               <option value="16mm">16mm</option>
@@ -713,8 +678,8 @@ export default function Estimator() {
                           </div>
                        </div>
                        <div>
-                          <label className={labelStyle}>Bar Count per Column</label>
-                          <input type="number" inputMode="numeric" min="0" placeholder="e.g., 6" className={inputStyle} value={structure.column.tmtCount} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, tmtCount: e.target.value } })} />
+                          <label className={labelStyle}>Bar Count</label>
+                          <input type="number" inputMode="numeric" min="0" placeholder="e.g., 6" className={inputStyle} value={structure.column.tmtCount || ''} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, tmtCount: e.target.value } })} />
                        </div>
                     </div>
                   </div>
@@ -734,12 +699,12 @@ export default function Estimator() {
                       <input type="number" inputMode="decimal" min="0" placeholder="Depth" className={inputStyle} value={structure.plinthBeam.depth} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, depth: e.target.value } })} />
                       <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.plinthBeam.width} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, width: e.target.value } })} />
                     </div>
-                    {/* 🟢 NEW: Custom Reinforcement for Plinth */}
+                    {/* Custom Reinforcement for Plinth */}
                     <div className="p-3 border border-blue-100 bg-blue-50/50 rounded-xl">
                       <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block mb-2">Override Plinth TMT</span>
                       <div className="grid grid-cols-2 gap-3">
                          <div className="relative">
-                            <select className={`${selectStyle} py-2 text-sm`} value={structure.plinthBeam.tmtSize} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, tmtSize: e.target.value } })}>
+                            <select className={`${selectStyle} py-2 text-sm`} value={structure.plinthBeam.tmtSize || ''} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, tmtSize: e.target.value } })}>
                               <option value="">Auto Size</option>
                               <option value="12mm">12mm</option>
                               <option value="16mm">16mm</option>
@@ -747,7 +712,7 @@ export default function Estimator() {
                               <option value="25mm">25mm</option>
                             </select>
                          </div>
-                         <input type="number" inputMode="numeric" min="0" placeholder="Bar Count (e.g., 6)" className={`${inputStyle} py-2 text-sm`} value={structure.plinthBeam.tmtCount} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, tmtCount: e.target.value } })} />
+                         <input type="number" inputMode="numeric" min="0" placeholder="Count (e.g., 6)" className={`${inputStyle} py-2 text-sm`} value={structure.plinthBeam.tmtCount || ''} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, tmtCount: e.target.value } })} />
                       </div>
                     </div>
                   </div>
@@ -759,12 +724,12 @@ export default function Estimator() {
                       <input type="number" inputMode="decimal" min="0" placeholder="Depth" className={inputStyle} value={structure.roofBeam.depth} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, depth: e.target.value } })} />
                       <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.roofBeam.width} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, width: e.target.value } })} />
                     </div>
-                    {/* 🟢 NEW: Custom Reinforcement for Roof */}
+                    {/* Custom Reinforcement for Roof */}
                     <div className="p-3 border border-blue-100 bg-blue-50/50 rounded-xl">
                       <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block mb-2">Override Roof Beam TMT</span>
                       <div className="grid grid-cols-2 gap-3">
                          <div className="relative">
-                            <select className={`${selectStyle} py-2 text-sm`} value={structure.roofBeam.tmtSize} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, tmtSize: e.target.value } })}>
+                            <select className={`${selectStyle} py-2 text-sm`} value={structure.roofBeam.tmtSize || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, tmtSize: e.target.value } })}>
                               <option value="">Auto Size</option>
                               <option value="12mm">12mm</option>
                               <option value="16mm">16mm</option>
@@ -772,7 +737,7 @@ export default function Estimator() {
                               <option value="25mm">25mm</option>
                             </select>
                          </div>
-                         <input type="number" inputMode="numeric" min="0" placeholder="Bar Count (e.g., 6)" className={`${inputStyle} py-2 text-sm`} value={structure.roofBeam.tmtCount} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, tmtCount: e.target.value } })} />
+                         <input type="number" inputMode="numeric" min="0" placeholder="Count (e.g., 6)" className={`${inputStyle} py-2 text-sm`} value={structure.roofBeam.tmtCount || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, tmtCount: e.target.value } })} />
                       </div>
                     </div>
                   </div>
