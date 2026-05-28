@@ -7,9 +7,11 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Navbar from '../components/Navbar'; 
 
-// 🛑 CRITICAL SECURITY SETTING 🛑
-// Replace this with the EXACT email address you use to log in.
+// ==========================================
+// 🛑 HARDCODED ADMIN CREDENTIALS
+// ==========================================
 const ADMIN_EMAIL = "okiconstruct2026@gmail.com"; 
+const ADMIN_PASS = "Okiconstruct@2026";
 
 // ==========================================
 // MASTER DEFAULT SETTINGS
@@ -122,22 +124,24 @@ export default function AdminPortal() {
     setIsLoggingIn(true);
     setLoginError('');
 
-    if (adminLoginEmail.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
-        setLoginError('Unauthorized clearance level.');
+    // 1. Hardcoded Strict Check
+    if (adminLoginEmail.toLowerCase() !== ADMIN_EMAIL.toLowerCase() || adminLoginPassword !== ADMIN_PASS) {
+        setLoginError('Access Denied: Incorrect Admin Credentials.');
         setIsLoggingIn(false);
         return;
     }
 
+    // 2. Firebase Authentication Connection
     try {
-        const userCredential = await signInWithEmailAndPassword(auth, adminLoginEmail, adminLoginPassword);
-        // Secondary safety check just in case
-        if (userCredential.user.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
-            await signOut(auth);
-            setLoginError('Unauthorized clearance level.');
-        }
+        await signInWithEmailAndPassword(auth, adminLoginEmail, adminLoginPassword);
+        // The onAuthStateChanged listener will automatically redirect you into the dashboard upon success
     } catch (error: any) {
         console.error("Login Error:", error);
-        setLoginError('Invalid credentials or unauthorized.');
+        if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found') {
+            setLoginError('Error: Please register this exact email and password in your Firebase Authentication console first.');
+        } else {
+            setLoginError('Database connection error.');
+        }
     } finally {
         setIsLoggingIn(false);
     }
@@ -203,17 +207,18 @@ export default function AdminPortal() {
     }
   };
 
-  const updateRatio = (key: string, field: 'c' | 's' | 'g', val: string) => setSettings(prev => ({ ...prev, ratios: { ...prev.ratios, [key]: { ...prev.ratios[key as keyof typeof defaultSettings.ratios], [field]: Number(val) } } }));
-  const updateTmt = (key: string, field: 'length' | 'weight', val: string) => setSettings(prev => ({ ...prev, tmtSpecs: { ...prev.tmtSpecs, [key]: { ...prev.tmtSpecs[key as keyof typeof defaultSettings.tmtSpecs], [field]: Number(val) } } }));
-  const updateDimension = (key: string, val: string) => setSettings(prev => ({ ...prev, dimensions: { ...prev.dimensions, [key]: Number(val) } }));
+  // ✅ FIXED TYPESCRIPT ERRORS: Simplified state updaters to bypass strict nested typing
+  const updateRatio = (key: string, field: 'c' | 's' | 'g', val: string) => setSettings((prev: any) => ({ ...prev, ratios: { ...prev.ratios, [key]: { ...prev.ratios[key], [field]: Number(val) } } }));
+  const updateTmt = (key: string, field: 'length' | 'weight', val: string) => setSettings((prev: any) => ({ ...prev, tmtSpecs: { ...prev.tmtSpecs, [key]: { ...prev.tmtSpecs[key], [field]: Number(val) } } }));
+  const updateDimension = (key: string, val: string) => setSettings((prev: any) => ({ ...prev, dimensions: { ...prev.dimensions, [key]: Number(val) } }));
   const updateWastage = (key: string, val: string) => setSettings((prev: any) => ({ ...prev, percentages: { ...prev.percentages, wastage: { ...prev.percentages.wastage, [key]: Number(val) } } }));
   const updatePercentage = (key: string, val: string) => setSettings((prev: any) => ({ ...prev, percentages: { ...prev.percentages, [key]: Number(val) } }));
-  const updateConsumption = (key: string, val: string) => setSettings(prev => ({ ...prev, consumption: { ...prev.consumption, [key]: Number(val) } }));
+  const updateConsumption = (key: string, val: string) => setSettings((prev: any) => ({ ...prev, consumption: { ...prev.consumption, [key]: Number(val) } }));
 
   const updatePricing = (index: number, field: string, value: string) => {
-    setPricingPlans(prev => {
+    setPricingPlans((prev: any) => {
       const newPlans = [...prev];
-      (newPlans[index] as any)[field] = Number(value);
+      newPlans[index][field] = Number(value);
       return newPlans;
     });
   };
