@@ -7,6 +7,12 @@ import { useRouter } from 'next/navigation';
 import Navbar from '../components/Navbar'; 
 
 // ==========================================
+// 🔒 ADMIN SECURITY WHITELIST
+// ==========================================
+// IMPORTANT: Replace this with your actual login email address!
+const ADMIN_EMAILS = ["okiconstruct2026@gmail.com"]; 
+
+// ==========================================
 // MASTER DEFAULT SETTINGS
 // ==========================================
 const defaultSettings = {
@@ -78,7 +84,6 @@ const labelStyle = "text-xs font-bold text-gray-500 uppercase tracking-wider mb-
 export default function AdminPortal() {
   const router = useRouter();
   
-  // NEW: Added PRICING as a distinct tab
   const [activeTab, setActiveTab] = useState<'ANALYTICS' | 'PRICING' | 'ENGINE'>('ANALYTICS');
   const [isLoading, setIsLoading] = useState(true);
   
@@ -93,10 +98,14 @@ export default function AdminPortal() {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      if (currentUser) {
+      // 🔒 SECURITY GATEWAY
+      if (currentUser && currentUser.email && ADMIN_EMAILS.includes(currentUser.email.toLowerCase())) {
+        // User is logged in AND is an authorized admin
         await fetchMasterData();
         await loadCloudSettings();
+        setIsLoading(false); // Only reveal page if authorized
       } else {
+        // User is either not logged in, or is a standard user trying to access /admin
         router.push('/');
       }
     });
@@ -125,8 +134,6 @@ export default function AdminPortal() {
       setProjects(fetchedProjects);
     } catch (error) {
       console.error("Error fetching master data:", error);
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -180,7 +187,14 @@ export default function AdminPortal() {
     });
   };
 
-  if (isLoading) return <div className="min-h-screen bg-gray-50 flex items-center justify-center font-bold text-xl text-gray-400 uppercase tracking-widest">Initializing Master Portal...</div>;
+  if (isLoading) return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center font-bold text-xl text-gray-400 uppercase tracking-widest">
+      <div className="flex flex-col items-center gap-4">
+        <span className="text-4xl animate-spin">🛡️</span>
+        Verifying Security Credentials...
+      </div>
+    </div>
+  );
 
   const premiumUsers = users.filter(u => u.tier === 'premium' || u.planStatus === 'premium'); 
   const standardUsers = users.filter(u => u.tier !== 'premium' && u.planStatus !== 'premium');
@@ -204,7 +218,6 @@ export default function AdminPortal() {
             <p className="font-bold text-gray-500 uppercase tracking-widest text-xs mt-2">Master Override & Analytics Dashboard</p>
           </div>
           
-          {/* UPDATED: 3-Tab Navigation */}
           <div className="flex gap-2 w-full md:w-auto bg-gray-200 p-1 rounded-2xl animate-in fade-in slide-in-from-right-4 duration-500 overflow-x-auto">
              <button 
                onClick={() => setActiveTab('ANALYTICS')} 
@@ -227,7 +240,6 @@ export default function AdminPortal() {
           </div>
         </div>
 
-        {/* Global Save Status Banner */}
         {saveStatus && (
           <div className={`border p-4 rounded-xl mb-8 font-bold text-center animate-in slide-in-from-top-2 flex items-center justify-center gap-2 ${saveStatus.includes('Failed') ? 'bg-red-50 text-red-600 border-red-200' : 'bg-green-50 text-[#22c55e] border-green-200'}`}>
             <span>{saveStatus.includes('Failed') ? '⚠' : '✅'}</span> {saveStatus}
