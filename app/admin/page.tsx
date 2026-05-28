@@ -2,15 +2,14 @@
 import { useState, useEffect } from 'react';
 import { auth, db } from '../lib/firebase';
 import { collection, getDocs, doc, getDoc, setDoc } from 'firebase/firestore'; 
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import Navbar from '../components/Navbar'; 
 
-// ==========================================
-// 🔒 ADMIN SECURITY WHITELIST
-// ==========================================
-// IMPORTANT: Replace this with your actual login email address!
-const ADMIN_EMAILS = ["okiconstruct2026@gmail.com"]; 
+// 🛑 CRITICAL SECURITY SETTING 🛑
+// Replace this with the EXACT email address you use to log in.
+const ADMIN_EMAIL = "okiconstruct2026@gmail.com"; 
 
 // ==========================================
 // MASTER DEFAULT SETTINGS
@@ -84,8 +83,14 @@ const labelStyle = "text-xs font-bold text-gray-500 uppercase tracking-wider mb-
 export default function AdminPortal() {
   const router = useRouter();
   
+  // 🔒 HIGH SECURITY AUTH STATES
+  const [authStatus, setAuthStatus] = useState<'LOADING' | 'NOT_LOGGED_IN' | 'NORMAL_USER' | 'ADMIN'>('LOADING');
+  const [adminLoginEmail, setAdminLoginEmail] = useState('');
+  const [adminLoginPassword, setAdminLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
   const [activeTab, setActiveTab] = useState<'ANALYTICS' | 'PRICING' | 'ENGINE'>('ANALYTICS');
-  const [isLoading, setIsLoading] = useState(true);
   
   const [users, setUsers] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
@@ -96,21 +101,47 @@ export default function AdminPortal() {
   const [pricingPlans, setPricingPlans] = useState(DEFAULT_PRICING);
   const [saveStatus, setSaveStatus] = useState("");
 
+  // SECURITY GATEWAY INITIALIZATION
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      // 🔒 SECURITY GATEWAY
-      if (currentUser && currentUser.email && ADMIN_EMAILS.includes(currentUser.email.toLowerCase())) {
-        // User is logged in AND is an authorized admin
+      if (!currentUser) {
+        setAuthStatus('NOT_LOGGED_IN');
+      } else if (currentUser.email && currentUser.email.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
+        setAuthStatus('ADMIN');
         await fetchMasterData();
         await loadCloudSettings();
-        setIsLoading(false); // Only reveal page if authorized
       } else {
-        // User is either not logged in, or is a standard user trying to access /admin
-        router.push('/');
+        setAuthStatus('NORMAL_USER'); // Triggers the Stealth 404
       }
     });
     return () => unsubscribe();
-  }, [router]);
+  }, []);
+
+  const handleAdminLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoggingIn(true);
+    setLoginError('');
+
+    if (adminLoginEmail.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
+        setLoginError('Unauthorized clearance level.');
+        setIsLoggingIn(false);
+        return;
+    }
+
+    try {
+        const userCredential = await signInWithEmailAndPassword(auth, adminLoginEmail, adminLoginPassword);
+        // Secondary safety check just in case
+        if (userCredential.user.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
+            await signOut(auth);
+            setLoginError('Unauthorized clearance level.');
+        }
+    } catch (error: any) {
+        console.error("Login Error:", error);
+        setLoginError('Invalid credentials or unauthorized.');
+    } finally {
+        setIsLoggingIn(false);
+    }
+  };
 
   const fetchMasterData = async () => {
     try {
@@ -187,15 +218,67 @@ export default function AdminPortal() {
     });
   };
 
-  if (isLoading) return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center font-bold text-xl text-gray-400 uppercase tracking-widest">
-      <div className="flex flex-col items-center gap-4">
-        <span className="text-4xl animate-spin">🛡️</span>
-        Verifying Security Credentials...
+  // ==========================================
+  // RENDER BLOCKS: SECURITY ROUTING
+  // ==========================================
+
+  // 1. Loading State
+  if (authStatus === 'LOADING') return (
+      <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center font-bold text-xl text-gray-500 uppercase tracking-widest">
+          <span className="text-4xl animate-pulse mb-4">🛡️</span>
+          Verifying Clearance...
       </div>
-    </div>
   );
 
+  // 2. Invisible 404 Cloak for Regular Users
+  if (authStatus === 'NORMAL_USER') return (
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center text-center p-4">
+          <h1 className="text-7xl font-black text-gray-900 mb-4 tracking-tighter">404</h1>
+          <p className="text-xl font-bold text-gray-500 mb-8">This page could not be found.</p>
+          <Link href="/" className="bg-[#22c55e] text-white px-8 py-3 rounded-xl font-bold shadow-md hover:bg-[#1ea950] transition-colors">
+              Return Home
+          </Link>
+      </div>
+  );
+
+  // 3. Strict Admin Login Gateway
+  if (authStatus === 'NOT_LOGGED_IN') return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4 font-sans">
+          <form onSubmit={handleAdminLogin} className="bg-gray-800 border border-gray-700 p-8 md:p-10 rounded-3xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-300">
+              <div className="w-16 h-16 bg-red-500/10 text-red-500 flex items-center justify-center rounded-full mx-auto mb-6 text-2xl border border-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.2)]">🔒</div>
+              <h2 className="text-2xl font-black text-white text-center mb-2 tracking-tight">System Gateway</h2>
+              <p className="text-gray-400 text-sm text-center mb-8 font-medium">Restricted Access. Authenticate to continue.</p>
+
+              {loginError && <div className="bg-red-500/10 text-red-400 p-3 rounded-xl mb-6 text-sm font-bold text-center border border-red-500/20">{loginError}</div>}
+
+              <div className="space-y-5">
+                  <div>
+                      <label className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 block">Admin Email</label>
+                      <input type="email" value={adminLoginEmail} onChange={e => setAdminLoginEmail(e.target.value)} required className="w-full bg-gray-900 border border-gray-700 text-white rounded-xl p-4 outline-none focus:border-[#22c55e] focus:ring-1 focus:ring-[#22c55e]/50 transition-all font-medium" placeholder="admin@okiconstruct.com" />
+                  </div>
+                  <div>
+                      <label className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 block">Passcode</label>
+                      <input type="password" value={adminLoginPassword} onChange={e => setAdminLoginPassword(e.target.value)} required className="w-full bg-gray-900 border border-gray-700 text-white rounded-xl p-4 outline-none focus:border-[#22c55e] focus:ring-1 focus:ring-[#22c55e]/50 transition-all font-medium" placeholder="••••••••" />
+                  </div>
+              </div>
+
+              <button type="submit" disabled={isLoggingIn} className="w-full bg-[#22c55e] text-white font-bold text-lg py-4 rounded-xl mt-8 hover:bg-[#1ea950] transition-colors shadow-lg shadow-green-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                  {isLoggingIn ? (
+                      <><svg className="animate-spin h-5 w-5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Authenticating...</>
+                  ) : 'Secure Login'}
+              </button>
+              
+              <div className="mt-8 text-center">
+                 <Link href="/" className="text-xs font-bold text-gray-500 hover:text-gray-300 transition-colors uppercase tracking-widest">⬅ Return to Public Site</Link>
+              </div>
+          </form>
+      </div>
+  );
+
+  // ==========================================
+  // 4. MAIN ADMIN DASHBOARD 
+  // ==========================================
+  
   const premiumUsers = users.filter(u => u.tier === 'premium' || u.planStatus === 'premium'); 
   const standardUsers = users.filter(u => u.tier !== 'premium' && u.planStatus !== 'premium');
   const totalBOQs = projects.filter(p => !p.isManualTracker).length;
