@@ -54,11 +54,12 @@ export default function Estimator() {
     return () => unsubscribe();
   }, []);
 
+  // 🟢 UPDATE: Added tmtSize and tmtCount for custom structural overrides
   const [structure, setStructure] = useState<any>({
     footing: { count: '', breadth: '', width: '', depth: '' },
-    column: { height: '10', breadth: '', width: '' },
-    plinthBeam: { depth: '', width: '' },
-    roofBeam: { depth: '', width: '' }
+    column: { height: '10', breadth: '', width: '', tmtSize: '', tmtCount: '' },
+    plinthBeam: { depth: '', width: '', tmtSize: '', tmtCount: '' },
+    roofBeam: { depth: '', width: '', tmtSize: '', tmtCount: '' }
   });
 
   const [floorsData, setFloorsData] = useState<any[]>([]);
@@ -130,7 +131,7 @@ export default function Estimator() {
             if (isComm) {
                 initialFloors.push({
                     floorName, isCommercial: true,
-                    shops: [{ id: Date.now(), length: '', breadth: '' }], // 🟢 UPDATE: Initiated as an array
+                    shops: [{ id: Date.now(), length: '', breadth: '' }], 
                     washrooms: { count: '', length: '', breadth: '' }
                 });
             } else {
@@ -169,7 +170,6 @@ export default function Estimator() {
     });
   };
 
-  // ROOM ADD/DELETE ENGINES
   const addBedroom = () => {
     setFloorsData(prev => {
       const d = JSON.parse(JSON.stringify(prev));
@@ -200,7 +200,6 @@ export default function Estimator() {
     });
   };
 
-  // 🟢 NEW: Shop Engines for Commercial Floor
   const addShop = () => {
     setFloorsData(prev => {
       const d = JSON.parse(JSON.stringify(prev));
@@ -273,7 +272,6 @@ export default function Estimator() {
     let area = 0;
     if (buildingType === 'apartment') {
       if (f.isCommercial) {
-        // 🟢 UPDATE: Area calculation now dynamically adds all shop areas
         (f.shops || []).forEach((s: any) => area += getRoomArea(s));
         area += (Number(f.washrooms?.count || 0) * getRoomArea(f.washrooms));
       } else {
@@ -352,7 +350,6 @@ export default function Estimator() {
     window.scrollTo(0,0);
   };
 
-  // --- BOQ GENERATION ENGINE & TRANSLATION LAYER ---
   const handleGenerateBOQ = () => {
     setErrorMsg("");
     if (!Number(laborRates.mason) || !Number(laborRates.painter)) {
@@ -371,7 +368,6 @@ export default function Estimator() {
             let mainKitchen = { length: '0', breadth: '0' };
 
             if (f.isCommercial) {
-                // 🟢 UPDATE: Flatten dynamically added shops 
                 f.shops?.forEach((s: any) => flattenedBedrooms.push({ length: s.length, breadth: s.breadth }));
                 
                 for (let w = 0; w < Number(f.washrooms?.count || 0); w++) {
@@ -426,7 +422,6 @@ export default function Estimator() {
         };
     });
     
-    // 100% ACCOUNT ISOLATION: Prefer Firebase Cloud Data tied to UID, fallback to UID-locked local storage
     let masterSettings: any = {
       ratios: { pcc: { c: 1, s: 3, g: 6 }, slab: { c: 1, s: 2, g: 4 }, footing: { c: 1, s: 2, g: 4 }, plinthBeam: { c: 1, s: 3, g: 4 }, beam: { c: 1, s: 3, g: 4 }, column: { c: 1, s: 3, g: 4 }, mortar: { c: 1, s: 4, g: 0 }, tileBedding: { c: 1, s: 4, g: 0 } },
       tmtSpecs: { '8mm': { length: 38, weight: 4.74 }, '10mm': { length: 38, weight: 7.40 }, '12mm': { length: 38, weight: 10.66 }, '16mm': { length: 38, weight: 18.96 }, '20mm': { length: 38, weight: 29.60 }, '25mm': { length: 38, weight: 46.20 } },
@@ -474,7 +469,8 @@ export default function Estimator() {
     setIsSaving(true);
     try {
       const payload = {
-        userId: auth.currentUser.uid, // 🟢 FIXED: Changed from 'uid' to 'userId'
+        userId: auth.currentUser.uid, 
+        uid: auth.currentUser.uid, 
         projectName: (projectName || "OkiConstruct Build").trim(), 
         totalFloors: totalFloorsCount,
         siteDetails: siteDetails,
@@ -697,6 +693,31 @@ export default function Estimator() {
                       <input type="number" inputMode="decimal" min="0" placeholder="e.g., 12" className={inputStyle} value={structure.column.width} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, width: e.target.value } })} />
                     </div>
                   </div>
+                  
+                  {/* 🟢 NEW: Custom Reinforcement for Column */}
+                  <div className="mt-4 p-4 border border-blue-100 bg-blue-50/50 rounded-2xl">
+                    <span className="text-xs font-bold text-blue-600 uppercase tracking-wider block mb-3">Custom Reinforcement (Optional)</span>
+                    <p className="text-xs text-gray-500 mb-3 font-medium">Leave blank to auto-calculate based on total floors.</p>
+                    <div className="grid grid-cols-2 gap-4">
+                       <div>
+                          <label className={labelStyle}>TMT Size</label>
+                          <div className="relative">
+                            <select className={selectStyle} value={structure.column.tmtSize} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, tmtSize: e.target.value } })}>
+                              <option value="">Auto</option>
+                              <option value="12mm">12mm</option>
+                              <option value="16mm">16mm</option>
+                              <option value="20mm">20mm</option>
+                              <option value="25mm">25mm</option>
+                            </select>
+                            <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-sm">▼</div>
+                          </div>
+                       </div>
+                       <div>
+                          <label className={labelStyle}>Bar Count per Column</label>
+                          <input type="number" inputMode="numeric" min="0" placeholder="e.g., 6" className={inputStyle} value={structure.column.tmtCount} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, tmtCount: e.target.value } })} />
+                       </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -705,20 +726,57 @@ export default function Estimator() {
                   <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">3</span> Beams (Inches)
                 </h2>
                 <div className="space-y-6">
+                  
+                  {/* Plinth Beam */}
                   <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
                     <span className="font-bold text-gray-700 block mb-3">Plinth Beam</span>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-2 gap-4 mb-4">
                       <input type="number" inputMode="decimal" min="0" placeholder="Depth" className={inputStyle} value={structure.plinthBeam.depth} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, depth: e.target.value } })} />
                       <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.plinthBeam.width} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, width: e.target.value } })} />
                     </div>
+                    {/* 🟢 NEW: Custom Reinforcement for Plinth */}
+                    <div className="p-3 border border-blue-100 bg-blue-50/50 rounded-xl">
+                      <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block mb-2">Override Plinth TMT</span>
+                      <div className="grid grid-cols-2 gap-3">
+                         <div className="relative">
+                            <select className={`${selectStyle} py-2 text-sm`} value={structure.plinthBeam.tmtSize} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, tmtSize: e.target.value } })}>
+                              <option value="">Auto Size</option>
+                              <option value="12mm">12mm</option>
+                              <option value="16mm">16mm</option>
+                              <option value="20mm">20mm</option>
+                              <option value="25mm">25mm</option>
+                            </select>
+                         </div>
+                         <input type="number" inputMode="numeric" min="0" placeholder="Bar Count (e.g., 6)" className={`${inputStyle} py-2 text-sm`} value={structure.plinthBeam.tmtCount} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, tmtCount: e.target.value } })} />
+                      </div>
+                    </div>
                   </div>
+
+                  {/* Roof Beam */}
                   <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
                     <span className="font-bold text-gray-700 block mb-3">Roof Beam</span>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-2 gap-4 mb-4">
                       <input type="number" inputMode="decimal" min="0" placeholder="Depth" className={inputStyle} value={structure.roofBeam.depth} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, depth: e.target.value } })} />
                       <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.roofBeam.width} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, width: e.target.value } })} />
                     </div>
+                    {/* 🟢 NEW: Custom Reinforcement for Roof */}
+                    <div className="p-3 border border-blue-100 bg-blue-50/50 rounded-xl">
+                      <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block mb-2">Override Roof Beam TMT</span>
+                      <div className="grid grid-cols-2 gap-3">
+                         <div className="relative">
+                            <select className={`${selectStyle} py-2 text-sm`} value={structure.roofBeam.tmtSize} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, tmtSize: e.target.value } })}>
+                              <option value="">Auto Size</option>
+                              <option value="12mm">12mm</option>
+                              <option value="16mm">16mm</option>
+                              <option value="20mm">20mm</option>
+                              <option value="25mm">25mm</option>
+                            </select>
+                         </div>
+                         <input type="number" inputMode="numeric" min="0" placeholder="Bar Count (e.g., 6)" className={`${inputStyle} py-2 text-sm`} value={structure.roofBeam.tmtCount} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, tmtCount: e.target.value } })} />
+                      </div>
+                    </div>
                   </div>
+
                 </div>
               </div>
 
@@ -760,7 +818,6 @@ export default function Estimator() {
                     <div className="p-6 border-2 border-orange-200 bg-orange-50 rounded-3xl">
                       <h3 className="text-xl font-black text-orange-900 mb-6 border-b border-orange-200 pb-4">Commercial Space Configuration</h3>
                       
-                      {/* 🟢 UPDATE: Dynamic Multiple Shops Section */}
                       <div className="space-y-4 mb-8">
                         <div className="flex justify-between items-center">
                           <h4 className="font-bold text-orange-800">Shops / Chambers (ft)</h4>
@@ -1466,7 +1523,6 @@ export default function Estimator() {
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 border-b border-gray-100 pb-8 print:border-b-2 print:border-gray-300">
                 <div className="flex items-center gap-4 text-left">
                   {userData?.avatar && userData.avatar.length > 5 ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
                     <img src={userData.avatar} alt="Logo" className="w-16 h-16 object-cover rounded-xl border border-gray-200 shadow-sm" />
                   ) : (
                     <span className="text-4xl bg-gray-50 p-3 rounded-xl border border-gray-100">{userData?.avatar || "🏢"}</span>
@@ -1554,7 +1610,6 @@ export default function Estimator() {
                     </div>
                   ))}
 
-                  {/* --- NEW FLOOR SUBTOTAL SECTION --- */}
                   <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200 mt-4 flex flex-col md:flex-row justify-between md:items-center gap-2 print:bg-transparent print:border-black print:border-2">
                       <h3 className="font-bold text-gray-900 text-lg uppercase tracking-wider">{floor.floorName} Subtotal</h3>
                       <span className="text-2xl font-black text-[#15803d] print:text-black">₹{(floor.floorTotal || 0).toLocaleString()}</span>

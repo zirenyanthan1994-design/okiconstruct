@@ -18,12 +18,10 @@ export const generateProjectBOQ = (
   const safeRates = rates || {};
   const overhang = Number(slabOverhang) || 0;
 
-  // DYNAMIC MATERIAL WASTAGE FETCHERS
   const getWastage = (material: string, defaultVal: number) => {
     return 1 + ((masterSettings?.percentages?.wastage?.[material] ?? defaultVal) / 100);
   };
 
-  // DYNAMIC CONCRETE CONSUMPTION ALLOWANCES
   const getAllowance = (element: string, defaultVal: number) => {
     return 1 + ((masterSettings?.percentages?.concreteAllowances?.[element] ?? defaultVal) / 100);
   };
@@ -50,6 +48,7 @@ export const generateProjectBOQ = (
     };
   };
 
+  // Base Auto-Calculation Profile
   let profile = { main: { s: '16mm', c: 4 }, extra: null as { s: string, c: number } | null };
   if (totalFloorsCount >= 2 && totalFloorsCount <= 3) profile.extra = { s: '12mm', c: 2 };
   else if (totalFloorsCount >= 4 && totalFloorsCount <= 5) profile.extra = { s: '12mm', c: 4 };
@@ -72,12 +71,19 @@ export const generateProjectBOQ = (
     const currentStairsDim = snap?.stairsDim || { length: 0, width: 0 };
     const buildingType = snap?.buildingType || 'residence';
 
+    // 🟢 NEW: Read Custom TMT Overrides per element (fallback to auto profile)
+    const colTmtSize = currentStructure?.column?.tmtSize || profile.main.s;
+    const colTmtCount = Number(currentStructure?.column?.tmtCount) || profile.main.c;
+    
+    const pbTmtSize = currentStructure?.plinthBeam?.tmtSize || profile.main.s;
+    const pbTmtCount = Number(currentStructure?.plinthBeam?.tmtCount) || profile.main.c;
+
+    const rbTmtSize = currentStructure?.roofBeam?.tmtSize || profile.main.s;
+    const rbTmtCount = Number(currentStructure?.roofBeam?.tmtCount) || profile.main.c;
+
     const sections: any[] = [];
     let floorBaseCost = 0; 
 
-    // ==========================================
-    // 1. ADVANCED AREA & PERIMETER PARSING ENGINE
-    // ==========================================
     let layoutArea = 0;
     let layoutPerimeter = 0;
     let totalBathsPeri = 0;
@@ -89,7 +95,6 @@ export const generateProjectBOQ = (
 
     if (buildingType === 'apartment') {
       if (currentLayout.isCommercial) {
-        // 🟢 FIX: Correctly iterates through dynamic shops array
         const shopsArray = Array.isArray(currentLayout.shops) ? currentLayout.shops : [];
         shopsArray.forEach((shop: any) => {
             const sArea = getRoomArea(shop);
@@ -108,7 +113,6 @@ export const generateProjectBOQ = (
         totalBathsPeri += wPeri;
         tileAreas.commercialWashrooms = (tileAreas.commercialWashrooms || 0) + wArea;
       } else {
-        // Residential Flats
         (currentLayout.flats || []).forEach((flat: any) => {
           const fHallArea = getRoomArea(flat.hall);
           const fKitchenArea = getRoomArea(flat.kitchen);
@@ -133,7 +137,6 @@ export const generateProjectBOQ = (
         });
       }
 
-      // Shared Apartment Circulation
       if (snap.apartmentData?.corridor?.hasCorridor) {
         layoutArea += getRoomArea(snap.apartmentData.corridor);
         layoutPerimeter += getRoomPerimeter(snap.apartmentData.corridor);
@@ -149,7 +152,6 @@ export const generateProjectBOQ = (
         layoutPerimeter += getRoomPerimeter(snap.apartmentData.lift) * liftCount;
       }
     } else {
-      // Standard Private Residence
       const staticRoomsArea = getRoomArea(currentLayout?.hall) + getRoomArea(currentLayout?.kitchenDining) + getRoomArea(currentLayout?.foyer);
       const dynamicBedroomsArea = (currentLayout?.bedrooms || []).reduce((sum: number, r: any) => sum + getRoomArea(r), 0);
       const dynamicBathsArea = (currentLayout?.bathrooms || []).reduce((sum: number, r: any) => sum + (r.isAttached && r.layoutType === 'inside' ? 0 : getRoomArea(r)), 0);
@@ -193,10 +195,9 @@ export const generateProjectBOQ = (
     const colWIn = Number(currentStructure?.column?.width) || 12;
     const calculateRingFt = (l: number, w: number) => (((l - 3) + (w - 3)) * 2) / 12;
 
-    // 🟢 FIX: Smart Filter - Completely removes items if quantity or rate is 0/blank
     const addSection = (title: string, rawItems: any[]) => {
       const items = rawItems.filter(item => item && (Number(item.qty) > 0) && (Number(item.rate) > 0));
-      if (items.length === 0) return; // Do not render empty sections
+      if (items.length === 0) return; 
 
       const sectionTotal = items.reduce((sum, item) => sum + (Math.ceil(Number(item.qty) * Number(item.rate))), 0);
       sections.push({ title, items, sectionTotal });
@@ -252,7 +253,8 @@ export const generateProjectBOQ = (
         { name: "GF Floor PCC Sand", qty: floorPccConc.sand, unit: "CFT", rate: safeRates.sand || 0 },
         { name: "GF Floor PCC Gravel", qty: floorPccConc.gravel, unit: "CFT", rate: safeRates.gravel || 0 },
 
-        { name: `Starter Main (${profile.main.s})`, qty: Math.ceil(getWeight(profile.main.s, starterHt * colCount * profile.main.c)), unit: "KG", rate: safeRates.tmt?.[profile.main.s] || 0 },
+        // 🟢 FIX: Applying Custom Column TMT Size to Foundation Starters
+        { name: `Starter Main (${colTmtSize})`, qty: Math.ceil(getWeight(colTmtSize, starterHt * colCount * colTmtCount)), unit: "KG", rate: safeRates.tmt?.[colTmtSize] || 0 },
         { name: "Starter Rings (8mm)", qty: Math.ceil(getWeight('8mm', starterRingsQty * calculateRingFt(colBIn, colWIn))), unit: "KG", rate: safeRates.tmt?.['8mm'] || 0 }
       ]);
 
@@ -263,7 +265,8 @@ export const generateProjectBOQ = (
         { name: "Cement", qty: plConc.cement, unit: "BAG", rate: safeRates.cement || 0 },
         { name: "Sand", qty: plConc.sand, unit: "CFT", rate: safeRates.sand || 0 },
         { name: "Gravel", qty: plConc.gravel, unit: "CFT", rate: safeRates.gravel || 0 },
-        { name: `TMT Main (${profile.main.s})`, qty: Math.ceil(getWeight(profile.main.s, plinthPerimeter * profile.main.c)), unit: "KG", rate: safeRates.tmt?.[profile.main.s] || 0 },
+        // 🟢 FIX: Applying Custom Plinth Beam TMT Profile
+        { name: `TMT Main (${pbTmtSize})`, qty: Math.ceil(getWeight(pbTmtSize, plinthPerimeter * pbTmtCount)), unit: "KG", rate: safeRates.tmt?.[pbTmtSize] || 0 },
         { name: "TMT Rings (8mm)", qty: Math.ceil(getWeight('8mm', plRings * calculateRingFt(pD, plW))), unit: "KG", rate: safeRates.tmt?.['8mm'] || 0 }
       ]);
     }
@@ -277,7 +280,8 @@ export const generateProjectBOQ = (
       { name: "Cement", qty: roofConc.cement, unit: "BAG", rate: safeRates.cement || 0 },
       { name: "Sand", qty: roofConc.sand, unit: "CFT", rate: safeRates.sand || 0 },
       { name: "Gravel", qty: roofConc.gravel, unit: "CFT", rate: safeRates.gravel || 0 },
-      { name: `TMT Main (${profile.main.s})`, qty: Math.ceil(getWeight(profile.main.s, roofPerimeter * profile.main.c)), unit: "KG", rate: safeRates.tmt?.[profile.main.s] || 0 },
+      // 🟢 FIX: Applying Custom Roof Beam TMT Profile
+      { name: `TMT Main (${rbTmtSize})`, qty: Math.ceil(getWeight(rbTmtSize, roofPerimeter * rbTmtCount)), unit: "KG", rate: safeRates.tmt?.[rbTmtSize] || 0 },
       { name: "TMT Rings (8mm)", qty: Math.ceil(getWeight('8mm', roofRings * calculateRingFt(rD, rW))), unit: "KG", rate: safeRates.tmt?.['8mm'] || 0 }
     ]);
 
@@ -288,7 +292,8 @@ export const generateProjectBOQ = (
       { name: "Cement", qty: colConc.cement, unit: "BAG", rate: safeRates.cement || 0 },
       { name: "Sand", qty: colConc.sand, unit: "CFT", rate: safeRates.sand || 0 },
       { name: "Gravel", qty: colConc.gravel, unit: "CFT", rate: safeRates.gravel || 0 },
-      { name: `TMT Main (${profile.main.s})`, qty: Math.ceil(getWeight(profile.main.s, colCount * colHt * profile.main.c)), unit: "KG", rate: safeRates.tmt?.[profile.main.s] || 0 },
+      // 🟢 FIX: Applying Custom Column TMT Profile
+      { name: `TMT Main (${colTmtSize})`, qty: Math.ceil(getWeight(colTmtSize, colCount * colHt * colTmtCount)), unit: "KG", rate: safeRates.tmt?.[colTmtSize] || 0 },
       { name: "TMT Rings (8mm)", qty: Math.ceil(getWeight('8mm', colRings * calculateRingFt(colBIn, colWIn))), unit: "KG", rate: safeRates.tmt?.['8mm'] || 0 }
     ]);
 
