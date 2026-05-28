@@ -474,7 +474,7 @@ export default function Estimator() {
     setIsSaving(true);
     try {
       const payload = {
-        uid: auth.currentUser.uid, 
+        userId: auth.currentUser.uid, // 🟢 FIXED: Changed from 'uid' to 'userId'
         projectName: (projectName || "OkiConstruct Build").trim(), 
         totalFloors: totalFloorsCount,
         siteDetails: siteDetails,

@@ -89,20 +89,24 @@ export const generateProjectBOQ = (
 
     if (buildingType === 'apartment') {
       if (currentLayout.isCommercial) {
-        // Commercial Ground Floor
-        const shopCount = Number(currentLayout.shops?.count) || 0;
+        // 🟢 FIX: Correctly iterates through dynamic shops array
+        const shopsArray = Array.isArray(currentLayout.shops) ? currentLayout.shops : [];
+        shopsArray.forEach((shop: any) => {
+            const sArea = getRoomArea(shop);
+            const sPeri = getRoomPerimeter(shop);
+            layoutArea += sArea;
+            layoutPerimeter += sPeri;
+            tileAreas.commercialShops = (tileAreas.commercialShops || 0) + sArea;
+        });
+
         const washCount = Number(currentLayout.washrooms?.count) || 0;
+        const wArea = getRoomArea(currentLayout.washrooms) * washCount;
+        const wPeri = getRoomPerimeter(currentLayout.washrooms) * washCount;
         
-        layoutArea += getRoomArea(currentLayout.shops) * shopCount;
-        layoutArea += getRoomArea(currentLayout.washrooms) * washCount;
-        
-        layoutPerimeter += getRoomPerimeter(currentLayout.shops) * shopCount;
-        layoutPerimeter += getRoomPerimeter(currentLayout.washrooms) * washCount;
-        
-        totalBathsPeri = getRoomPerimeter(currentLayout.washrooms) * washCount;
-        
-        tileAreas.commercialShops = getRoomArea(currentLayout.shops) * shopCount;
-        tileAreas.commercialWashrooms = getRoomArea(currentLayout.washrooms) * washCount;
+        layoutArea += wArea;
+        layoutPerimeter += wPeri;
+        totalBathsPeri += wPeri;
+        tileAreas.commercialWashrooms = (tileAreas.commercialWashrooms || 0) + wArea;
       } else {
         // Residential Flats
         (currentLayout.flats || []).forEach((flat: any) => {
@@ -167,12 +171,10 @@ export const generateProjectBOQ = (
       (currentLayout?.bathrooms || []).forEach((b: any, i: number) => tileAreas[`bathroom_${i}`] = getRoomArea(b));
     }
 
-    // Mathematical overrides from calculation
     const baseSide = Math.sqrt(layoutArea) || 0;
     const slabSide = baseSide + overhang;
     let adjustedSlabArea = Math.pow(slabSide, 2);
     
-    // Slab Void Deductions for Apartments
     if (buildingType === 'apartment' && idx < totalFloorsCount - 1) {
         let voidArea = 0;
         if (currentHasStairs) voidArea += getRoomArea(currentStairsDim);
@@ -191,8 +193,12 @@ export const generateProjectBOQ = (
     const colWIn = Number(currentStructure?.column?.width) || 12;
     const calculateRingFt = (l: number, w: number) => (((l - 3) + (w - 3)) * 2) / 12;
 
-    const addSection = (title: string, items: any[]) => {
-      const sectionTotal = items.reduce((sum, item) => sum + (Math.ceil((item.qty || 0) * (item.rate || 0))), 0);
+    // 🟢 FIX: Smart Filter - Completely removes items if quantity or rate is 0/blank
+    const addSection = (title: string, rawItems: any[]) => {
+      const items = rawItems.filter(item => item && (Number(item.qty) > 0) && (Number(item.rate) > 0));
+      if (items.length === 0) return; // Do not render empty sections
+
+      const sectionTotal = items.reduce((sum, item) => sum + (Math.ceil(Number(item.qty) * Number(item.rate))), 0);
       sections.push({ title, items, sectionTotal });
       floorBaseCost += sectionTotal;
     };
