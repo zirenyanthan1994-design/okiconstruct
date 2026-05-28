@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from 'react';
 import { auth, db } from '../lib/firebase';
-import { collection, getDocs, doc, getDoc, setDoc } from 'firebase/firestore'; // ADDED doc, getDoc, setDoc
+import { collection, getDocs, doc, getDoc, setDoc } from 'firebase/firestore'; 
 import { onAuthStateChanged } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
 import Navbar from '../components/Navbar'; 
@@ -35,36 +35,16 @@ const defaultSettings = {
     ringSpacing: 5 
   },
   percentages: { 
-    wastage: {
-      cement: 15,
-      sand: 15,
-      gravel: 15,
-      tmt: 10,
-      bricks: 15,
-      tiles: 10
-    },
+    wastage: { cement: 15, sand: 15, gravel: 15, tmt: 10, bricks: 15, tiles: 10 },
     slabExtraConcrete: 25,
-    shuttering: 8,
-    electrical: 12, 
-    plumbing: 8, 
-    misc: 5, 
-    logistics: 10, 
-    contingency: 5 
+    shuttering: 8, electrical: 12, plumbing: 8, misc: 5, logistics: 10, contingency: 5 
   },
   consumption: { 
-    puttyCoverage: 10, 
-    interiorPaintCoverage: 50, 
-    exteriorPaintCoverage: 50,  
-    bricksPerSqft: 5, 
-    plasterCftPerSqft: 0.15, 
-    brickJoiningCftPerSqft: 0.15, 
-    tileBeddingCftPerSqft: 0.25 
+    puttyCoverage: 10, interiorPaintCoverage: 50, exteriorPaintCoverage: 50,  
+    bricksPerSqft: 5, plasterCftPerSqft: 0.15, brickJoiningCftPerSqft: 0.15, tileBeddingCftPerSqft: 0.25 
   }
 };
 
-// ==========================================
-// DEFAULT GLOBAL PRICING PLANS (NEW)
-// ==========================================
 const DEFAULT_PRICING = [
   { id: '1m', months: 1, label: '1 Month', price: 999, discount: 0 },
   { id: '2m', months: 2, label: '2 Months', price: 1998, discount: 5 },
@@ -83,20 +63,12 @@ const formatLabel = (key: string) => {
 };
 
 const customLabels: Record<string, string> = {
-  pcc: "PCC (Foundation Bed)",
-  slab: "Roof Slab Concrete",
-  footing: "Footing Concrete",
-  plinthBeam: "Plinth Beam Concrete",
-  beam: "Roof Beam Concrete",
-  column: "Column Concrete",
-  mortar: "Wall Plaster & Masonry Mortar (No Gravel)",
-  tileBedding: "Floor Tile Bedding Mortar (No Gravel)",
-  puttyCoverage: "Wall Putty Coverage (Sq.Ft per Kg)",
-  interiorPaintCoverage: "Interior Paint Coverage (Sq.Ft per Liter)",
-  exteriorPaintCoverage: "Exterior Paint Coverage (Sq.Ft per Liter)", 
-  bricksPerSqft: "Bricks (Pcs per Sq.Ft of Wall)",
-  plasterCftPerSqft: "Wall Plaster Volume (CFT per Sq.Ft)",
-  brickJoiningCftPerSqft: "Brick Joining Mortar Volume (CFT per Sq.Ft)",
+  pcc: "PCC (Foundation Bed)", slab: "Roof Slab Concrete", footing: "Footing Concrete",
+  plinthBeam: "Plinth Beam Concrete", beam: "Roof Beam Concrete", column: "Column Concrete",
+  mortar: "Wall Plaster & Masonry Mortar (No Gravel)", tileBedding: "Floor Tile Bedding Mortar (No Gravel)",
+  puttyCoverage: "Wall Putty Coverage (Sq.Ft per Kg)", interiorPaintCoverage: "Interior Paint Coverage (Sq.Ft per Liter)",
+  exteriorPaintCoverage: "Exterior Paint Coverage (Sq.Ft per Liter)", bricksPerSqft: "Bricks (Pcs per Sq.Ft of Wall)",
+  plasterCftPerSqft: "Wall Plaster Volume (CFT per Sq.Ft)", brickJoiningCftPerSqft: "Brick Joining Mortar Volume (CFT per Sq.Ft)",
   tileBeddingCftPerSqft: "Tile Bedding Volume (CFT per Sq.Ft)"
 };
 
@@ -106,7 +78,8 @@ const labelStyle = "text-xs font-bold text-gray-500 uppercase tracking-wider mb-
 export default function AdminPortal() {
   const router = useRouter();
   
-  const [activeTab, setActiveTab] = useState<'ANALYTICS' | 'ENGINE'>('ANALYTICS');
+  // NEW: Added PRICING as a distinct tab
+  const [activeTab, setActiveTab] = useState<'ANALYTICS' | 'PRICING' | 'ENGINE'>('ANALYTICS');
   const [isLoading, setIsLoading] = useState(true);
   
   const [users, setUsers] = useState<any[]>([]);
@@ -115,17 +88,16 @@ export default function AdminPortal() {
   const PREMIUM_PRICE_INR = 999; 
 
   const [settings, setSettings] = useState(defaultSettings);
-  const [pricingPlans, setPricingPlans] = useState(DEFAULT_PRICING); // NEW STATE
+  const [pricingPlans, setPricingPlans] = useState(DEFAULT_PRICING);
   const [saveStatus, setSaveStatus] = useState("");
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         await fetchMasterData();
-        loadEngineSettings();
-        await fetchPricingPlans(); // FETCH CLOUD PRICING
+        await loadCloudSettings();
       } else {
-        router.push('/home');
+        router.push('/');
       }
     });
     return () => unsubscribe();
@@ -158,85 +130,48 @@ export default function AdminPortal() {
     }
   };
 
-  const loadEngineSettings = () => {
-    const saved = localStorage.getItem("OkiConstruct_settings");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        setSettings({
-          ratios: { ...defaultSettings.ratios, ...(parsed.ratios || {}) },
-          tmtSpecs: { ...defaultSettings.tmtSpecs, ...(parsed.tmtSpecs || {}) },
-          dimensions: { ...defaultSettings.dimensions, ...(parsed.dimensions || {}) },
-          percentages: { 
-             ...defaultSettings.percentages, 
-             ...(parsed.percentages || {}),
-             wastage: {
-                ...defaultSettings.percentages.wastage,
-                ...(parsed.percentages?.wastage || {
-                   cement: parsed.percentages?.materialWastage || 15,
-                   sand: parsed.percentages?.materialWastage || 15,
-                   gravel: parsed.percentages?.materialWastage || 10,
-                   tmt: parsed.percentages?.materialWastage || 10,
-                   bricks: 15,
-                   tiles: 10
-                })
-             }
-          },
-          consumption: { ...defaultSettings.consumption, ...(parsed.consumption || {}) }
-        });
-      } catch (e) {
-        console.error("Failed to parse settings", e);
-      }
-    }
-  };
-
-  // NEW: Fetch Pricing from Cloud
-  const fetchPricingPlans = async () => {
+  const loadCloudSettings = async () => {
     try {
+      const engineDoc = await getDoc(doc(db, "platform", "engine"));
+      if (engineDoc.exists() && engineDoc.data().settings) {
+         setSettings(engineDoc.data().settings);
+      }
       const pricingDoc = await getDoc(doc(db, "platform", "billing"));
       if (pricingDoc.exists() && pricingDoc.data().plans) {
         setPricingPlans(pricingDoc.data().plans);
       }
     } catch (err) {
-      console.error("Using default pricing.", err);
+      console.error("Failed to load cloud settings, using defaults.", err);
     }
   };
 
-  // REVISED: Saves both local formulas and cloud pricing
-  const handleSaveEngine = async () => {
-    localStorage.setItem("OkiConstruct_settings", JSON.stringify(settings));
-    
+  const handleSaveChanges = async () => {
     try {
+      await setDoc(doc(db, "platform", "engine"), { settings }, { merge: true });
       await setDoc(doc(db, "platform", "billing"), { plans: pricingPlans }, { merge: true });
-      setSaveStatus("Settings & Pricing Saved Successfully!");
-    } catch(err) {
-      console.error(err);
-      setSaveStatus("Formulas saved, but failed to sync pricing to cloud.");
+      setSaveStatus("Cloud Sync Successful! All systems updated.");
+    } catch (error) {
+      console.error(error);
+      setSaveStatus("Sync Failed! Please check your Firestore rules.");
     }
-    
-    setTimeout(() => setSaveStatus(""), 3000);
+    setTimeout(() => setSaveStatus(""), 4000);
   };
 
-  // REVISED: Resets pricing back to default too
-  const handleResetEngine = () => {
-    if(confirm("Are you sure you want to reset all formulas and pricing to factory defaults?")) {
+  const handleResetSettings = () => {
+    if(confirm("Are you sure you want to reset all formulas and pricing to factory defaults globally?")) {
       setSettings(defaultSettings);
       setPricingPlans(DEFAULT_PRICING);
-      localStorage.removeItem("OkiConstruct_settings");
-      setSaveStatus("Reset to Defaults Successfully!");
-      setTimeout(() => setSaveStatus(""), 3000);
+      handleSaveChanges();
     }
   };
 
   const updateRatio = (key: string, field: 'c' | 's' | 'g', val: string) => setSettings(prev => ({ ...prev, ratios: { ...prev.ratios, [key]: { ...prev.ratios[key as keyof typeof defaultSettings.ratios], [field]: Number(val) } } }));
   const updateTmt = (key: string, field: 'length' | 'weight', val: string) => setSettings(prev => ({ ...prev, tmtSpecs: { ...prev.tmtSpecs, [key]: { ...prev.tmtSpecs[key as keyof typeof defaultSettings.tmtSpecs], [field]: Number(val) } } }));
   const updateDimension = (key: string, val: string) => setSettings(prev => ({ ...prev, dimensions: { ...prev.dimensions, [key]: Number(val) } }));
-  
   const updateWastage = (key: string, val: string) => setSettings((prev: any) => ({ ...prev, percentages: { ...prev.percentages, wastage: { ...prev.percentages.wastage, [key]: Number(val) } } }));
   const updatePercentage = (key: string, val: string) => setSettings((prev: any) => ({ ...prev, percentages: { ...prev.percentages, [key]: Number(val) } }));
   const updateConsumption = (key: string, val: string) => setSettings(prev => ({ ...prev, consumption: { ...prev.consumption, [key]: Number(val) } }));
 
-  // NEW: Pricing Update Handler
   const updatePricing = (index: number, field: string, value: string) => {
     setPricingPlans(prev => {
       const newPlans = [...prev];
@@ -268,22 +203,38 @@ export default function AdminPortal() {
             </h1>
             <p className="font-bold text-gray-500 uppercase tracking-widest text-xs mt-2">Master Override & Analytics Dashboard</p>
           </div>
-          <div className="flex gap-2 w-full md:w-auto bg-gray-200 p-1 rounded-2xl animate-in fade-in slide-in-from-right-4 duration-500">
+          
+          {/* UPDATED: 3-Tab Navigation */}
+          <div className="flex gap-2 w-full md:w-auto bg-gray-200 p-1 rounded-2xl animate-in fade-in slide-in-from-right-4 duration-500 overflow-x-auto">
              <button 
                onClick={() => setActiveTab('ANALYTICS')} 
-               className={`flex-1 md:flex-none px-8 py-3 rounded-xl font-bold uppercase text-sm transition-all ${activeTab === 'ANALYTICS' ? 'bg-white text-[#22c55e] shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+               className={`flex-1 md:flex-none px-6 py-3 rounded-xl font-bold uppercase text-sm transition-all ${activeTab === 'ANALYTICS' ? 'bg-white text-[#22c55e] shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
              >
                Analytics
              </button>
              <button 
-               onClick={() => setActiveTab('ENGINE')} 
-               className={`flex-1 md:flex-none px-8 py-3 rounded-xl font-bold uppercase text-sm transition-all ${activeTab === 'ENGINE' ? 'bg-white text-[#22c55e] shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+               onClick={() => setActiveTab('PRICING')} 
+               className={`flex-1 md:flex-none px-6 py-3 rounded-xl font-bold uppercase text-sm transition-all ${activeTab === 'PRICING' ? 'bg-white text-[#22c55e] shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
              >
-               Master Engine
+               Pricing
+             </button>
+             <button 
+               onClick={() => setActiveTab('ENGINE')} 
+               className={`flex-1 md:flex-none px-6 py-3 rounded-xl font-bold uppercase text-sm transition-all ${activeTab === 'ENGINE' ? 'bg-white text-[#22c55e] shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+             >
+               Engine
              </button>
           </div>
         </div>
 
+        {/* Global Save Status Banner */}
+        {saveStatus && (
+          <div className={`border p-4 rounded-xl mb-8 font-bold text-center animate-in slide-in-from-top-2 flex items-center justify-center gap-2 ${saveStatus.includes('Failed') ? 'bg-red-50 text-red-600 border-red-200' : 'bg-green-50 text-[#22c55e] border-green-200'}`}>
+            <span>{saveStatus.includes('Failed') ? '⚠' : '✅'}</span> {saveStatus}
+          </div>
+        )}
+
+        {/* TAB 1: ANALYTICS */}
         {activeTab === 'ANALYTICS' && (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
@@ -372,6 +323,60 @@ export default function AdminPortal() {
           </div>
         )}
 
+        {/* TAB 2: PRICING */}
+        {activeTab === 'PRICING' && (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 bg-white p-6 md:p-8 rounded-3xl border border-gray-100 shadow-sm">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
+                  <span className="bg-gray-100 p-2 rounded-xl text-xl">💳</span> Global Pricing
+                </h2>
+                <p className="font-medium text-gray-500 mt-2 text-sm">Control the base prices and discount incentives displayed on the Upgrade page.</p>
+              </div>
+              <div className="flex gap-4 mt-6 md:mt-0 w-full md:w-auto">
+                 <button onClick={handleResetSettings} className="flex-1 md:flex-none border border-gray-200 bg-white text-gray-600 px-6 py-3 font-bold rounded-xl hover:bg-gray-50 transition-colors text-sm">Reset Defaults</button>
+                 <button onClick={handleSaveChanges} className="flex-1 md:flex-none bg-[#22c55e] text-white px-8 py-3 font-bold rounded-xl shadow-md hover:bg-[#1ea950] transition-colors text-sm">Save Global Sync</button>
+              </div>
+            </div>
+
+            <section className="bg-white border border-blue-100 rounded-3xl p-6 md:p-10 shadow-sm mb-8">
+              <div className="mb-6 border-b border-gray-100 pb-4">
+                  <h2 className="text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">Subscription Tiers</h2>
+                  <p className="text-sm font-medium text-gray-500">Adjust the raw price and percentage discount for each duration.</p>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {pricingPlans.map((plan, i) => {
+                  const finalPrice = Math.ceil(plan.price - (plan.price * (plan.discount/100)));
+                  return (
+                    <div key={plan.id} className="border border-gray-200 p-4 rounded-2xl bg-gray-50/50 hover:border-blue-300 transition-colors">
+                      <div className="font-black text-gray-900 mb-4 pb-2 border-b border-gray-200">{plan.label} VIP</div>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Base Price (₹)</label>
+                          <input type="number" className="w-full border border-gray-200 rounded-lg p-2 font-bold focus:border-[#22c55e] outline-none" value={plan.price} onChange={(e) => updatePricing(i, 'price', e.target.value)} />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Discount (%)</label>
+                          <div className="relative">
+                            <input type="number" className="w-full border border-gray-200 rounded-lg p-2 font-bold focus:border-[#22c55e] outline-none pr-8" value={plan.discount} onChange={(e) => updatePricing(i, 'discount', e.target.value)} />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">%</span>
+                          </div>
+                        </div>
+                        <div className="pt-3 flex justify-between items-center text-sm border-t border-gray-100">
+                          <span className="font-bold text-gray-500">Final Price:</span>
+                          <span className="font-black text-[#22c55e] text-lg">₹{finalPrice.toLocaleString()}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+          </div>
+        )}
+
+        {/* TAB 3: ENGINE */}
         {activeTab === 'ENGINE' && (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
             
@@ -380,61 +385,16 @@ export default function AdminPortal() {
                 <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
                   <span className="bg-gray-100 p-2 rounded-xl text-xl">⚙️</span> Engine Configuration
                 </h2>
-                <p className="font-medium text-gray-500 mt-2 text-sm">Update specific BOQ variables and Platform Pricing globally.</p>
+                <p className="font-medium text-gray-500 mt-2 text-sm">Sync specific BOQ formulas and material constants directly to the cloud.</p>
               </div>
               <div className="flex gap-4 mt-6 md:mt-0 w-full md:w-auto">
-                 <button onClick={handleResetEngine} className="flex-1 md:flex-none border border-gray-200 bg-white text-gray-600 px-6 py-3 font-bold rounded-xl hover:bg-gray-50 transition-colors text-sm">Reset Defaults</button>
-                 <button onClick={handleSaveEngine} className="flex-1 md:flex-none bg-[#22c55e] text-white px-8 py-3 font-bold rounded-xl shadow-md hover:bg-[#1ea950] transition-colors text-sm">Save All Settings</button>
+                 <button onClick={handleResetSettings} className="flex-1 md:flex-none border border-gray-200 bg-white text-gray-600 px-6 py-3 font-bold rounded-xl hover:bg-gray-50 transition-colors text-sm">Reset Defaults</button>
+                 <button onClick={handleSaveChanges} className="flex-1 md:flex-none bg-[#22c55e] text-white px-8 py-3 font-bold rounded-xl shadow-md hover:bg-[#1ea950] transition-colors text-sm">Save Global Sync</button>
               </div>
             </div>
 
-            {saveStatus && (
-              <div className="bg-green-50 text-[#22c55e] border border-green-200 p-4 rounded-xl mb-8 font-bold text-center animate-in slide-in-from-top-2 flex items-center justify-center gap-2">
-                <span>✅</span> {saveStatus}
-              </div>
-            )}
-
             <div className="space-y-8">
               
-              {/* NEW SECTION 0: PRICING PLANS */}
-              <section className="bg-white border border-blue-100 rounded-3xl p-6 md:p-10 shadow-sm">
-                <div className="mb-6 border-b border-gray-100 pb-4">
-                   <h2 className="text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">
-                    <span className="bg-blue-100 text-blue-500 w-8 h-8 rounded-full flex items-center justify-center text-sm">0</span> 
-                    Global Subscription Pricing
-                  </h2>
-                   <p className="text-sm font-medium text-gray-500 ml-10">Control the base prices and discount incentives displayed on the Upgrade page.</p>
-                </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 ml-0 md:ml-10">
-                  {pricingPlans.map((plan, i) => {
-                    const finalPrice = Math.ceil(plan.price - (plan.price * (plan.discount/100)));
-                    return (
-                      <div key={plan.id} className="border border-gray-200 p-4 rounded-2xl bg-gray-50/50 hover:border-blue-300 transition-colors">
-                        <div className="font-black text-gray-900 mb-4 pb-2 border-b border-gray-200">{plan.label} VIP</div>
-                        <div className="space-y-4">
-                          <div>
-                            <label className="text-[10px] font-bold text-gray-400 uppercase">Base Price (₹)</label>
-                            <input type="number" className="w-full border border-gray-200 rounded-lg p-2 font-bold focus:border-[#22c55e] outline-none" value={plan.price} onChange={(e) => updatePricing(i, 'price', e.target.value)} />
-                          </div>
-                          <div>
-                            <label className="text-[10px] font-bold text-gray-400 uppercase">Discount (%)</label>
-                            <div className="relative">
-                              <input type="number" className="w-full border border-gray-200 rounded-lg p-2 font-bold focus:border-[#22c55e] outline-none pr-8" value={plan.discount} onChange={(e) => updatePricing(i, 'discount', e.target.value)} />
-                              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">%</span>
-                            </div>
-                          </div>
-                          <div className="pt-3 flex justify-between items-center text-sm">
-                            <span className="font-bold text-gray-500">Final Price:</span>
-                            <span className="font-black text-[#22c55e] text-lg">₹{finalPrice.toLocaleString()}</span>
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </section>
-
               <section className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-sm">
                 <div className="mb-6 border-b border-gray-100 pb-4">
                    <h2 className="text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">
