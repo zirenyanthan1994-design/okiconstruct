@@ -7,21 +7,41 @@ import { onAuthStateChanged } from 'firebase/auth';
 import Navbar from '../components/Navbar';
 import { generateProjectBOQ } from '../lib/processBOQ';
 
+// 🟢 DEFINED GLOBALLY: Prevents fetch errors and crashes
+const unitLabels: Record<string, string> = { feet: 'ft', meters: 'm', mm: 'mm', cm: 'cm', inches: 'in' };
+const getLabel = (unit?: string) => unitLabels[unit || 'feet'] || 'ft';
+
+// 🟢 DYNAMIC UI CONVERTER: Ensures the live blue box summary shows accurate SqFt regardless of unit chosen
+const toFeetUI = (val: any, unitType: string = 'feet') => {
+  const n = Number(val) || 0;
+  if (unitType === 'meters') return n * 3.28084;
+  if (unitType === 'mm') return n * 0.00328084;
+  if (unitType === 'cm') return n * 0.0328084;
+  if (unitType === 'inches') return n / 12;
+  return n; 
+};
+
 export default function Estimator() {
   const [userData, setUserData] = useState<any>(null);
   
-  // 🟢 NEW: Tracks if we are editing an existing project
+  // Tracks if we are editing an existing project
   const [existingProjectId, setExistingProjectId] = useState<string | null>(null);
 
-  const [siteDetails, setSiteDetails] = useState({
-    roadFacing: 'East',
-    stairType: 'Internal',
-    bhkType: '2BHK' 
+  // Scope & Granular Unit States (Defaults to feet)
+  const [boqScope, setBoqScope] = useState<'full' | 'civil_only'>('full');
+  const [units, setUnits] = useState({
+    footing: 'feet',
+    columnHeight: 'feet',
+    columnDim: 'inches', 
+    plinthBeam: 'inches',
+    roofBeam: 'inches',
+    layout: 'feet',
+    openings: 'feet'
   });
 
+  const [siteDetails, setSiteDetails] = useState({ roadFacing: 'East', stairType: 'Internal', bhkType: '2BHK' });
   const [buildingType, setBuildingType] = useState<'residence' | 'apartment'>('residence');
   const [commercialGroundFloor, setCommercialGroundFloor] = useState(false);
-  
   const [flatsCount, setFlatsCount] = useState("1");
   const [apartmentFlats, setApartmentFlats] = useState<any[]>([{ id: 1, type: '2BHK' }]);
 
@@ -34,10 +54,7 @@ export default function Estimator() {
   const [currentStep, setCurrentStep] = useState(1); 
   const [activeFloor, setActiveFloor] = useState(0);
   const [totalFloorsCount, setTotalFloorsCount] = useState(1);
-  
   const [slabOverhang, setSlabOverhang] = useState("2"); 
-  const [copyColumnHeight, setCopyColumnHeight] = useState("10");
-
   const [hasStairs, setHasStairs] = useState(true);
   const [stairsDim, setStairsDim] = useState({ length: '', width: '' });
   const [errorMsg, setErrorMsg] = useState("");
@@ -46,16 +63,16 @@ export default function Estimator() {
   const [isSaved, setIsSaved] = useState(false);
   const router = useRouter();
 
+  // Advanced TMT States (Main, Extra, and Rings)
   const [structure, setStructure] = useState<any>({
     footing: { count: '', breadth: '', width: '', depth: '' },
-    column: { height: '10', breadth: '', width: '', tmtSize: '', tmtCount: '' },
-    plinthBeam: { depth: '', width: '', tmtSize: '', tmtCount: '' },
-    roofBeam: { depth: '', width: '', tmtSize: '', tmtCount: '' }
+    column: { height: '10', breadth: '', width: '', mainTmtSize: '', mainTmtCount: '', extraTmtSize: '', extraTmtCount: '', ringSize: '' },
+    plinthBeam: { depth: '', width: '', mainTmtSize: '', mainTmtCount: '', extraTmtSize: '', extraTmtCount: '', ringSize: '' },
+    roofBeam: { depth: '', width: '', mainTmtSize: '', mainTmtCount: '', extraTmtSize: '', extraTmtCount: '', ringSize: '' }
   });
 
   const [floorsData, setFloorsData] = useState<any[]>([]);
   const [openingsData, setOpeningsData] = useState<any[]>([]);
-
   const [rates, setRates] = useState<any>({
     tmt: { "8mm": '', "10mm": '', "12mm": '', "16mm": '', "20mm": '', "25mm": '' },
     cement: '', sand: '', gravel: '', boulder: '', bricks: '',
@@ -68,7 +85,9 @@ export default function Estimator() {
   const [laborRates, setLaborRates] = useState<any>({ mason: '', painter: '', tiler: '' });
   const [boqReport, setBoqReport] = useState<any>(null);
 
-  // 🟢 NEW: Session Loader Engine
+  // Admin Bypass so you can test features without a premium account!
+  const isPremium = userData?.tier === 'premium' || userData?.planStatus === 'premium' || auth?.currentUser?.email?.toLowerCase() === 'okiconstruct2026@gmail.com';
+
   useEffect(() => {
     const loadSession = async () => {
       const params = new URLSearchParams(window.location.search);
@@ -86,7 +105,12 @@ export default function Estimator() {
                setTotalFloorsCount(data.totalFloors);
                setSiteDetails(data.siteDetails);
                
-               // Restore all raw inputs
+               // Restore Scope and Units safely
+               if (data.inputs.units) {
+                 setUnits(prev => ({ ...prev, ...data.inputs.units }));
+               }
+               setBoqScope(data.inputs.boqScope || 'full');
+               
                setStructure(data.inputs.structure);
                setFloorsData(data.inputs.floorsData);
                setOpeningsData(data.inputs.openingsData);
@@ -102,14 +126,12 @@ export default function Estimator() {
                setStairsDim(data.inputs.stairsDim);
                setSlabOverhang(data.inputs.slabOverhang || "2");
 
-               setCurrentStep(1); // Drop them at Step 1 so they can review their data
+               setCurrentStep(1); 
             } else {
                alert("This BOQ was saved with an older version of the software and cannot be dynamically edited.");
             }
           }
-        } catch (error) {
-          console.error("Failed to load BOQ session:", error);
-        }
+        } catch (error) { console.error("Failed to load BOQ session:", error); }
       }
     };
     loadSession();
@@ -120,7 +142,7 @@ export default function Estimator() {
       if (currentUser) {
         const docRef = doc(db, "users", currentUser.uid);
         const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) setUserData(docSnap.data());
+        if (docSnap.exists()) setUserData({ email: currentUser.email, ...docSnap.data() });
       }
     });
     return () => unsubscribe();
@@ -130,9 +152,7 @@ export default function Estimator() {
     setFlatsCount(val);
     const count = parseInt(val) || 0;
     const newFlats = [];
-    for(let i=0; i<count; i++) {
-        newFlats.push(apartmentFlats[i] || { id: i+1, type: '2BHK' });
-    }
+    for(let i=0; i<count; i++) newFlats.push(apartmentFlats[i] || { id: i+1, type: '2BHK' });
     setApartmentFlats(newFlats);
   };
 
@@ -147,12 +167,7 @@ export default function Estimator() {
   };
 
   const handleSetupComplete = () => {
-    if (!projectName.trim()) {
-        setErrorMsg("Please provide a Project Name to begin.");
-        return;
-    }
-    
-    // 🟢 NEW: Only generate empty floors if we are NOT editing an existing project, or if they changed the floor count.
+    if (!projectName.trim()) return setErrorMsg("Please provide a Project Name to begin.");
     if (!existingProjectId || floorsData.length !== totalFloorsCount) {
         const initialFloors = [];
         const initialOpenings = [];
@@ -162,66 +177,31 @@ export default function Estimator() {
             const isComm = (i === 0 && buildingType === 'apartment' && commercialGroundFloor);
 
             initialOpenings.push({
-                mainDoor: { count: '1', height: '', width: '' },
-                roomDoors: [{ id: Date.now(), count: '', height: '', width: '' }],
-                bathroomDoors: [{ id: Date.now() + 1, count: '', height: '', width: '' }],
-                shutters: [{ id: Date.now() + 4, count: '', height: '', width: '' }],
-                windows: [{ id: Date.now() + 2, count: '', height: '', width: '' }],
-                ventilations: [{ id: Date.now() + 3, count: '', height: '', width: '' }]
+                mainDoor: { count: '1', height: '', width: '' }, roomDoors: [{ id: Date.now(), count: '', height: '', width: '' }],
+                bathroomDoors: [{ id: Date.now() + 1, count: '', height: '', width: '' }], shutters: [{ id: Date.now() + 4, count: '', height: '', width: '' }],
+                windows: [{ id: Date.now() + 2, count: '', height: '', width: '' }], ventilations: [{ id: Date.now() + 3, count: '', height: '', width: '' }]
             });
 
             if (buildingType === 'residence') {
                 const bhkCount = parseInt(siteDetails.bhkType.charAt(0)) || 1;
                 initialFloors.push({
-                    floorName, isCommercial: false,
-                    hall: { length: '', breadth: '' }, kitchenDining: { length: '', breadth: '' }, foyer: { length: '', breadth: '' },
+                    floorName, isCommercial: false, hall: { length: '', breadth: '' }, kitchenDining: { length: '', breadth: '' }, foyer: { length: '', breadth: '' },
                     bedrooms: Array.from({length: bhkCount}).map((_, j) => ({ id: Date.now() + j, length: '', breadth: '' })),
                     bathrooms: Array.from({length: bhkCount === 1 ? 1 : bhkCount}).map((_, j) => ({ id: Date.now() + 100 + j, length: '', breadth: '', isAttached: false, layoutType: 'outside', attachedTo: '' }))
                 });
             } else {
-                if (isComm) {
-                    initialFloors.push({
-                        floorName, isCommercial: true,
-                        shops: [{ id: Date.now(), length: '', breadth: '' }], 
-                        washrooms: { count: '', length: '', breadth: '' }
-                    });
-                } else {
-                    initialFloors.push({
-                        floorName, isCommercial: false,
-                        flats: apartmentFlats.map(f => generateEmptyFlat(f.id, f.type))
-                    });
-                }
+                if (isComm) initialFloors.push({ floorName, isCommercial: true, shops: [{ id: Date.now(), length: '', breadth: '' }], washrooms: { count: '', length: '', breadth: '' }});
+                else initialFloors.push({ floorName, isCommercial: false, flats: apartmentFlats.map(f => generateEmptyFlat(f.id, f.type)) });
             }
         }
         setFloorsData(initialFloors);
         setOpeningsData(initialOpenings);
     }
-    
-    setErrorMsg("");
-    setCurrentStep(2); 
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setErrorMsg(""); setCurrentStep(2); window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const updateFloorData = (roomType: string, index: number | null, field: string, value: string | boolean) => {
-    setFloorsData(prev => {
-      const d = JSON.parse(JSON.stringify(prev));
-      if (!d[activeFloor]) return prev;
-      if (index === null) d[activeFloor][roomType][field] = value;
-      else d[activeFloor][roomType][index][field] = value;
-      return d;
-    });
-  };
-
-  const updateFlatData = (fIdx: number, roomType: string, roomIndex: number | null, field: string, value: string | boolean) => {
-    setFloorsData(prev => {
-      const d = JSON.parse(JSON.stringify(prev));
-      const flat = d[activeFloor].flats[fIdx];
-      if (roomIndex === null) flat[roomType][field] = value;
-      else flat[roomType][roomIndex][field] = value;
-      return d;
-    });
-  };
-
+  const updateFloorData = (roomType: string, index: number | null, field: string, value: string | boolean) => setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); if (!d[activeFloor]) return prev; if (index === null) d[activeFloor][roomType][field] = value; else d[activeFloor][roomType][index][field] = value; return d; });
+  const updateFlatData = (fIdx: number, roomType: string, roomIndex: number | null, field: string, value: string | boolean) => setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); const flat = d[activeFloor].flats[fIdx]; if (roomIndex === null) flat[roomType][field] = value; else flat[roomType][roomIndex][field] = value; return d; });
   const addBedroom = () => setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); d[activeFloor].bedrooms.push({ id: Date.now(), length: '', breadth: '' }); return d; });
   const removeBedroom = (index: number) => setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); d[activeFloor].bedrooms.splice(index, 1); return d; });
   const addBathroom = () => setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); d[activeFloor].bathrooms.push({ id: Date.now() + 1, length: '', breadth: '', isAttached: false, layoutType: 'outside', attachedTo: '' }); return d; });
@@ -233,18 +213,11 @@ export default function Estimator() {
   const addFlatBathroom = (fIdx: number) => setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); d[activeFloor].flats[fIdx].bathrooms.push({ id: Date.now() + 1, length: '', breadth: '', isAttached: false, layoutType: 'outside', attachedTo: '' }); return d; });
   const removeFlatBathroom = (fIdx: number, bIdx: number) => setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); d[activeFloor].flats[fIdx].bathrooms.splice(bIdx, 1); return d; });
 
-  const updateOpening = (key: string, index: number | null, field: string, value: string) => {
-    setOpeningsData(prev => {
-      const d = JSON.parse(JSON.stringify(prev));
-      if (index === null) d[activeFloor][key][field] = value;
-      else if(d[activeFloor][key] && d[activeFloor][key][index]) d[activeFloor][key][index][field] = value;
-      return d;
-    });
-  };
-
+  const updateOpening = (key: string, index: number | null, field: string, value: string) => setOpeningsData(prev => { const d = JSON.parse(JSON.stringify(prev)); if (index === null) d[activeFloor][key][field] = value; else if(d[activeFloor][key] && d[activeFloor][key][index]) d[activeFloor][key][index][field] = value; return d; });
   const addOpening = (key: string) => setOpeningsData(prev => { const d = JSON.parse(JSON.stringify(prev)); d[activeFloor][key].push({ id: Date.now(), count: '', height: '', width: '' }); return d; });
-  const getRoomArea = (room: any) => (Number(room?.length) || 0) * (Number(room?.breadth) || 0);
 
+  // 🟢 Live UI Calculators (Converted to Feet to show accurate SQFT)
+  const getRoomArea = (room: any) => toFeetUI(room?.length || room?.width, units?.layout) * toFeetUI(room?.breadth || room?.width, units?.layout);
   const calculateFloorArea = (index: number) => {
     const f = floorsData[index];
     if (!f) return 0;
@@ -260,41 +233,33 @@ export default function Estimator() {
           (flat.bathrooms || []).forEach((b: any) => { if (!(b.isAttached && b.layoutType === 'inside')) area += getRoomArea(b); });
         });
       }
-      if (apartmentData.corridor.hasCorridor) area += (Number(apartmentData.corridor.length) * Number(apartmentData.corridor.width));
-      if (hasStairs) area += (Number(stairsDim.length) * Number(stairsDim.width));
-      if (apartmentData.lift.hasLift) area += (Number(apartmentData.lift.count) * Number(apartmentData.lift.length) * Number(apartmentData.lift.width));
+      if (apartmentData.corridor.hasCorridor) area += getRoomArea(apartmentData.corridor);
+      if (hasStairs) area += getRoomArea(stairsDim);
+      if (apartmentData.lift.hasLift) area += (Number(apartmentData.lift.count) * getRoomArea(apartmentData.lift));
     } else {
       area += getRoomArea(f.hall) + getRoomArea(f.kitchenDining) + getRoomArea(f.foyer);
       (f.bedrooms || []).forEach((b: any) => area += getRoomArea(b));
       (f.bathrooms || []).forEach((b: any) => { if (!(b.isAttached && b.layoutType === 'inside')) area += getRoomArea(b); });
-      if (hasStairs) area += (Number(stairsDim.length) * Number(stairsDim.width));
+      if (hasStairs) area += getRoomArea(stairsDim);
     }
     return area;
   };
 
   const calculateAdjustedSlabArea = (index: number) => {
     const grossArea = calculateFloorArea(index);
-    let baseSlab = Math.pow(Math.sqrt(grossArea) + (Number(slabOverhang) || 0), 2);
+    let baseSlab = Math.pow(Math.sqrt(grossArea) + toFeetUI(slabOverhang, units?.layout), 2);
     if (buildingType === 'apartment' && index < totalFloorsCount - 1) {
       let voidArea = 0;
-      if (hasStairs) voidArea += (Number(stairsDim.length) * Number(stairsDim.width));
-      if (apartmentData.lift.hasLift) voidArea += (Number(apartmentData.lift.count) * Number(apartmentData.lift.length) * Number(apartmentData.lift.width));
+      if (hasStairs) voidArea += getRoomArea(stairsDim);
+      if (apartmentData.lift.hasLift) voidArea += (Number(apartmentData.lift.count) * getRoomArea(apartmentData.lift));
       baseSlab -= voidArea;
     }
     return Math.max(0, baseSlab);
   };
 
   const handleTransitionToUpperFlats = () => {
-      setFloorsData(prev => {
-          const d = JSON.parse(JSON.stringify(prev));
-          for (let i = 1; i < totalFloorsCount; i++) {
-              d[i].flats = apartmentFlats.map(f => generateEmptyFlat(f.id, f.type));
-          }
-          return d;
-      });
-      setActiveFloor(1);
-      setCurrentStep(3);
-      window.scrollTo(0,0);
+      setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); for (let i = 1; i < totalFloorsCount; i++) d[i].flats = apartmentFlats.map(f => generateEmptyFlat(f.id, f.type)); return d; });
+      setActiveFloor(1); setCurrentStep(3); window.scrollTo(0,0);
   };
 
   const handleCopyChoice = (choice: 'yes' | 'no') => {
@@ -309,30 +274,24 @@ export default function Estimator() {
       });
       setOpeningsData(prev => {
         const d = JSON.parse(JSON.stringify(prev));
-        for(let i = activeFloor + 1; i < totalFloorsCount; i++) {
-           d[i] = JSON.parse(JSON.stringify(d[activeFloor]));
-        }
+        for(let i = activeFloor + 1; i < totalFloorsCount; i++) d[i] = JSON.parse(JSON.stringify(d[activeFloor]));
         return d;
       });
       setActiveFloor(totalFloorsCount - 1); 
       setCurrentStep(5); 
     } else {
-      setActiveFloor(activeFloor + 1);
-      setCurrentStep(3);
+      setActiveFloor(activeFloor + 1); setCurrentStep(3);
     }
     window.scrollTo(0,0);
   };
 
   const handleGenerateBOQ = () => {
     setErrorMsg("");
-    if (!Number(laborRates.mason) || !Number(laborRates.painter)) {
-       return setErrorMsg("Please enter primary Labor Rates (Mason/Painter).");
-    }
+    if (!Number(laborRates.mason)) return setErrorMsg("Please enter Mason Labor Rate.");
+    if (boqScope !== 'civil_only' && !Number(laborRates.painter)) return setErrorMsg("Please enter Painter Labor Rate.");
 
     const finalSnaps = floorsData.map((f, i) => {
         const layoutWithAreas = JSON.parse(JSON.stringify(f));
-        layoutWithAreas.calculatedGrossArea = calculateFloorArea(i);
-        layoutWithAreas.calculatedSlabArea = calculateAdjustedSlabArea(i);
 
         if (buildingType === 'apartment') {
             let flattenedBedrooms: any[] = [];
@@ -397,8 +356,7 @@ export default function Estimator() {
       const customData = userData?.customFormulas || (savedAdmin ? JSON.parse(savedAdmin) : null);
       if (customData) {
         masterSettings = {
-          ratios: { ...masterSettings.ratios, ...(customData.ratios || {}) },
-          tmtSpecs: { ...masterSettings.tmtSpecs, ...(customData.tmtSpecs || {}) },
+          ratios: { ...masterSettings.ratios, ...(customData.ratios || {}) }, tmtSpecs: { ...masterSettings.tmtSpecs, ...(customData.tmtSpecs || {}) },
           dimensions: { ...masterSettings.dimensions, ...(customData.dimensions || {}) },
           percentages: { 
             ...masterSettings.percentages, ...(customData.percentages || {}),
@@ -411,13 +369,12 @@ export default function Estimator() {
     } catch (err) { console.error("Settings Parsing Error", err); }
 
     try {
-      const report = generateProjectBOQ(finalSnaps, totalFloorsCount, slabOverhang, rates, masterSettings);
+      const report = generateProjectBOQ(finalSnaps, totalFloorsCount, slabOverhang, rates, masterSettings, units, boqScope);
       setBoqReport(report);
       setCurrentStep(9); 
     } catch (err) { console.error("Calculation Error:", err); }
   };
   
-  // 🟢 NEW: Handles Updates vs New Saves smoothly
   const saveEstimateToDatabase = async () => {
     if (!auth.currentUser) return alert("Please log in from the Dashboard to save your estimates!");
     if (!boqReport) return alert("Error: BOQ Report is empty. Please generate the report first!");
@@ -425,18 +382,14 @@ export default function Estimator() {
     
     try {
       const payload: any = {
-        userId: auth.currentUser.uid, 
-        uid: auth.currentUser.uid, 
+        userId: auth.currentUser.uid, uid: auth.currentUser.uid, 
         projectName: (projectName || "OkiConstruct Build").trim(), 
-        totalFloors: totalFloorsCount,
-        siteDetails: siteDetails,
-        buildingType: buildingType,
+        totalFloors: totalFloorsCount, siteDetails: siteDetails, buildingType: buildingType,
         grandTotal: boqReport.grandTotal || 0,
         boqData: JSON.parse(JSON.stringify(boqReport)), 
         
-        // 🟢 SAVE RAW INPUTS: So we can edit this project again later
         inputs: {
-          structure, floorsData, openingsData, rates, tiles, paintData, laborRates,
+          units, boqScope, structure, floorsData, openingsData, rates, tiles, paintData, laborRates,
           apartmentData, apartmentFlats, flatsCount, commercialGroundFloor, hasStairs, stairsDim, slabOverhang
         }
       };
@@ -457,10 +410,7 @@ export default function Estimator() {
     finally { setIsSaving(false); }
   };
 
-  const updateTile = (roomKey: string, field: 'size' | 'type' | 'price', value: string) => {
-    setTiles(prev => ({ ...prev, [roomKey]: { ...(prev[roomKey] || { size: '', type: '', price: '' }), [field]: value } }));
-  };
-
+  const updateTile = (roomKey: string, field: 'size' | 'type' | 'price', value: string) => setTiles(prev => ({ ...prev, [roomKey]: { ...(prev[roomKey] || { size: '', type: '', price: '' }), [field]: value } }));
   const validateAndProceed = (targetStep: number) => { setErrorMsg(""); setCurrentStep(targetStep); window.scrollTo({ top: 0, behavior: 'smooth' }); };
 
   const inputStyle = "w-full border border-gray-200 bg-gray-50 rounded-xl p-4 text-gray-900 font-medium focus:bg-white focus:ring-2 focus:ring-[#22c55e]/30 focus:border-[#22c55e] transition-all outline-none";
@@ -481,10 +431,10 @@ export default function Estimator() {
               <span className={currentStep >= 3 ? "text-[#22c55e]" : ""}>Layout</span>
               <span className={currentStep >= 4 ? "text-[#22c55e]" : ""}>Openings</span>
               <span className={currentStep >= 5 ? "text-[#22c55e]" : ""}>Pricing</span>
-              <span className={currentStep >= 8 ? "text-[#22c55e]" : ""}>Review</span>
+              {boqScope === 'full' && <span className={currentStep >= 8 ? "text-[#22c55e]" : ""}>Review</span>}
             </div>
             <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
-              <div className="bg-[#22c55e] h-full transition-all duration-700 ease-out rounded-full" style={{ width: `${((currentStep) / 8) * 100}%` }}></div>
+              <div className="bg-[#22c55e] h-full transition-all duration-700 ease-out rounded-full" style={{ width: `${((currentStep) / (boqScope === 'civil_only' ? 5 : 8)) * 100}%` }}></div>
             </div>
           </div>
         )}
@@ -495,11 +445,7 @@ export default function Estimator() {
           {currentStep === 1 && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-2xl mx-auto">
               <div className="text-center mb-8">
-                {existingProjectId ? (
-                   <h1 className="text-3xl font-bold text-blue-600 mb-2">Editing Project Setup</h1>
-                ) : (
-                   <h1 className="text-3xl font-bold text-gray-900 mb-2">Project Setup & Context</h1>
-                )}
+                <h1 className="text-3xl font-bold text-gray-900 mb-2">{existingProjectId ? 'Editing Project Setup' : 'Project Setup & Context'}</h1>
                 <p className="text-gray-500 font-medium">Define your project requirements and building scale.</p>
               </div>
 
@@ -510,6 +456,19 @@ export default function Estimator() {
                 </div>
 
                 <div className="p-6 border border-gray-100 bg-gray-50/50 rounded-2xl">
+                  
+                  {/* BOQ Scope Control */}
+                  <div className="mb-8">
+                    <label className={labelStyle}>BOQ Scope</label>
+                    <div className="relative">
+                      <select className={selectStyle} value={boqScope} onChange={e => setBoqScope(e.target.value as any)}>
+                        <option value="full">Full Turnkey Project (Civil + Finishes)</option>
+                        <option value="civil_only">Civil Structure Only</option>
+                      </select>
+                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-sm">▼</div>
+                    </div>
+                  </div>
+
                   <label className="text-sm font-bold text-gray-900 mb-4 block">Building Typology</label>
                   <div className="flex gap-4 mb-6">
                     <button type="button" onClick={() => setBuildingType('residence')} className={`flex-1 p-4 rounded-xl font-bold transition-all border ${buildingType === 'residence' ? 'bg-white border-[#22c55e] text-[#22c55e] shadow-sm ring-2 ring-[#22c55e]/20' : 'bg-transparent border-gray-200 text-gray-500 hover:bg-white'}`}>🏠 Private Residence</button>
@@ -543,7 +502,6 @@ export default function Estimator() {
                   {buildingType === 'apartment' && (
                     <div className="mt-6 p-5 bg-blue-50 border border-blue-100 rounded-2xl">
                       <label className="text-sm font-bold text-blue-900 mb-4 block">Floor Planning Configuration</label>
-                      
                       <div className="mb-6 bg-white p-4 rounded-xl border border-blue-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
                         <span className="font-bold text-gray-700">Is the Ground Floor reserved for Commercial Shops?</span>
                         <div className="flex gap-2">
@@ -551,27 +509,18 @@ export default function Estimator() {
                             <button type="button" onClick={() => setCommercialGroundFloor(false)} className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${!commercialGroundFloor ? 'bg-[#22c55e] text-white shadow-md' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>No</button>
                         </div>
                       </div>
-
                       {(!commercialGroundFloor) && (
                         <div className="bg-white p-5 rounded-xl border border-blue-100">
                             <label className={labelStyle}>Number of Flats Per Typical Floor</label>
                             <input type="number" min="1" className={`${inputStyle} mb-6`} value={flatsCount} onChange={(e) => handleFlatsCountChange(e.target.value)} />
-                            
                             {apartmentFlats.length > 0 && (
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-gray-100">
                                   {apartmentFlats.map((flat, i) => (
                                     <div key={i} className="flex items-center gap-4 bg-gray-50 p-3 rounded-xl border border-gray-100">
                                         <span className="font-bold text-gray-600 w-16">Flat {i+1}</span>
                                         <div className="relative flex-1">
-                                          <select className={selectStyle} value={flat.type} onChange={(e) => {
-                                              const newFlats = [...apartmentFlats];
-                                              newFlats[i].type = e.target.value;
-                                              setApartmentFlats(newFlats);
-                                          }}>
-                                              <option value="1BHK">1 BHK</option>
-                                              <option value="2BHK">2 BHK</option>
-                                              <option value="3BHK">3 BHK</option>
-                                              <option value="4BHK">4 BHK</option>
+                                          <select className={selectStyle} value={flat.type} onChange={(e) => { const newFlats = [...apartmentFlats]; newFlats[i].type = e.target.value; setApartmentFlats(newFlats); }}>
+                                              <option value="1BHK">1 BHK</option><option value="2BHK">2 BHK</option><option value="3BHK">3 BHK</option><option value="4BHK">4 BHK</option>
                                           </select>
                                           <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-sm">▼</div>
                                         </div>
@@ -613,10 +562,11 @@ export default function Estimator() {
               </div>
 
               <div className="border border-gray-200 p-6 rounded-3xl bg-white shadow-sm">
-                <h2 className="font-bold text-lg text-gray-900 mb-6 flex items-center gap-2">
-                  <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">1</span> 
-                  Footing (Ground Floor Only)
-                </h2>
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="font-bold text-lg text-gray-900 flex items-center gap-2">
+                    <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">1</span> Footing
+                  </h2>
+                </div>
                 <div className="space-y-5">
                   <div>
                     <label className={labelStyle}>Number of footings</label>
@@ -624,122 +574,206 @@ export default function Estimator() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className={labelStyle}>Breadth (Feet)</label>
+                      <div className="flex justify-between items-end mb-2">
+                         <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Breadth</label>
+                         {isPremium ? (
+                           <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.footing} onChange={(e) => setUnits({...units, footing: e.target.value})}>
+                             <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                           </select>
+                         ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                      </div>
                       <input type="number" inputMode="decimal" min="0" placeholder="Breadth" className={inputStyle} value={structure.footing.breadth} onChange={(e) => setStructure({ ...structure, footing: { ...structure.footing, breadth: e.target.value } })} />
                     </div>
                     <div>
-                      <label className={labelStyle}>Width (Feet)</label>
+                      <div className="flex justify-between items-end mb-2">
+                         <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
+                         {isPremium ? (
+                           <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.footing} onChange={(e) => setUnits({...units, footing: e.target.value})}>
+                             <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                           </select>
+                         ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                      </div>
                       <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.footing.width} onChange={(e) => setStructure({ ...structure, footing: { ...structure.footing, width: e.target.value } })} />
                     </div>
                   </div>
                   <div>
-                    <label className={labelStyle}>Depth (Feet)</label>
-                    <input type="number" inputMode="decimal" min="0" placeholder="e.g., 4" className={inputStyle} value={structure.footing.depth} onChange={(e) => setStructure({ ...structure, footing: { ...structure.footing, depth: e.target.value } })} />
+                    <div className="flex justify-between items-end mb-2">
+                       <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Depth</label>
+                       {isPremium ? (
+                         <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.footing} onChange={(e) => setUnits({...units, footing: e.target.value})}>
+                           <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                         </select>
+                       ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                    </div>
+                    <input type="number" inputMode="decimal" min="0" placeholder="Depth" className={inputStyle} value={structure.footing.depth} onChange={(e) => setStructure({ ...structure, footing: { ...structure.footing, depth: e.target.value } })} />
                   </div>
                 </div>
               </div>
 
               <div className="border border-gray-200 p-6 rounded-3xl bg-white shadow-sm">
-                <h2 className="font-bold text-lg text-gray-900 mb-6 flex items-center gap-2">
-                  <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">2</span> Columns
-                </h2>
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="font-bold text-lg text-gray-900 flex items-center gap-2">
+                    <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">2</span> Columns
+                  </h2>
+                </div>
                 <div className="space-y-5">
                   <div>
-                    <label className={labelStyle}>Height (Feet)</label>
-                    <input type="number" inputMode="decimal" min="0" placeholder="e.g., 10" className={inputStyle} value={structure.column.height} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, height: e.target.value } })} />
+                    <div className="flex justify-between items-end mb-2">
+                      <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Height</label>
+                      {isPremium ? (
+                        <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.columnHeight} onChange={(e) => setUnits({...units, columnHeight: e.target.value})}>
+                          <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                        </select>
+                      ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                    </div>
+                    <input type="number" inputMode="decimal" min="0" placeholder="Height" className={inputStyle} value={structure.column.height} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, height: e.target.value } })} />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className={labelStyle}>Breadth (Inches)</label>
-                      <input type="number" inputMode="decimal" min="0" placeholder="e.g., 12" className={inputStyle} value={structure.column.breadth} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, breadth: e.target.value } })} />
+                      <div className="flex justify-between items-end mb-2">
+                         <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Breadth</label>
+                         {isPremium ? (
+                           <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.columnDim} onChange={(e) => setUnits({...units, columnDim: e.target.value})}>
+                             <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                           </select>
+                         ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(IN)</span>}
+                      </div>
+                      <input type="number" inputMode="decimal" min="0" placeholder="Breadth" className={inputStyle} value={structure.column.breadth} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, breadth: e.target.value } })} />
                     </div>
                     <div>
-                      <label className={labelStyle}>Width (Inches)</label>
-                      <input type="number" inputMode="decimal" min="0" placeholder="e.g., 12" className={inputStyle} value={structure.column.width} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, width: e.target.value } })} />
+                      <div className="flex justify-between items-end mb-2">
+                         <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
+                         {isPremium ? (
+                           <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.columnDim} onChange={(e) => setUnits({...units, columnDim: e.target.value})}>
+                             <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                           </select>
+                         ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(IN)</span>}
+                      </div>
+                      <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.column.width} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, width: e.target.value } })} />
                     </div>
                   </div>
                   
-                  {/* Custom Reinforcement for Column */}
-                  <div className="mt-4 p-4 border border-blue-100 bg-blue-50/50 rounded-2xl">
-                    <span className="text-xs font-bold text-blue-600 uppercase tracking-wider block mb-3">Custom Reinforcement (Optional)</span>
-                    <p className="text-xs text-gray-500 mb-3 font-medium">Leave blank to auto-calculate based on total floors.</p>
-                    <div className="grid grid-cols-2 gap-4">
-                       <div>
-                          <label className={labelStyle}>TMT Size</label>
-                          <div className="relative">
-                            <select className={selectStyle} value={structure.column.tmtSize || ''} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, tmtSize: e.target.value } })}>
-                              <option value="">Auto</option>
-                              <option value="12mm">12mm</option>
-                              <option value="16mm">16mm</option>
-                              <option value="20mm">20mm</option>
-                              <option value="25mm">25mm</option>
-                            </select>
-                            <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-sm">▼</div>
+                  {isPremium && (
+                    <div className="mt-4 p-4 border border-blue-100 bg-blue-50/50 rounded-2xl">
+                      <span className="text-xs font-bold text-blue-600 uppercase tracking-wider block mb-3">Custom TMT Reinforcement <span className="text-blue-500 ml-1">★</span></span>
+                      <p className="text-xs text-gray-500 mb-4 font-medium">Leave blank to let the engine auto-calculate based on floor count.</p>
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                          <div>
+                            <label className="text-[10px] font-bold text-gray-500 uppercase">Main Bar</label>
+                            <select className={`${selectStyle} py-2 text-sm px-2`} value={structure.column.mainTmtSize || ''} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, mainTmtSize: e.target.value } })}><option value="">Auto</option><option value="12mm">12mm</option><option value="16mm">16mm</option><option value="20mm">20mm</option><option value="25mm">25mm</option></select>
                           </div>
-                       </div>
-                       <div>
-                          <label className={labelStyle}>Bar Count</label>
-                          <input type="number" inputMode="numeric" min="0" placeholder="e.g., 6" className={inputStyle} value={structure.column.tmtCount || ''} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, tmtCount: e.target.value } })} />
-                       </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-gray-500 uppercase">Main Qty</label>
+                            <input type="number" placeholder="Count" className={`${inputStyle} py-2 text-sm px-2`} value={structure.column.mainTmtCount || ''} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, mainTmtCount: e.target.value } })} />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-gray-500 uppercase">Extra Bar</label>
+                            <select className={`${selectStyle} py-2 text-sm px-2`} value={structure.column.extraTmtSize || ''} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, extraTmtSize: e.target.value } })}><option value="">None</option><option value="12mm">12mm</option><option value="16mm">16mm</option><option value="20mm">20mm</option><option value="25mm">25mm</option></select>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-gray-500 uppercase">Extra Qty</label>
+                            <input type="number" placeholder="Count" className={`${inputStyle} py-2 text-sm px-2`} value={structure.column.extraTmtCount || ''} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, extraTmtCount: e.target.value } })} />
+                          </div>
+                          <div className="col-span-2 md:col-span-1">
+                            <label className="text-[10px] font-bold text-gray-500 uppercase">Rings</label>
+                            <select className={`${selectStyle} py-2 text-sm px-2`} value={structure.column.ringSize || ''} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, ringSize: e.target.value } })}><option value="">Auto</option><option value="8mm">8mm</option><option value="10mm">10mm</option><option value="12mm">12mm</option></select>
+                          </div>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
 
               <div className="border border-gray-200 p-6 rounded-3xl bg-white shadow-sm">
                 <h2 className="font-bold text-lg text-gray-900 mb-6 flex items-center gap-2">
-                  <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">3</span> Beams (Inches)
+                  <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">3</span> Beams
                 </h2>
                 <div className="space-y-6">
                   
                   {/* Plinth Beam */}
                   <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                    <span className="font-bold text-gray-700 block mb-3">Plinth Beam</span>
-                    <div className="grid grid-cols-2 gap-4 mb-4">
-                      <input type="number" inputMode="decimal" min="0" placeholder="Depth" className={inputStyle} value={structure.plinthBeam.depth} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, depth: e.target.value } })} />
-                      <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.plinthBeam.width} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, width: e.target.value } })} />
+                    <div className="flex justify-between items-center mb-3">
+                       <span className="font-bold text-gray-700 block">Plinth Beam</span>
                     </div>
-                    {/* Custom Reinforcement for Plinth */}
-                    <div className="p-3 border border-blue-100 bg-blue-50/50 rounded-xl">
-                      <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block mb-2">Override Plinth TMT</span>
-                      <div className="grid grid-cols-2 gap-3">
-                         <div className="relative">
-                            <select className={`${selectStyle} py-2 text-sm`} value={structure.plinthBeam.tmtSize || ''} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, tmtSize: e.target.value } })}>
-                              <option value="">Auto Size</option>
-                              <option value="12mm">12mm</option>
-                              <option value="16mm">16mm</option>
-                              <option value="20mm">20mm</option>
-                              <option value="25mm">25mm</option>
-                            </select>
-                         </div>
-                         <input type="number" inputMode="numeric" min="0" placeholder="Count (e.g., 6)" className={`${inputStyle} py-2 text-sm`} value={structure.plinthBeam.tmtCount || ''} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, tmtCount: e.target.value } })} />
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                      <div>
+                        <div className="flex justify-between items-end mb-2">
+                           <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Depth</label>
+                           {isPremium ? (
+                             <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.plinthBeam} onChange={(e) => setUnits({...units, plinthBeam: e.target.value})}>
+                               <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                             </select>
+                           ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(IN)</span>}
+                        </div>
+                        <input type="number" inputMode="decimal" min="0" placeholder="Depth" className={inputStyle} value={structure.plinthBeam.depth} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, depth: e.target.value } })} />
+                      </div>
+                      <div>
+                        <div className="flex justify-between items-end mb-2">
+                           <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
+                           {isPremium ? (
+                             <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.plinthBeam} onChange={(e) => setUnits({...units, plinthBeam: e.target.value})}>
+                               <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                             </select>
+                           ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(IN)</span>}
+                        </div>
+                        <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.plinthBeam.width} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, width: e.target.value } })} />
                       </div>
                     </div>
+                    {isPremium && (
+                      <div className="p-3 border border-blue-100 bg-blue-50/50 rounded-xl">
+                        <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block mb-2">Override Plinth TMT <span className="text-blue-500">★</span></span>
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                            <div><label className="text-[9px] font-bold text-gray-500 uppercase">Main Size</label><select className={`${selectStyle} py-2 text-sm px-2`} value={structure.plinthBeam.mainTmtSize || ''} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, mainTmtSize: e.target.value } })}><option value="">Auto</option><option value="12mm">12mm</option><option value="16mm">16mm</option><option value="20mm">20mm</option><option value="25mm">25mm</option></select></div>
+                            <div><label className="text-[9px] font-bold text-gray-500 uppercase">Main Qty</label><input type="number" placeholder="Count" className={`${inputStyle} py-2 text-sm px-2`} value={structure.plinthBeam.mainTmtCount || ''} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, mainTmtCount: e.target.value } })} /></div>
+                            <div><label className="text-[9px] font-bold text-gray-500 uppercase">Extra Size</label><select className={`${selectStyle} py-2 text-sm px-2`} value={structure.plinthBeam.extraTmtSize || ''} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, extraTmtSize: e.target.value } })}><option value="">None</option><option value="12mm">12mm</option><option value="16mm">16mm</option><option value="20mm">20mm</option><option value="25mm">25mm</option></select></div>
+                            <div><label className="text-[9px] font-bold text-gray-500 uppercase">Extra Qty</label><input type="number" placeholder="Count" className={`${inputStyle} py-2 text-sm px-2`} value={structure.plinthBeam.extraTmtCount || ''} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, extraTmtCount: e.target.value } })} /></div>
+                            <div className="col-span-2 md:col-span-1"><label className="text-[9px] font-bold text-gray-500 uppercase">Rings</label><select className={`${selectStyle} py-2 text-sm px-2`} value={structure.plinthBeam.ringSize || ''} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, ringSize: e.target.value } })}><option value="">Auto</option><option value="8mm">8mm</option><option value="10mm">10mm</option><option value="12mm">12mm</option></select></div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Roof Beam */}
                   <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                    <span className="font-bold text-gray-700 block mb-3">Roof Beam</span>
-                    <div className="grid grid-cols-2 gap-4 mb-4">
-                      <input type="number" inputMode="decimal" min="0" placeholder="Depth" className={inputStyle} value={structure.roofBeam.depth} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, depth: e.target.value } })} />
-                      <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.roofBeam.width} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, width: e.target.value } })} />
+                    <div className="flex justify-between items-center mb-3">
+                       <span className="font-bold text-gray-700 block">Roof Beam</span>
                     </div>
-                    {/* Custom Reinforcement for Roof */}
-                    <div className="p-3 border border-blue-100 bg-blue-50/50 rounded-xl">
-                      <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block mb-2">Override Roof Beam TMT</span>
-                      <div className="grid grid-cols-2 gap-3">
-                         <div className="relative">
-                            <select className={`${selectStyle} py-2 text-sm`} value={structure.roofBeam.tmtSize || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, tmtSize: e.target.value } })}>
-                              <option value="">Auto Size</option>
-                              <option value="12mm">12mm</option>
-                              <option value="16mm">16mm</option>
-                              <option value="20mm">20mm</option>
-                              <option value="25mm">25mm</option>
-                            </select>
-                         </div>
-                         <input type="number" inputMode="numeric" min="0" placeholder="Count (e.g., 6)" className={`${inputStyle} py-2 text-sm`} value={structure.roofBeam.tmtCount || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, tmtCount: e.target.value } })} />
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                      <div>
+                        <div className="flex justify-between items-end mb-2">
+                           <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Depth</label>
+                           {isPremium ? (
+                             <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.roofBeam} onChange={(e) => setUnits({...units, roofBeam: e.target.value})}>
+                               <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                             </select>
+                           ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(IN)</span>}
+                        </div>
+                        <input type="number" inputMode="decimal" min="0" placeholder="Depth" className={inputStyle} value={structure.roofBeam.depth} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, depth: e.target.value } })} />
+                      </div>
+                      <div>
+                        <div className="flex justify-between items-end mb-2">
+                           <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
+                           {isPremium ? (
+                             <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.roofBeam} onChange={(e) => setUnits({...units, roofBeam: e.target.value})}>
+                               <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                             </select>
+                           ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(IN)</span>}
+                        </div>
+                        <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.roofBeam.width} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, width: e.target.value } })} />
                       </div>
                     </div>
+                    {isPremium && (
+                      <div className="p-3 border border-blue-100 bg-blue-50/50 rounded-xl">
+                        <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block mb-2">Override Roof TMT <span className="text-blue-500">★</span></span>
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                            <div><label className="text-[9px] font-bold text-gray-500 uppercase">Main Size</label><select className={`${selectStyle} py-2 text-sm px-2`} value={structure.roofBeam.mainTmtSize || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, mainTmtSize: e.target.value } })}><option value="">Auto</option><option value="12mm">12mm</option><option value="16mm">16mm</option><option value="20mm">20mm</option><option value="25mm">25mm</option></select></div>
+                            <div><label className="text-[9px] font-bold text-gray-500 uppercase">Main Qty</label><input type="number" placeholder="Count" className={`${inputStyle} py-2 text-sm px-2`} value={structure.roofBeam.mainTmtCount || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, mainTmtCount: e.target.value } })} /></div>
+                            <div><label className="text-[9px] font-bold text-gray-500 uppercase">Extra Size</label><select className={`${selectStyle} py-2 text-sm px-2`} value={structure.roofBeam.extraTmtSize || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, extraTmtSize: e.target.value } })}><option value="">None</option><option value="12mm">12mm</option><option value="16mm">16mm</option><option value="20mm">20mm</option><option value="25mm">25mm</option></select></div>
+                            <div><label className="text-[9px] font-bold text-gray-500 uppercase">Extra Qty</label><input type="number" placeholder="Count" className={`${inputStyle} py-2 text-sm px-2`} value={structure.roofBeam.extraTmtCount || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, extraTmtCount: e.target.value } })} /></div>
+                            <div className="col-span-2 md:col-span-1"><label className="text-[9px] font-bold text-gray-500 uppercase">Rings</label><select className={`${selectStyle} py-2 text-sm px-2`} value={structure.roofBeam.ringSize || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, ringSize: e.target.value } })}><option value="">Auto</option><option value="8mm">8mm</option><option value="10mm">10mm</option><option value="12mm">12mm</option></select></div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                 </div>
@@ -773,7 +807,11 @@ export default function Estimator() {
                 </div>
                 <div className="flex items-center gap-3 bg-white p-2 rounded-xl border border-gray-200 shadow-sm w-fit">
                   <input type="number" inputMode="decimal" className="w-20 text-center font-bold text-lg outline-none text-[#22c55e]" value={slabOverhang} onChange={(e) => setSlabOverhang(e.target.value)} />
-                  <span className="font-bold text-gray-400 pr-3">Feet</span>
+                  {isPremium ? (
+                    <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                      <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                    </select>
+                  ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest pl-2 pr-3">FT</span>}
                 </div>
               </div>
               
@@ -785,27 +823,67 @@ export default function Estimator() {
                       
                       <div className="space-y-4 mb-8">
                         <div className="flex justify-between items-center">
-                          <h4 className="font-bold text-orange-800">Shops / Chambers (ft)</h4>
+                          <h4 className="font-bold text-orange-800">Shops / Chambers</h4>
                           <button onClick={addShop} className="text-sm font-semibold text-[#22c55e] bg-green-50 px-4 py-2 rounded-lg hover:bg-green-100 transition-colors">+ Add Chamber</button>
                         </div>
                         {floorsData[activeFloor]?.shops?.map((shop: any, sIdx: number) => (
                           <div key={shop.id || sIdx} className="flex flex-col md:flex-row gap-4 items-center p-4 border border-orange-100 bg-white rounded-xl shadow-sm">
                             <span className="text-sm font-bold text-gray-500 w-full md:w-24">Shop {sIdx + 1}</span>
                             <div className="flex gap-4 w-full items-center">
-                              <input type="number" inputMode="decimal" min="0" placeholder="Length" className={inputStyle} value={shop.length} onChange={(e) => updateFloorData('shops', sIdx, 'length', e.target.value)} />
-                              <span className="font-bold text-gray-300">×</span>
-                              <input type="number" inputMode="decimal" min="0" placeholder="Breadth" className={inputStyle} value={shop.breadth} onChange={(e) => updateFloorData('shops', sIdx, 'breadth', e.target.value)} />
+                              <div className="w-full">
+                                <div className="flex justify-between items-end mb-1">
+                                   <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Length</label>
+                                   {isPremium ? (
+                                     <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                       <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                     </select>
+                                   ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                                </div>
+                                <input type="number" inputMode="decimal" min="0" placeholder={`Length`} className={inputStyle} value={shop.length} onChange={(e) => updateFloorData('shops', sIdx, 'length', e.target.value)} />
+                              </div>
+                              <span className="font-bold text-gray-300 mt-4">×</span>
+                              <div className="w-full">
+                                <div className="flex justify-between items-end mb-1">
+                                   <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Breadth</label>
+                                   {isPremium ? (
+                                     <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                       <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                     </select>
+                                   ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                                </div>
+                                <input type="number" inputMode="decimal" min="0" placeholder={`Breadth`} className={inputStyle} value={shop.breadth} onChange={(e) => updateFloorData('shops', sIdx, 'breadth', e.target.value)} />
+                              </div>
                             </div>
-                            <button onClick={() => removeShop(sIdx)} className="text-red-400 hover:text-red-600 bg-red-50 p-3 rounded-lg md:ml-auto">🗑️</button>
+                            <button onClick={() => removeShop(sIdx)} className="text-red-400 hover:text-red-600 bg-red-50 p-3 rounded-lg md:ml-auto mt-4 md:mt-0">🗑️</button>
                           </div>
                         ))}
                       </div>
 
                       <h4 className="font-bold text-orange-800 mb-3">Common Washrooms</h4>
-                      <div className="bg-white p-4 rounded-xl border border-orange-100 grid grid-cols-3 gap-4">
+                      <div className="bg-white p-4 rounded-xl border border-orange-100 grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div><label className={labelStyle}>Count</label><input type="number" className={inputStyle} value={floorsData[activeFloor].washrooms.count} onChange={(e) => updateFloorData('washrooms', null, 'count', e.target.value)} /></div>
-                        <div><label className={labelStyle}>Length (ft)</label><input type="number" className={inputStyle} value={floorsData[activeFloor].washrooms.length} onChange={(e) => updateFloorData('washrooms', null, 'length', e.target.value)} /></div>
-                        <div><label className={labelStyle}>Width (ft)</label><input type="number" className={inputStyle} value={floorsData[activeFloor].washrooms.breadth} onChange={(e) => updateFloorData('washrooms', null, 'breadth', e.target.value)} /></div>
+                        <div>
+                          <div className="flex justify-between items-end mb-2">
+                             <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Length</label>
+                             {isPremium ? (
+                               <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                 <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                               </select>
+                             ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                          </div>
+                          <input type="number" className={inputStyle} value={floorsData[activeFloor].washrooms.length} onChange={(e) => updateFloorData('washrooms', null, 'length', e.target.value)} />
+                        </div>
+                        <div>
+                          <div className="flex justify-between items-end mb-2">
+                             <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Breadth</label>
+                             {isPremium ? (
+                               <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                 <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                               </select>
+                             ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                          </div>
+                          <input type="number" className={inputStyle} value={floorsData[activeFloor].washrooms.breadth} onChange={(e) => updateFloorData('washrooms', null, 'breadth', e.target.value)} />
+                        </div>
                       </div>
                     </div>
                   ) : (
@@ -816,7 +894,14 @@ export default function Estimator() {
                             
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                               <div className="p-5 border border-gray-100 bg-white rounded-2xl shadow-sm">
-                                  <label className={labelStyle}>Hall/Living Room (ft)</label>
+                                  <div className="flex justify-between items-end mb-2">
+                                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Hall/Living Room</label>
+                                     {isPremium ? (
+                                       <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                         <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                       </select>
+                                     ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                                  </div>
                                   <div className="flex gap-4 items-center mt-2">
                                     <input type="number" placeholder="Length" className={inputStyle} value={flat.hall.length} onChange={e => updateFlatData(fIdx, 'hall', null, 'length', e.target.value)} />
                                     <span className="font-bold text-gray-300">×</span>
@@ -824,7 +909,14 @@ export default function Estimator() {
                                   </div>
                               </div>
                               <div className="p-5 border border-gray-100 bg-white rounded-2xl shadow-sm">
-                                  <label className={labelStyle}>Kitchen (ft)</label>
+                                  <div className="flex justify-between items-end mb-2">
+                                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Kitchen</label>
+                                     {isPremium ? (
+                                       <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                         <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                       </select>
+                                     ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                                  </div>
                                   <div className="flex gap-4 items-center mt-2">
                                     <input type="number" placeholder="Length" className={inputStyle} value={flat.kitchen.length} onChange={e => updateFlatData(fIdx, 'kitchen', null, 'length', e.target.value)} />
                                     <span className="font-bold text-gray-300">×</span>
@@ -835,35 +927,76 @@ export default function Estimator() {
 
                             <div className="space-y-4 mb-6">
                               <div className="flex justify-between items-center">
-                                <h3 className="font-bold text-gray-900">Bedrooms (ft)</h3>
+                                <h3 className="font-bold text-gray-900">Bedrooms</h3>
                                 <button onClick={() => addFlatBedroom(fIdx)} className="text-sm font-semibold text-[#22c55e] bg-green-50 px-3 py-1.5 rounded-lg hover:bg-green-100 transition-colors">+ Add Room</button>
                               </div>
                               {flat.bedrooms.map((bed: any, bIdx: number) => (
                                   <div key={bed.id} className="flex flex-col md:flex-row gap-4 items-center p-4 border border-gray-100 bg-white rounded-xl">
                                     <span className="text-sm font-bold text-gray-500 w-full md:w-20">Bed {bIdx + 1}</span>
                                     <div className="flex gap-4 w-full">
-                                        <input type="number" placeholder="Length" className={inputStyle} value={bed.length} onChange={e => updateFlatData(fIdx, 'bedrooms', bIdx, 'length', e.target.value)} />
-                                        <input type="number" placeholder="Breadth" className={inputStyle} value={bed.breadth} onChange={e => updateFlatData(fIdx, 'bedrooms', bIdx, 'breadth', e.target.value)} />
+                                        <div className="w-full">
+                                          <div className="flex justify-between items-end mb-1">
+                                             <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Length</label>
+                                             {isPremium ? (
+                                               <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                                 <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                               </select>
+                                             ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                                          </div>
+                                          <input type="number" placeholder="Length" className={inputStyle} value={bed.length} onChange={e => updateFlatData(fIdx, 'bedrooms', bIdx, 'length', e.target.value)} />
+                                        </div>
+                                        <div className="w-full">
+                                          <div className="flex justify-between items-end mb-1">
+                                             <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Breadth</label>
+                                             {isPremium ? (
+                                               <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                                 <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                               </select>
+                                             ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                                          </div>
+                                          <input type="number" placeholder="Breadth" className={inputStyle} value={bed.breadth} onChange={e => updateFlatData(fIdx, 'bedrooms', bIdx, 'breadth', e.target.value)} />
+                                        </div>
                                     </div>
-                                    <button onClick={() => removeFlatBedroom(fIdx, bIdx)} className="text-red-400 hover:text-red-600 bg-red-50 p-3 rounded-lg md:ml-auto">🗑️</button>
+                                    <button onClick={() => removeFlatBedroom(fIdx, bIdx)} className="text-red-400 hover:text-red-600 bg-red-50 p-3 rounded-lg md:ml-auto mt-4 md:mt-0">🗑️</button>
                                   </div>
                               ))}
                             </div>
 
                             <div className="space-y-4">
                               <div className="flex justify-between items-center">
-                                <h3 className="font-bold text-gray-900">Bathrooms (ft)</h3>
+                                <h3 className="font-bold text-gray-900">Bathrooms</h3>
                                 <button onClick={() => addFlatBathroom(fIdx)} className="text-sm font-semibold text-[#22c55e] bg-green-50 px-3 py-1.5 rounded-lg hover:bg-green-100 transition-colors">+ Add Bath</button>
                               </div>
                               {flat.bathrooms.map((bath: any, bIdx: number) => (
                                   <div key={bath.id} className="p-4 border border-gray-100 bg-white rounded-xl space-y-4">
                                     <div className="flex flex-col md:flex-row gap-4 items-center">
                                         <span className="text-sm font-bold text-gray-500 w-full md:w-20">Bath {bIdx + 1}</span>
-                                        <div className="flex gap-4 w-full">
-                                          <input type="number" placeholder="Length" className={inputStyle} value={bath.length} onChange={e => updateFlatData(fIdx, 'bathrooms', bIdx, 'length', e.target.value)} />
-                                          <input type="number" placeholder="Breadth" className={inputStyle} value={bath.breadth} onChange={e => updateFlatData(fIdx, 'bathrooms', bIdx, 'breadth', e.target.value)} />
+                                        <div className="flex gap-4 w-full items-center">
+                                          <div className="w-full">
+                                            <div className="flex justify-between items-end mb-1">
+                                               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Length</label>
+                                               {isPremium ? (
+                                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                                 </select>
+                                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                                            </div>
+                                            <input type="number" placeholder="Length" className={inputStyle} value={bath.length} onChange={e => updateFlatData(fIdx, 'bathrooms', bIdx, 'length', e.target.value)} />
+                                          </div>
+                                          <span className="font-bold text-gray-300 mt-4">×</span>
+                                          <div className="w-full">
+                                            <div className="flex justify-between items-end mb-1">
+                                               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Breadth</label>
+                                               {isPremium ? (
+                                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                                 </select>
+                                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                                            </div>
+                                            <input type="number" placeholder="Breadth" className={inputStyle} value={bath.breadth} onChange={e => updateFlatData(fIdx, 'bathrooms', bIdx, 'breadth', e.target.value)} />
+                                          </div>
                                         </div>
-                                        <button onClick={() => removeFlatBathroom(fIdx, bIdx)} className="text-red-400 hover:text-red-600 bg-red-50 p-3 rounded-lg md:ml-auto">🗑️</button>
+                                        <button onClick={() => removeFlatBathroom(fIdx, bIdx)} className="text-red-400 hover:text-red-600 bg-red-50 p-3 rounded-lg md:ml-auto mt-4 md:mt-0">🗑️</button>
                                     </div>
                                     
                                     <div className="flex gap-4 md:pl-28">
@@ -917,9 +1050,29 @@ export default function Estimator() {
                       <div className="mb-4 bg-white p-4 rounded-xl border border-blue-100">
                         <label className={labelStyle}>Staircase Area (Deducted from Slab Void)</label>
                         <div className="flex gap-4 items-center">
-                          <input type="number" placeholder="Length (ft)" className={inputStyle} value={stairsDim.length} onChange={(e) => setStairsDim({ ...stairsDim, length: e.target.value })} />
-                          <span className="font-bold text-gray-400">×</span>
-                          <input type="number" placeholder="Width (ft)" className={inputStyle} value={stairsDim.width} onChange={(e) => setStairsDim({ ...stairsDim, width: e.target.value })} />
+                          <div className="w-full">
+                            <div className="flex justify-between items-end mb-1">
+                               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Length</label>
+                               {isPremium ? (
+                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                 </select>
+                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                            </div>
+                            <input type="number" placeholder="Length" className={inputStyle} value={stairsDim.length} onChange={(e) => setStairsDim({ ...stairsDim, length: e.target.value })} />
+                          </div>
+                          <span className="font-bold text-gray-400 mt-4">×</span>
+                          <div className="w-full">
+                            <div className="flex justify-between items-end mb-1">
+                               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
+                               {isPremium ? (
+                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                 </select>
+                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                            </div>
+                            <input type="number" placeholder="Width" className={inputStyle} value={stairsDim.width} onChange={(e) => setStairsDim({ ...stairsDim, width: e.target.value })} />
+                          </div>
                         </div>
                       </div>
                     )}
@@ -929,10 +1082,30 @@ export default function Estimator() {
                         <span className="font-bold text-gray-700">Include Elevator Shaft (Void)</span>
                       </label>
                       {apartmentData.lift.hasLift && (
-                        <div className="grid grid-cols-3 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                           <div><label className={labelStyle}>Count</label><input type="number" className={inputStyle} value={apartmentData.lift.count} onChange={(e) => setApartmentData({...apartmentData, lift: {...apartmentData.lift, count: e.target.value}})} /></div>
-                          <div><label className={labelStyle}>Length (ft)</label><input type="number" className={inputStyle} value={apartmentData.lift.length} onChange={(e) => setApartmentData({...apartmentData, lift: {...apartmentData.lift, length: e.target.value}})} /></div>
-                          <div><label className={labelStyle}>Width (ft)</label><input type="number" className={inputStyle} value={apartmentData.lift.width} onChange={(e) => setApartmentData({...apartmentData, lift: {...apartmentData.lift, width: e.target.value}})} /></div>
+                          <div>
+                            <div className="flex justify-between items-end mb-2">
+                               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Length</label>
+                               {isPremium ? (
+                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                 </select>
+                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                            </div>
+                            <input type="number" className={inputStyle} value={apartmentData.lift.length} onChange={(e) => setApartmentData({...apartmentData, lift: {...apartmentData.lift, length: e.target.value}})} />
+                          </div>
+                          <div>
+                            <div className="flex justify-between items-end mb-2">
+                               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
+                               {isPremium ? (
+                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                 </select>
+                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                            </div>
+                            <input type="number" className={inputStyle} value={apartmentData.lift.width} onChange={(e) => setApartmentData({...apartmentData, lift: {...apartmentData.lift, width: e.target.value}})} />
+                          </div>
                         </div>
                       )}
                     </div>
@@ -942,9 +1115,29 @@ export default function Estimator() {
                         <span className="font-bold text-gray-700">Include Common Corridor</span>
                       </label>
                       {apartmentData.corridor.hasCorridor && (
-                        <div className="grid grid-cols-2 gap-4">
-                          <div><label className={labelStyle}>Total Length (ft)</label><input type="number" className={inputStyle} value={apartmentData.corridor.length} onChange={(e) => setApartmentData({...apartmentData, corridor: {...apartmentData.corridor, length: e.target.value}})} /></div>
-                          <div><label className={labelStyle}>Width (ft)</label><input type="number" className={inputStyle} value={apartmentData.corridor.width} onChange={(e) => setApartmentData({...apartmentData, corridor: {...apartmentData.corridor, width: e.target.value}})} /></div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <div className="flex justify-between items-end mb-2">
+                               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Total Length</label>
+                               {isPremium ? (
+                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                 </select>
+                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                            </div>
+                            <input type="number" className={inputStyle} value={apartmentData.corridor.length} onChange={(e) => setApartmentData({...apartmentData, corridor: {...apartmentData.corridor, length: e.target.value}})} />
+                          </div>
+                          <div>
+                            <div className="flex justify-between items-end mb-2">
+                               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
+                               {isPremium ? (
+                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                 </select>
+                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                            </div>
+                            <input type="number" className={inputStyle} value={apartmentData.corridor.width} onChange={(e) => setApartmentData({...apartmentData, corridor: {...apartmentData.corridor, width: e.target.value}})} />
+                          </div>
                         </div>
                       )}
                     </div>
@@ -954,11 +1147,31 @@ export default function Estimator() {
                 <div className="space-y-6">
                   {hasStairs && (
                       <div className="p-6 border border-blue-100 bg-blue-50/50 rounded-2xl mb-4">
-                        <label className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3 block">Stairs Area Provision (ft)</label>
+                        <label className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3 block">Stairs Area Provision</label>
                         <div className="flex gap-4 items-center">
-                          <input type="number" inputMode="decimal" min="0" placeholder="Length" className={inputStyle} value={stairsDim.length} onChange={(e) => setStairsDim({ ...stairsDim, length: e.target.value })} />
-                          <span className="font-bold text-gray-400">×</span>
-                          <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={stairsDim.width} onChange={(e) => setStairsDim({ ...stairsDim, width: e.target.value })} />
+                          <div className="w-full">
+                            <div className="flex justify-between items-end mb-1">
+                               <label className="text-[10px] font-bold text-blue-500 uppercase tracking-wider block mb-0">Length</label>
+                               {isPremium ? (
+                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                 </select>
+                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                            </div>
+                            <input type="number" inputMode="decimal" min="0" placeholder={`Length`} className={inputStyle} value={stairsDim.length} onChange={(e) => setStairsDim({ ...stairsDim, length: e.target.value })} />
+                          </div>
+                          <span className="font-bold text-gray-400 mt-4">×</span>
+                          <div className="w-full">
+                            <div className="flex justify-between items-end mb-1">
+                               <label className="text-[10px] font-bold text-blue-500 uppercase tracking-wider block mb-0">Width</label>
+                               {isPremium ? (
+                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                 </select>
+                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                            </div>
+                            <input type="number" inputMode="decimal" min="0" placeholder={`Width`} className={inputStyle} value={stairsDim.width} onChange={(e) => setStairsDim({ ...stairsDim, width: e.target.value })} />
+                          </div>
                         </div>
                       </div>
                   )}
@@ -970,7 +1183,14 @@ export default function Estimator() {
                       { key: 'foyer', label: 'Foyer' }
                     ].map((room) => (
                       <div key={room.key} className="p-5 border border-gray-100 bg-white rounded-2xl shadow-sm hover:shadow-md transition-shadow">
-                        <label className={labelStyle}>{room.label} (ft)</label>
+                        <div className="flex justify-between items-end mb-2">
+                           <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">{room.label}</label>
+                           {isPremium ? (
+                             <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                               <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                             </select>
+                           ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                        </div>
                         <div className="flex gap-4 items-center mt-2">
                           <input type="number" inputMode="decimal" min="0" placeholder="Length" className={inputStyle} value={floorsData[activeFloor]?.[room.key]?.length || ''} onChange={(e) => updateFloorData(room.key, null, 'length', e.target.value)} />
                           <span className="font-bold text-gray-300">×</span>
@@ -982,25 +1202,45 @@ export default function Estimator() {
 
                   <div className="space-y-4 pt-6 border-t border-gray-100">
                     <div className="flex justify-between items-center mb-4">
-                      <h3 className="font-bold text-lg text-gray-900">Bedrooms (FT)</h3>
+                      <h3 className="font-bold text-lg text-gray-900">Bedrooms</h3>
                       <button onClick={addBedroom} className="text-sm font-semibold text-[#22c55e] bg-green-50 px-4 py-2 rounded-lg hover:bg-green-100 transition-colors">+ Add Room</button>
                     </div>
                     {floorsData[activeFloor]?.bedrooms?.map((room: any, i: number) => (
                       <div key={room.id} className="flex flex-col md:flex-row gap-4 items-center p-4 border border-gray-100 bg-white rounded-xl shadow-sm">
                         <span className="text-sm font-bold text-gray-500 w-full md:w-24">Bedroom {i + 1}</span>
                         <div className="flex gap-4 w-full items-center">
-                          <input type="number" inputMode="decimal" min="0" placeholder="Length" className={inputStyle} value={room.length} onChange={(e) => updateFloorData('bedrooms', i, 'length', e.target.value)} />
-                          <span className="font-bold text-gray-300">×</span>
-                          <input type="number" inputMode="decimal" min="0" placeholder="Breadth" className={inputStyle} value={room.breadth} onChange={(e) => updateFloorData('bedrooms', i, 'breadth', e.target.value)} />
+                          <div className="w-full">
+                            <div className="flex justify-between items-end mb-1">
+                               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Length</label>
+                               {isPremium ? (
+                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                 </select>
+                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                            </div>
+                            <input type="number" inputMode="decimal" min="0" placeholder="Length" className={inputStyle} value={room.length} onChange={(e) => updateFloorData('bedrooms', i, 'length', e.target.value)} />
+                          </div>
+                          <span className="font-bold text-gray-300 mt-4">×</span>
+                          <div className="w-full">
+                            <div className="flex justify-between items-end mb-1">
+                               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Breadth</label>
+                               {isPremium ? (
+                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                 </select>
+                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                            </div>
+                            <input type="number" inputMode="decimal" min="0" placeholder="Breadth" className={inputStyle} value={room.breadth} onChange={(e) => updateFloorData('bedrooms', i, 'breadth', e.target.value)} />
+                          </div>
                         </div>
-                        <button onClick={() => removeBedroom(i)} className="text-red-400 hover:text-red-600 bg-red-50 p-3 rounded-lg md:ml-auto">🗑️</button>
+                        <button onClick={() => removeBedroom(i)} className="text-red-400 hover:text-red-600 bg-red-50 p-3 rounded-lg md:ml-auto mt-4 md:mt-0">🗑️</button>
                       </div>
                     ))}
                   </div>
 
                   <div className="space-y-4 pt-6 border-t border-gray-100">
                     <div className="flex justify-between items-center mb-4">
-                      <h3 className="font-bold text-lg text-gray-900">Bathrooms (FT)</h3>
+                      <h3 className="font-bold text-lg text-gray-900">Bathrooms</h3>
                       <button onClick={addBathroom} className="text-sm font-semibold text-[#22c55e] bg-green-50 px-4 py-2 rounded-lg hover:bg-green-100 transition-colors">+ Add Bath</button>
                     </div>
                     {floorsData[activeFloor]?.bathrooms?.map((room: any, i: number) => (
@@ -1008,11 +1248,31 @@ export default function Estimator() {
                         <div className="flex flex-col md:flex-row gap-4 items-center">
                           <span className="text-sm font-bold text-gray-500 w-full md:w-24">Bathroom {i + 1}</span>
                           <div className="flex gap-4 w-full items-center">
-                            <input type="number" inputMode="decimal" min="0" placeholder="Length" className={inputStyle} value={room.length} onChange={(e) => updateFloorData('bathrooms', i, 'length', e.target.value)} />
-                            <span className="font-bold text-gray-300">×</span>
-                            <input type="number" inputMode="decimal" min="0" placeholder="Breadth" className={inputStyle} value={room.breadth} onChange={(e) => updateFloorData('bathrooms', i, 'breadth', e.target.value)} />
+                            <div className="w-full">
+                              <div className="flex justify-between items-end mb-1">
+                                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Length</label>
+                                 {isPremium ? (
+                                   <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                     <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                   </select>
+                                 ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                              </div>
+                              <input type="number" inputMode="decimal" min="0" placeholder="Length" className={inputStyle} value={room.length} onChange={(e) => updateFloorData('bathrooms', i, 'length', e.target.value)} />
+                            </div>
+                            <span className="font-bold text-gray-300 mt-4">×</span>
+                            <div className="w-full">
+                              <div className="flex justify-between items-end mb-1">
+                                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Breadth</label>
+                                 {isPremium ? (
+                                   <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                     <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                   </select>
+                                 ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                              </div>
+                              <input type="number" inputMode="decimal" min="0" placeholder="Breadth" className={inputStyle} value={room.breadth} onChange={(e) => updateFloorData('bathrooms', i, 'breadth', e.target.value)} />
+                            </div>
                           </div>
-                          <button onClick={() => removeBathroom(i)} className="text-red-400 hover:text-red-600 bg-red-50 p-3 rounded-lg md:ml-auto">🗑️</button>
+                          <button onClick={() => removeBathroom(i)} className="text-red-400 hover:text-red-600 bg-red-50 p-3 rounded-lg md:ml-auto mt-4 md:mt-0">🗑️</button>
                         </div>
                         
                         <div className="flex gap-4 md:pl-28">
@@ -1061,16 +1321,16 @@ export default function Estimator() {
               <div className="bg-gray-900 text-white p-6 rounded-2xl flex flex-col md:flex-row gap-6 items-center shadow-lg mt-10">
                 <div className="flex flex-col items-center md:items-start flex-1">
                   <span className="font-semibold text-xs text-gray-400 uppercase tracking-widest mb-1">Layout Area</span>
-                  <p className="text-3xl font-bold text-[#22c55e]">{calculateFloorArea(activeFloor)} <span className="text-lg">SQ FT</span></p>
-                  <p className="text-xs text-gray-500 mt-1">Internal room total</p>
+                  <p className="text-3xl font-bold text-[#22c55e]">{Math.ceil(calculateFloorArea(activeFloor))} <span className="text-lg">SQ FT</span></p>
+                  <p className="text-xs text-gray-500 mt-1">Live calculation in feet</p>
                 </div>
                 <div className="hidden md:block w-px h-16 bg-gray-700"></div>
                 <div className="flex flex-col items-center md:items-start flex-1">
                   <span className="font-semibold text-xs text-gray-400 uppercase tracking-widest mb-1">Adjusted Slab Area</span>
                   <p className="text-3xl font-bold text-white">
-                    {calculateAdjustedSlabArea(activeFloor).toFixed(2)} <span className="text-lg">SQ FT</span>
+                    {Math.ceil(calculateAdjustedSlabArea(activeFloor))} <span className="text-lg">SQ FT</span>
                   </p>
-                  <p className="text-xs text-[#22c55e] mt-1">Includes custom {slabOverhang}ft overhang & deductions</p>
+                  <p className="text-xs text-[#22c55e] mt-1">Includes custom overhang & deductions</p>
                 </div>
               </div>
 
@@ -1096,6 +1356,11 @@ export default function Estimator() {
                     <span className="text-3xl">🚪</span> {floorsData[activeFloor]?.floorName} Openings
                   </h1>
                 </div>
+                {isPremium && (
+                  <select className="text-xs font-bold border border-gray-200 rounded-xl p-2 outline-none text-[#22c55e] bg-green-50 shadow-sm" value={units.openings} onChange={(e) => setUnits({...units, openings: e.target.value})}>
+                    <option value="feet">Openings in Feet (ft)</option><option value="meters">Openings in Meters (m)</option><option value="inches">Openings in Inches (in)</option><option value="cm">Openings in cm</option><option value="mm">Openings in mm</option>
+                  </select>
+                )}
               </div>
 
               {(() => {
@@ -1117,7 +1382,7 @@ export default function Estimator() {
                 return sections.map((section) => (
                   <div key={section.title} className="border border-gray-100 p-6 rounded-3xl bg-white shadow-sm">
                     <div className="flex justify-between items-center mb-6">
-                      <h2 className="font-bold text-lg text-gray-900">{section.title} (Feet)</h2>
+                      <h2 className="font-bold text-lg text-gray-900">{section.title}</h2>
                       {section.isArray && (
                         <button type="button" onClick={() => addOpening(section.key)} className="text-sm font-semibold text-[#22c55e] bg-green-50 px-3 py-1.5 rounded-lg hover:bg-green-100 transition-colors">+ Add Item</button>
                       )}
@@ -1130,11 +1395,17 @@ export default function Estimator() {
                             <input type="number" inputMode="decimal" min="0" className={inputStyle} value={item?.count || ''} onChange={(e) => updateOpening(section.key, section.isArray ? i : null, 'count', e.target.value)} />
                           </div>
                           <div>
-                            <label className={labelStyle}>Height (ft)</label>
+                            <div className="flex justify-between items-end mb-2">
+                               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Height</label>
+                               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">({getLabel(units?.openings)})</span>
+                            </div>
                             <input type="number" inputMode="decimal" min="0" className={inputStyle} value={item?.height || ''} onChange={(e) => updateOpening(section.key, section.isArray ? i : null, 'height', e.target.value)} />
                           </div>
                           <div>
-                            <label className={labelStyle}>Width (ft)</label>
+                            <div className="flex justify-between items-end mb-2">
+                               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
+                               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">({getLabel(units?.openings)})</span>
+                            </div>
                             <input type="number" inputMode="decimal" min="0" className={inputStyle} value={item?.width || ''} onChange={(e) => updateOpening(section.key, section.isArray ? i : null, 'width', e.target.value)} />
                           </div>
                         </div>
@@ -1199,7 +1470,7 @@ export default function Estimator() {
                   <div className="flex gap-4">
                     <button onClick={() => setCurrentStep(3)} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
                     <button onClick={() => { setErrorMsg(""); setCurrentStep(5); window.scrollTo(0,0); }} className="w-2/3 bg-gray-900 text-white font-bold text-lg p-4 rounded-xl hover:bg-[#22c55e] transition-colors shadow-md">
-                      Continue to Material Pricing ➔
+                      Continue to {boqScope === 'civil_only' ? 'Core Materials' : 'Pricing'} ➔
                     </button>
                   </div>
                 )}
@@ -1213,9 +1484,8 @@ export default function Estimator() {
               
               <div className="mb-8 border-b border-gray-100 pb-6 text-center">
                 <h1 className="text-3xl font-bold text-gray-900 flex items-center justify-center gap-3">
-                  <span className="text-3xl">🧱</span> Material Rates
+                  <span className="text-3xl">🧱</span> Core Material Rates
                 </h1>
-                <p className="text-gray-500 font-medium mt-2">Enter local market prices to calculate total costs.</p>
               </div>
 
               <div className="border border-gray-100 p-6 rounded-3xl bg-white shadow-sm">
@@ -1254,73 +1524,94 @@ export default function Estimator() {
                 </div>
               </div>
 
-              <div className="border border-gray-100 p-6 rounded-3xl bg-white shadow-sm">
-                <h2 className="font-bold text-lg text-gray-900 mb-6">3. Windows & Doors</h2>
-                <div className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className={labelStyle}>Window Material</label>
-                      <div className="relative">
-                        <select className={selectStyle} value={rates.windowMaterial} onChange={(e) => setRates({ ...rates, windowMaterial: e.target.value })}>
-                          <option value="Iron Fabrication">Iron Fabrication</option>
-                          <option value="Wood">Wood</option>
-                          <option value="uPVC">uPVC</option>
-                          <option value="Aluminum Profile">Aluminum Profile</option>
-                        </select>
-                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">▼</div>
+              {/* Only show Doors/Windows pricing if it's a Full Build */}
+              {boqScope === 'full' && (
+                <div className="border border-gray-100 p-6 rounded-3xl bg-white shadow-sm">
+                  <h2 className="font-bold text-lg text-gray-900 mb-6">3. Windows & Doors</h2>
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className={labelStyle}>Window Material</label>
+                        <div className="relative">
+                          <select className={selectStyle} value={rates.windowMaterial} onChange={(e) => setRates({ ...rates, windowMaterial: e.target.value })}>
+                            <option value="Iron Fabrication">Iron Fabrication</option>
+                            <option value="Wood">Wood</option>
+                            <option value="uPVC">uPVC</option>
+                            <option value="Aluminum Profile">Aluminum Profile</option>
+                          </select>
+                          <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">▼</div>
+                        </div>
+                      </div>
+                      <div>
+                        <label className={labelStyle}>Rate (Sq Ft)</label>
+                        <div className="relative">
+                          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">₹</span>
+                          <input type="number" inputMode="decimal" min="0" className={`${inputStyle} pl-8`} value={rates.windowRate} onChange={(e) => setRates({ ...rates, windowRate: e.target.value })} />
+                        </div>
                       </div>
                     </div>
-                    <div>
-                      <label className={labelStyle}>Rate (Sq Ft)</label>
-                      <div className="relative">
-                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">₹</span>
-                        <input type="number" inputMode="decimal" min="0" className={`${inputStyle} pl-8`} value={rates.windowRate} onChange={(e) => setRates({ ...rates, windowRate: e.target.value })} />
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 pt-4 border-t border-gray-100">
+                      <div>
+                        <label className={labelStyle}>Main Door Price</label>
+                        <div className="relative">
+                          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#22c55e] font-bold">₹</span>
+                          <input type="number" inputMode="decimal" min="0" className={`${inputStyle} pl-8 border-[#22c55e]/30`} value={rates.mainDoorPrice} onChange={(e) => setRates({ ...rates, mainDoorPrice: e.target.value })} />
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 pt-4 border-t border-gray-100">
-                    <div>
-                      <label className={labelStyle}>Main Door Price</label>
-                      <div className="relative">
-                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#22c55e] font-bold">₹</span>
-                        <input type="number" inputMode="decimal" min="0" className={`${inputStyle} pl-8 border-[#22c55e]/30`} value={rates.mainDoorPrice} onChange={(e) => setRates({ ...rates, mainDoorPrice: e.target.value })} />
+                      <div>
+                        <label className={labelStyle}>Room Door Price</label>
+                        <div className="relative">
+                          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">₹</span>
+                          <input type="number" inputMode="decimal" min="0" className={`${inputStyle} pl-8`} value={rates.roomDoorPrice} onChange={(e) => setRates({ ...rates, roomDoorPrice: e.target.value })} />
+                        </div>
                       </div>
-                    </div>
-                    <div>
-                      <label className={labelStyle}>Room Door Price</label>
-                      <div className="relative">
-                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">₹</span>
-                        <input type="number" inputMode="decimal" min="0" className={`${inputStyle} pl-8`} value={rates.roomDoorPrice} onChange={(e) => setRates({ ...rates, roomDoorPrice: e.target.value })} />
+                      <div>
+                        <label className={labelStyle}>Bathroom Door Price</label>
+                        <div className="relative">
+                          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">₹</span>
+                          <input type="number" inputMode="decimal" min="0" className={`${inputStyle} pl-8`} value={rates.bathroomDoorPrice} onChange={(e) => setRates({ ...rates, bathroomDoorPrice: e.target.value })} />
+                        </div>
                       </div>
-                    </div>
-                    <div>
-                      <label className={labelStyle}>Bathroom Door Price</label>
-                      <div className="relative">
-                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">₹</span>
-                        <input type="number" inputMode="decimal" min="0" className={`${inputStyle} pl-8`} value={rates.bathroomDoorPrice} onChange={(e) => setRates({ ...rates, bathroomDoorPrice: e.target.value })} />
-                      </div>
-                    </div>
-                    <div>
-                      <label className={labelStyle}>Door Frame Price</label>
-                      <div className="relative">
-                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">₹</span>
-                        <input type="number" inputMode="decimal" min="0" className={`${inputStyle} pl-8`} value={rates.doorFramePrice} onChange={(e) => setRates({ ...rates, doorFramePrice: e.target.value })} />
+                      <div>
+                        <label className={labelStyle}>Door Frame Price</label>
+                        <div className="relative">
+                          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">₹</span>
+                          <input type="number" inputMode="decimal" min="0" className={`${inputStyle} pl-8`} value={rates.doorFramePrice} onChange={(e) => setRates({ ...rates, doorFramePrice: e.target.value })} />
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
-              </div>
+              )}
+
+              {/* CIVIL ONLY: Show Mason Labor here and skip the rest */}
+              {boqScope === 'civil_only' && (
+                <div className="border border-gray-100 p-6 rounded-3xl bg-white shadow-sm mt-6">
+                  <h2 className="font-bold text-lg text-gray-900 mb-6">3. Labor Rate</h2>
+                  <div>
+                    <label className={labelStyle}>Mason Labor Rate (Per Sq.Ft of Slab)</label>
+                    <div className="relative">
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">₹</span>
+                      <input type="number" inputMode="decimal" min="0" className={`${inputStyle} pl-8 border-[#22c55e]/30`} value={laborRates.mason} onChange={(e) => setLaborRates({ ...laborRates, mason: e.target.value })} />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <ErrorDisplay />
               <div className="flex gap-4 pt-4">
                 <button onClick={() => { setErrorMsg(""); setCurrentStep(4); window.scrollTo(0,0); }} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back to Openings</button>
-                <button onClick={() => validateAndProceed(6)} className="w-2/3 bg-[#22c55e] text-white font-bold text-lg p-4 rounded-xl hover:bg-[#1ea950] transition-colors shadow-md">Continue to Finishes</button>
+                {boqScope === 'civil_only' ? (
+                   <button onClick={handleGenerateBOQ} className="w-2/3 bg-gray-900 text-white font-bold text-lg p-4 rounded-xl hover:bg-[#22c55e] transition-colors shadow-md">Generate Civil BOQ ✨</button>
+                ) : (
+                   <button onClick={() => validateAndProceed(6)} className="w-2/3 bg-[#22c55e] text-white font-bold text-lg p-4 rounded-xl hover:bg-[#1ea950] transition-colors shadow-md">Continue to Finishes</button>
+                )}
               </div>
             </div>
           )}
 
-          {/* --- STEP 6: TILES --- */}
-          {currentStep === 6 && (
+          {/* --- STEP 6: TILES (Hidden if Civil Only) --- */}
+          {currentStep === 6 && boqScope === 'full' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-4xl mx-auto">
               
               <div className="mb-8 border-b border-gray-100 pb-6 text-center">
@@ -1393,8 +1684,8 @@ export default function Estimator() {
             </div>
           )}
 
-          {/* --- STEP 7: PAINT --- */}
-          {currentStep === 7 && (
+          {/* --- STEP 7: PAINT (Hidden if Civil Only) --- */}
+          {currentStep === 7 && boqScope === 'full' && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-2xl mx-auto">
               
               <div className="mb-8 border-b border-gray-100 pb-6 text-center">
@@ -1442,8 +1733,8 @@ export default function Estimator() {
             </div>
           )}
 
-          {/* --- STEP 8: LABOR --- */}
-          {currentStep === 8 && (
+          {/* --- STEP 8: LABOR (Hidden if Civil Only) --- */}
+          {currentStep === 8 && boqScope === 'full' && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-4xl mx-auto">
               
               <div className="mb-8 border-b border-gray-100 pb-6 text-center">
@@ -1475,7 +1766,7 @@ export default function Estimator() {
               <div className="flex gap-4 pt-8">
                 <button onClick={() => { setErrorMsg(""); setCurrentStep(7); }} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
                 <button onClick={handleGenerateBOQ} className="w-2/3 bg-gray-900 text-white font-bold text-lg p-4 rounded-xl hover:bg-[#22c55e] transition-colors shadow-md flex items-center justify-center gap-2">
-                  Generate BOQ Report <span className="text-xl">✨</span>
+                  Generate Full BOQ Report <span className="text-xl">✨</span>
                 </button>
               </div>
             </div>
@@ -1499,7 +1790,8 @@ export default function Estimator() {
                 </div>
                 <div className="mt-4 md:mt-0 text-left md:text-right">
                   <h2 className="text-xl font-bold text-gray-900">{projectName}</h2>
-                  <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mt-1">Date: {new Date().toLocaleDateString()}</p>
+                  <p className="text-xs font-bold text-[#22c55e] uppercase tracking-widest mt-1 mb-1">{boqScope === 'civil_only' ? 'Civil Structure Only' : 'Full Turnkey Build'}</p>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mt-1">Date: {new Date().toLocaleDateString()}</p>
                 </div>
               </div>
 
@@ -1512,21 +1804,25 @@ export default function Estimator() {
                       <span className="text-xl font-black text-gray-900">{boqReport.metrics.m_builtUp || 0} <span className="text-sm">SQFT</span></span>
                     </div>
                     <div className="bg-green-50 p-4 rounded-2xl border border-green-100">
-                      <span className="text-xs font-bold uppercase text-green-700 block mb-1">Slab Area (incl. {slabOverhang}ft)</span>
+                      <span className="text-xs font-bold uppercase text-green-700 block mb-1">Slab Area (incl. {slabOverhang}{getLabel(units?.layout)})</span>
                       <span className="text-xl font-black text-[#15803d]">{Math.ceil(boqReport.metrics.m_slab || 0)} <span className="text-sm">SQFT</span></span>
                     </div>
                     <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
                       <span className="text-xs font-bold uppercase text-blue-700 block mb-1">Total Wall Area</span>
                       <span className="text-xl font-black text-blue-800">{Math.ceil(boqReport.metrics.m_wall || 0)} <span className="text-sm">SQFT</span></span>
                     </div>
-                    <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                      <span className="text-xs font-bold uppercase text-gray-500 block mb-1">Total Openings (Doors+Win)</span>
-                      <span className="text-xl font-black text-gray-900">{Math.ceil((boqReport.metrics.m_doors || 0) + (boqReport.metrics.m_windows || 0))} <span className="text-sm">SQFT</span></span>
-                    </div>
-                    <div className="bg-orange-50 md:col-span-2 p-4 rounded-2xl border border-orange-100">
-                      <span className="text-xs font-bold uppercase text-orange-700 block mb-1">Total Painting Area</span>
-                      <span className="text-xl font-black text-orange-800">{Math.ceil(boqReport.metrics.m_paint || 0)} <span className="text-sm">SQFT</span></span>
-                    </div>
+                    {boqScope === 'full' && (
+                      <>
+                        <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                          <span className="text-xs font-bold uppercase text-gray-500 block mb-1">Total Openings (Doors+Win)</span>
+                          <span className="text-xl font-black text-gray-900">{Math.ceil((boqReport.metrics.m_doors || 0) + (boqReport.metrics.m_windows || 0))} <span className="text-sm">SQFT</span></span>
+                        </div>
+                        <div className="bg-orange-50 md:col-span-2 p-4 rounded-2xl border border-orange-100">
+                          <span className="text-xs font-bold uppercase text-orange-700 block mb-1">Total Painting Area</span>
+                          <span className="text-xl font-black text-orange-800">{Math.ceil(boqReport.metrics.m_paint || 0)} <span className="text-sm">SQFT</span></span>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
               )}
@@ -1593,7 +1889,7 @@ export default function Estimator() {
               <div className="flex flex-col md:flex-row gap-4 print:hidden mt-10">
                 {!isSaved ? (
                   <>
-                    <button onClick={() => setCurrentStep(8)} className="flex-1 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Edit Data</button>
+                    <button onClick={() => setCurrentStep(boqScope === 'civil_only' ? 5 : 8)} className="flex-1 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Edit Data</button>
                     <button onClick={() => window.print()} className="flex-[2] bg-white border border-gray-200 text-gray-900 p-4 font-bold rounded-xl hover:bg-gray-50 transition-colors shadow-sm flex items-center justify-center gap-2">Print / PDF</button>
                     <button onClick={saveEstimateToDatabase} disabled={isSaving} className="flex-[2] bg-[#22c55e] text-white p-4 font-bold rounded-xl hover:bg-[#1ea950] transition-colors shadow-md disabled:opacity-50">
                       {isSaving ? "Syncing..." : "Save to Workspace ☁️"}

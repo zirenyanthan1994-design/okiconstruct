@@ -14,21 +14,22 @@ export const generateProjectBOQ = (
   slabOverhang: string | number, 
   rates: any, 
   masterSettings: AdminSettings,
-  globalUnit: string = 'feet',
+  units: Record<string, string> = {},
   boqScope: string = 'full'
 ) => {
   const safeRates = rates || {};
   
-  // 🟢 NEW: Mathematical Engine dynamically translates user-selected units into feet for core processing
-  const toFeet = (val: any) => {
+  // Mathematical Engine dynamically translates user-selected units into feet for core processing
+  const toFeet = (val: any, unitType: string = 'feet') => {
     const n = Number(val) || 0;
-    if (globalUnit === 'meters') return n * 3.28084;
-    if (globalUnit === 'mm') return n * 0.00328084;
-    if (globalUnit === 'inches') return n / 12;
-    return n;
+    if (unitType === 'meters') return n * 3.28084;
+    if (unitType === 'mm') return n * 0.00328084;
+    if (unitType === 'cm') return n * 0.0328084;
+    if (unitType === 'inches') return n / 12;
+    return n; 
   };
 
-  const overhang = toFeet(slabOverhang);
+  const overhang = toFeet(slabOverhang, units.layout);
 
   const getWastage = (material: string, defaultVal: number) => {
     return 1 + ((masterSettings?.percentages?.wastage?.[material] ?? defaultVal) / 100);
@@ -69,9 +70,8 @@ export const generateProjectBOQ = (
 
   let m_builtUp = 0, m_slab = 0, m_wall = 0, m_doors = 0, m_windows = 0, m_paint = 0;
 
-  // Uses unified toFeet to ensure layout math is flawlessly aligned with SqFt standards
-  const getRoomArea = (room: any) => toFeet(room?.length || room?.width) * toFeet(room?.breadth || room?.width);
-  const getRoomPerimeter = (room: any) => (toFeet(room?.length || room?.width) + toFeet(room?.breadth || room?.width)) * 2;
+  const getRoomArea = (room: any) => toFeet(room?.length || room?.width, units.layout) * toFeet(room?.breadth || room?.width, units.layout);
+  const getRoomPerimeter = (room: any) => (toFeet(room?.length || room?.width, units.layout) + toFeet(room?.breadth || room?.width, units.layout)) * 2;
 
   const floorReports = finalSnaps.map((snap: any, idx: number) => {
     const currentLayout = snap?.layout || {};
@@ -84,7 +84,7 @@ export const generateProjectBOQ = (
     const currentStairsDim = snap?.stairsDim || { length: 0, width: 0 };
     const buildingType = snap?.buildingType || 'residence';
 
-    // 🟢 NEW: Advanced Premium TMT Parsing Algorithm
+    // Advanced Premium TMT Parsing Algorithm
     const parseTmt = (structPath: any, baseProfile: any) => {
       const mainSize = structPath?.mainTmtSize || baseProfile.main.s;
       const mainCount = Number(structPath?.mainTmtCount) || baseProfile.main.c;
@@ -197,9 +197,7 @@ export const generateProjectBOQ = (
     if (buildingType === 'apartment' && idx < totalFloorsCount - 1) {
         let voidArea = 0;
         if (currentHasStairs) voidArea += getRoomArea(currentStairsDim);
-        if (snap.apartmentData?.lift?.hasLift) {
-             voidArea += getRoomArea(snap.apartmentData.lift) * (Number(snap.apartmentData.lift.count) || 1);
-        }
+        if (snap.apartmentData?.lift?.hasLift) voidArea += getRoomArea(snap.apartmentData.lift) * (Number(snap.apartmentData.lift.count) || 1);
         adjustedSlabArea = Math.max(0, adjustedSlabArea - voidArea);
     }
     
@@ -209,9 +207,9 @@ export const generateProjectBOQ = (
     const colCount = Number(currentStructure?.footing?.count) || Math.ceil(layoutArea / 100);
     
     // Normalized to feet via dynamic structural parser
-    const colHt = toFeet(currentStructure?.column?.height || (globalUnit==='feet'?10:0));
-    const colB = toFeet(currentStructure?.column?.breadth || (globalUnit==='inches'?12:1));
-    const colW = toFeet(currentStructure?.column?.width || (globalUnit==='inches'?12:1));
+    const colHt = toFeet(currentStructure?.column?.height, units.columnHeight);
+    const colB = toFeet(currentStructure?.column?.breadth, units.columnDim);
+    const colW = toFeet(currentStructure?.column?.width, units.columnDim);
     const calculateRingFt = (bFt: number, wFt: number) => (((bFt - 0.25) + (wFt - 0.25)) * 2); 
 
     const addSection = (title: string, rawItems: any[]) => {
@@ -224,11 +222,11 @@ export const generateProjectBOQ = (
     };
 
     if (idx === 0) {
-      const fB = toFeet(currentStructure?.footing?.breadth || (globalUnit==='feet'?4:0)); 
-      const fW = toFeet(currentStructure?.footing?.width || (globalUnit==='feet'?4:0));
-      const depth = toFeet(currentStructure?.footing?.depth || (globalUnit==='feet'?4:0));
-      const pD = toFeet(currentStructure?.plinthBeam?.depth || (globalUnit==='inches'?12:1));
-      const plW = toFeet(currentStructure?.plinthBeam?.width || (globalUnit==='inches'?12:1));
+      const fB = toFeet(currentStructure?.footing?.breadth, units.footing); 
+      const fW = toFeet(currentStructure?.footing?.width, units.footing);
+      const depth = toFeet(currentStructure?.footing?.depth, units.footing);
+      const pD = toFeet(currentStructure?.plinthBeam?.depth, units.plinthBeam);
+      const plW = toFeet(currentStructure?.plinthBeam?.width, units.plinthBeam);
       
       const pitBoulderThicknessFt = 6 / 12; 
       const padThicknessFt = 5 / 12;     
@@ -294,8 +292,8 @@ export const generateProjectBOQ = (
       addSection("2. Plinth Beams", plinthItems);
     }
 
-    const rD = toFeet(currentStructure?.roofBeam?.depth || (globalUnit==='inches'?12:1));
-    const rW = toFeet(currentStructure?.roofBeam?.width || (globalUnit==='inches'?12:1));
+    const rD = toFeet(currentStructure?.roofBeam?.depth, units.roofBeam);
+    const rW = toFeet(currentStructure?.roofBeam?.width, units.roofBeam);
     const roofConc = calculateConcrete(roofPerimeter * (rD * rW), masterSettings?.ratios?.beam, getAllowance('roofBeam', 5));
     const roofRings = roofPerimeter / (masterSettings?.dimensions?.ringSpacing / 12 || 0.416);
 
@@ -338,9 +336,9 @@ export const generateProjectBOQ = (
       { name: "TMT Slab (10mm)", qty: Math.ceil(getWeight('10mm', totalSlabSteelFt)), unit: "KG", rate: safeRates.tmt?.['10mm'] || 0 }
     ]);
 
-    if (currentHasStairs && toFeet(currentStairsDim?.width) > 0 && toFeet(currentStairsDim?.length) > 3) {
-      const sW = toFeet(currentStairsDim.width);
-      const sL = toFeet(currentStairsDim.length);
+    if (currentHasStairs && toFeet(currentStairsDim?.width, units.layout) > 0 && toFeet(currentStairsDim?.length, units.layout) > 3) {
+      const sW = toFeet(currentStairsDim.width, units.layout);
+      const sL = toFeet(currentStairsDim.length, units.layout);
       const flightWidth = sW / 2;
       const landingL = 3;
       const flightHeight = colHt / 2;
@@ -367,12 +365,12 @@ export const generateProjectBOQ = (
     }
 
     const grossWallArea = layoutPerimeter * colHt;
-    const mainDoorArea = toFeet(currentOpenings?.mainDoor?.height) * toFeet(currentOpenings?.mainDoor?.width) * Number(currentOpenings?.mainDoor?.count || 0);
-    const roomDoorsArea = (currentOpenings?.roomDoors || []).reduce((sum: number, d: any) => sum + (toFeet(d?.height) * toFeet(d?.width) * Number(d?.count||0)), 0);
-    const bathroomDoorsArea = (currentOpenings?.bathroomDoors || []).reduce((sum: number, d: any) => sum + (toFeet(d?.height) * toFeet(d?.width) * Number(d?.count||0)), 0);
-    const shutterArea = (currentOpenings?.shutters || []).reduce((sum: number, d: any) => sum + (toFeet(d?.height) * toFeet(d?.width) * Number(d?.count||0)), 0);
-    const windowsArea = (currentOpenings?.windows || []).reduce((sum: number, w: any) => sum + (toFeet(w?.height) * toFeet(w?.width) * Number(w?.count||0)), 0);
-    const ventArea = (currentOpenings?.ventilations || []).reduce((sum: number, v: any) => sum + (toFeet(v?.height) * toFeet(v?.width) * Number(v?.count||0)), 0);
+    const mainDoorArea = toFeet(currentOpenings?.mainDoor?.height, units.openings) * toFeet(currentOpenings?.mainDoor?.width, units.openings) * Number(currentOpenings?.mainDoor?.count || 0);
+    const roomDoorsArea = (currentOpenings?.roomDoors || []).reduce((sum: number, d: any) => sum + (toFeet(d?.height, units.openings) * toFeet(d?.width, units.openings) * Number(d?.count||0)), 0);
+    const bathroomDoorsArea = (currentOpenings?.bathroomDoors || []).reduce((sum: number, d: any) => sum + (toFeet(d?.height, units.openings) * toFeet(d?.width, units.openings) * Number(d?.count||0)), 0);
+    const shutterArea = (currentOpenings?.shutters || []).reduce((sum: number, d: any) => sum + (toFeet(d?.height, units.openings) * toFeet(d?.width, units.openings) * Number(d?.count||0)), 0);
+    const windowsArea = (currentOpenings?.windows || []).reduce((sum: number, w: any) => sum + (toFeet(w?.height, units.openings) * toFeet(w?.width, units.openings) * Number(w?.count||0)), 0);
+    const ventArea = (currentOpenings?.ventilations || []).reduce((sum: number, v: any) => sum + (toFeet(v?.height, units.openings) * toFeet(v?.width, units.openings) * Number(v?.count||0)), 0);
     
     const netWallArea = Math.max(0, grossWallArea - (mainDoorArea + roomDoorsArea + bathroomDoorsArea + shutterArea + windowsArea + ventArea));
     const estimatedBricks = Math.ceil(netWallArea * (masterSettings?.consumption?.bricksPerSqft || 5) * wBricks);
