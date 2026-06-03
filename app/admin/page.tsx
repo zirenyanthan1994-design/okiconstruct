@@ -5,7 +5,7 @@ import { collection, getDocs, doc, getDoc, setDoc, updateDoc, Timestamp } from '
 import { onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import Navbar from '../components/Navbar'; 
+// import Navbar from '../components/Navbar'; 
 
 // ==========================================
 // 🛑 HARDCODED ADMIN CREDENTIALS
@@ -34,6 +34,19 @@ const defaultSettings = {
   consumption: { 
     puttyCoverage: 10, interiorPaintCoverage: 50, exteriorPaintCoverage: 50,  
     bricksPerSqft: 5, plasterCftPerSqft: 0.15, brickJoiningCftPerSqft: 0.15, tileBeddingCftPerSqft: 0.25 
+  },
+  premiumDefaults: {
+    footingMesh: '10mm',
+    footingThickness: 5,
+    floorThickness: 4,
+    floorRccMesh: '8mm',
+    rccWallThickness: 6,
+    rccWallMesh: '10mm',
+    slabMesh: '10mm',
+    sillDepth: 4,
+    sillWidth: 9,
+    lintelDepth: 6,
+    lintelWidth: 9
   }
 };
 
@@ -273,6 +286,8 @@ export default function AdminPortal() {
   const updatePercentage = (key: string, val: string) => setSettings((prev: any) => ({ ...prev, percentages: { ...prev.percentages, [key]: Number(val) } }));
   const updateConsumption = (key: string, val: string) => setSettings((prev: any) => ({ ...prev, consumption: { ...prev.consumption, [key]: Number(val) } }));
   const updatePricing = (index: number, field: string, value: string) => { setPricingPlans((prev: any) => { const newPlans = [...prev]; newPlans[index][field] = Number(value); return newPlans; }); };
+  const updatePremiumDefaultStr = (key: string, val: string) => setSettings((prev: any) => ({ ...prev, premiumDefaults: { ...prev.premiumDefaults, [key]: val } }));
+  const updatePremiumDefaultNum = (key: string, val: string) => setSettings((prev: any) => ({ ...prev, premiumDefaults: { ...prev.premiumDefaults, [key]: Number(val) } }));
 
   // ==========================================
   // RENDER BLOCKS: SECURITY ROUTING
@@ -341,7 +356,7 @@ export default function AdminPortal() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans pb-20 relative">
       
-      <Navbar />
+      {/* <Navbar /> */}
 
       <main className="max-w-[1400px] mx-auto p-4 md:p-8 mt-4 w-full flex-grow">
         
@@ -637,6 +652,51 @@ export default function AdminPortal() {
                       <div key={key}><label className={labelStyle}>{displayTitle}</label><input type="number" step="0.01" value={(settings.consumption as any)[key]} onChange={(e) => updateConsumption(key, e.target.value)} className={`${inputStyle} text-[#22c55e]`} /></div>
                     )
                   })}
+                </div>
+              </section>
+
+              <section className="bg-white border border-[#22c55e]/30 bg-green-50/10 rounded-3xl p-6 md:p-10 shadow-sm">
+                <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
+                   <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">7</span> Premium Structural Defaults
+                </h2>
+                <p className="text-sm text-gray-500 mb-6 ml-0 md:ml-10">Set the default values that will populate for users utilizing premium features like RCC walls or extra beams.</p>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 ml-0 md:ml-10">
+                  {/* Footing Overrides */}
+                  <div className="md:col-span-2 grid grid-cols-2 gap-4 border border-gray-100 p-4 rounded-xl bg-white shadow-sm">
+                     <div className="col-span-2 text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 pb-2">Foundation</div>
+                     <div><label className={labelStyle}>Footing Thick (in)</label><input type="number" value={(settings.premiumDefaults as any)?.footingThickness || 5} onChange={(e) => updatePremiumDefaultNum('footingThickness', e.target.value)} className={inputStyle} /></div>
+                     <div><label className={labelStyle}>Footing Mesh</label><select className={inputStyle} value={(settings.premiumDefaults as any)?.footingMesh || '10mm'} onChange={(e) => updatePremiumDefaultStr('footingMesh', e.target.value)}><option value="8mm">8mm</option><option value="10mm">10mm</option><option value="12mm">12mm</option><option value="16mm">16mm</option></select></div>
+                  </div>
+
+                  {/* Floor Casting Overrides */}
+                  <div className="md:col-span-2 grid grid-cols-2 gap-4 border border-gray-100 p-4 rounded-xl bg-white shadow-sm">
+                     <div className="col-span-2 text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 pb-2">Ground / Basement Floor</div>
+                     <div><label className={labelStyle}>RCC Floor Thick (in)</label><input type="number" value={(settings.premiumDefaults as any)?.floorThickness || 4} onChange={(e) => updatePremiumDefaultNum('floorThickness', e.target.value)} className={inputStyle} /></div>
+                     <div><label className={labelStyle}>RCC Floor Mesh</label><select className={inputStyle} value={(settings.premiumDefaults as any)?.floorRccMesh || '8mm'} onChange={(e) => updatePremiumDefaultStr('floorRccMesh', e.target.value)}><option value="8mm">8mm</option><option value="10mm">10mm</option><option value="12mm">12mm</option></select></div>
+                  </div>
+
+                  {/* Roof Slab */}
+                  <div className="grid grid-cols-1 gap-4 border border-gray-100 p-4 rounded-xl bg-white shadow-sm">
+                     <div className="text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 pb-2">Suspended Slab</div>
+                     <div><label className={labelStyle}>Roof Slab Mesh</label><select className={inputStyle} value={(settings.premiumDefaults as any)?.slabMesh || '10mm'} onChange={(e) => updatePremiumDefaultStr('slabMesh', e.target.value)}><option value="8mm">8mm</option><option value="10mm">10mm</option><option value="12mm">12mm</option></select></div>
+                  </div>
+
+                  {/* RCC Retaining Walls */}
+                  <div className="md:col-span-3 grid grid-cols-2 gap-4 border border-gray-100 p-4 rounded-xl bg-white shadow-sm">
+                     <div className="col-span-2 text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 pb-2">Basement RCC Walls</div>
+                     <div><label className={labelStyle}>Wall Thickness (in)</label><input type="number" value={(settings.premiumDefaults as any)?.rccWallThickness || 6} onChange={(e) => updatePremiumDefaultNum('rccWallThickness', e.target.value)} className={inputStyle} /></div>
+                     <div><label className={labelStyle}>Dual Mesh Size</label><select className={inputStyle} value={(settings.premiumDefaults as any)?.rccWallMesh || '10mm'} onChange={(e) => updatePremiumDefaultStr('rccWallMesh', e.target.value)}><option value="8mm">8mm</option><option value="10mm">10mm</option><option value="12mm">12mm</option><option value="16mm">16mm</option></select></div>
+                  </div>
+
+                  {/* Extra Beams */}
+                  <div className="md:col-span-4 grid grid-cols-2 md:grid-cols-4 gap-4 border border-gray-100 p-4 rounded-xl bg-white shadow-sm mt-2">
+                     <div className="col-span-2 md:col-span-4 text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 pb-2">Sill & Lintel Extra Beams</div>
+                     <div><label className={labelStyle}>Sill Depth (in)</label><input type="number" value={(settings.premiumDefaults as any)?.sillDepth || 4} onChange={(e) => updatePremiumDefaultNum('sillDepth', e.target.value)} className={inputStyle} /></div>
+                     <div><label className={labelStyle}>Sill Width (in)</label><input type="number" value={(settings.premiumDefaults as any)?.sillWidth || 9} onChange={(e) => updatePremiumDefaultNum('sillWidth', e.target.value)} className={inputStyle} /></div>
+                     <div><label className={labelStyle}>Lintel Depth (in)</label><input type="number" value={(settings.premiumDefaults as any)?.lintelDepth || 6} onChange={(e) => updatePremiumDefaultNum('lintelDepth', e.target.value)} className={inputStyle} /></div>
+                     <div><label className={labelStyle}>Lintel Width (in)</label><input type="number" value={(settings.premiumDefaults as any)?.lintelWidth || 9} onChange={(e) => updatePremiumDefaultNum('lintelWidth', e.target.value)} className={inputStyle} /></div>
+                  </div>
                 </div>
               </section>
             </div>

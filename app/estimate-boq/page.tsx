@@ -4,7 +4,6 @@ import { auth, db } from '../lib/firebase';
 import { collection, addDoc, updateDoc, serverTimestamp, doc, getDoc, query, where, getDocs } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import { onAuthStateChanged } from 'firebase/auth';
-import Navbar from '../components/Navbar';
 import { generateProjectBOQ } from '../lib/processBOQ';
 
 // 🟢 DEFINED GLOBALLY: Prevents fetch errors and crashes
@@ -23,20 +22,16 @@ const toFeetUI = (val: any, unitType: string = 'feet') => {
 
 export default function Estimator() {
   const [userData, setUserData] = useState<any>(null);
-  
-  // Tracks if we are editing an existing project
   const [existingProjectId, setExistingProjectId] = useState<string | null>(null);
+
+  // Tracks if data was bridged from the CAD Engine
+  const [isFromCAD, setIsFromCAD] = useState(false);
 
   // Scope & Granular Unit States (Defaults to feet)
   const [boqScope, setBoqScope] = useState<'full' | 'civil_only'>('full');
   const [units, setUnits] = useState({
-    footing: 'feet',
-    columnHeight: 'feet',
-    columnDim: 'inches', 
-    plinthBeam: 'inches',
-    roofBeam: 'inches',
-    layout: 'feet',
-    openings: 'feet'
+    footing: 'feet', columnHeight: 'feet', columnDim: 'inches', 
+    plinthBeam: 'inches', roofBeam: 'inches', layout: 'feet', openings: 'feet'
   });
 
   const [siteDetails, setSiteDetails] = useState({ roadFacing: 'East', stairType: 'Internal', bhkType: '2BHK' });
@@ -85,8 +80,91 @@ export default function Estimator() {
   const [laborRates, setLaborRates] = useState<any>({ mason: '', painter: '', tiler: '' });
   const [boqReport, setBoqReport] = useState<any>(null);
 
-  // Admin Bypass so you can test features without a premium account!
+  const [premiumData, setPremiumData] = useState<any>({
+    customFootingMesh: '10mm', customFootingThickness: 5,
+    floorType: 'PCC', floorThickness: 4, floorRccMeshSize: '8mm',
+    hasSillBeam: false, sillDepth: '', sillWidth: '',
+    hasLintelBeam: false, lintelDepth: '', lintelWidth: '',
+    isBasement: false, wallType: 'Brick', rccWallThickness: 6, rccWallMeshSize: '10mm',
+    customSlabMesh: '10mm'
+  });
+
+  const [hiddenSections, setHiddenSections] = useState<Record<string, boolean>>({});
+
+  const toggleSection = (fIdx: number, sIdx: number) => {
+    const key = `f${fIdx}_s${sIdx}`;
+    setHiddenSections(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const getVisibleFloorTotal = (floor: any, fIdx: number) => {
+    return floor.sections?.reduce((sum: number, section: any, sIdx: number) => {
+      const isHidden = hiddenSections[`f${fIdx}_s${sIdx}`];
+      return sum + (isHidden ? 0 : (section.sectionTotal || 0));
+    }, 0) || 0;
+  };
+
+  const getVisibleGrandTotal = () => {
+    return boqReport?.floorReports?.reduce((sum: number, floor: any, fIdx: number) => {
+      return sum + getVisibleFloorTotal(floor, fIdx);
+    }, 0) || 0;
+  };
+
   const isPremium = userData?.tier === 'premium' || userData?.planStatus === 'premium' || auth?.currentUser?.email?.toLowerCase() === 'okiconstruct2026@gmail.com';
+
+  // 🟢 AGGRESSIVE BRIDGE INTERCEPTOR: Forces UI update perfectly
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const bridgeData = localStorage.getItem('oki_cad_bridge');
+    if (bridgeData) {
+      try {
+        const cad = JSON.parse(bridgeData);
+        setIsFromCAD(true);
+        if (cad.projectName) setProjectName(cad.projectName);
+        if (cad.typology === 'Private Residence') setBuildingType('residence');
+        else setBuildingType('apartment');
+
+        if (cad.floors === 'Ground Floor Only') setTotalFloorsCount(1);
+        else if (cad.floors === 'G + 1') setTotalFloorsCount(2);
+        else if (cad.floors === 'G + 2') setTotalFloorsCount(3);
+        else if (cad.floors === 'G + 3') setTotalFloorsCount(4);
+        else if (cad.floors === 'G + 4') setTotalFloorsCount(5);
+
+        setSiteDetails(prev => {
+            let newStair = 'Internal';
+            if (cad.staircase === 'No Stairs') newStair = 'None';
+            else if (cad.staircase === 'External Stairs') newStair = 'External';
+            return { ...prev, stairType: newStair, bhkType: cad.typology === 'Private Residence' ? `${cad.bhk}BHK` : prev.bhkType };
+        });
+
+        if (cad.staircase === 'No Stairs') setHasStairs(false);
+        else { setHasStairs(true); if (cad.stairsDim) setStairsDim(cad.stairsDim); }
+
+        if (cad.typology === 'Apartment Complex') {
+          setFlatsCount(String(cad.aptFlatsCount || 1));
+          if (cad.aptFlats) setApartmentFlats(cad.aptFlats);
+          if (cad.externalCorridorWidth) {
+              setApartmentData(prev => ({
+                 ...prev, corridor: { hasCorridor: true, length: '30', width: cad.externalCorridorWidth } 
+              }));
+          }
+        }
+        
+        let mappedUnit = 'feet';
+        if (cad.globalUnit === 'in') mappedUnit = 'inches';
+        if (cad.globalUnit === 'mm') mappedUnit = 'mm';
+        if (cad.globalUnit === 'cm') mappedUnit = 'cm';
+        if (cad.globalUnit === 'mtr') mappedUnit = 'meters';
+        setUnits(prev => ({ ...prev, layout: mappedUnit, openings: mappedUnit }));
+
+      } catch (err) { console.error("Failed to parse CAD Bridge", err); }
+    }
+  }, []);
+
+  const clearCadImport = () => {
+    localStorage.removeItem('oki_cad_bridge');
+    setIsFromCAD(false);
+    window.location.reload();
+  };
 
   useEffect(() => {
     const loadSession = async () => {
@@ -104,13 +182,8 @@ export default function Estimator() {
                setBuildingType(data.buildingType);
                setTotalFloorsCount(data.totalFloors);
                setSiteDetails(data.siteDetails);
-               
-               // Restore Scope and Units safely
-               if (data.inputs.units) {
-                 setUnits(prev => ({ ...prev, ...data.inputs.units }));
-               }
+               if (data.inputs.units) setUnits(prev => ({ ...prev, ...data.inputs.units }));
                setBoqScope(data.inputs.boqScope || 'full');
-               
                setStructure(data.inputs.structure);
                setFloorsData(data.inputs.floorsData);
                setOpeningsData(data.inputs.openingsData);
@@ -125,7 +198,8 @@ export default function Estimator() {
                setHasStairs(data.inputs.hasStairs);
                setStairsDim(data.inputs.stairsDim);
                setSlabOverhang(data.inputs.slabOverhang || "2");
-
+               if (data.inputs.premiumData) setPremiumData(data.inputs.premiumData);
+               if (data.inputs.hiddenSections) setHiddenSections(data.inputs.hiddenSections);
                setCurrentStep(1); 
             } else {
                alert("This BOQ was saved with an older version of the software and cannot be dynamically edited.");
@@ -159,8 +233,7 @@ export default function Estimator() {
   const generateEmptyFlat = (flatId: number, type: string) => {
     const bhkCount = parseInt(type) || 1;
     return {
-        id: flatId, type: type,
-        hall: { length: '', breadth: '' }, kitchen: { length: '', breadth: '' },
+        id: flatId, type: type, hall: { length: '', breadth: '' }, kitchen: { length: '', breadth: '' },
         bedrooms: Array.from({length: bhkCount}).map((_, i) => ({ id: Date.now() + i, length: '', breadth: '' })),
         bathrooms: Array.from({length: bhkCount === 1 ? 1 : bhkCount}).map((_, i) => ({ id: Date.now() + 100 + i, length: '', breadth: '', isAttached: false, layoutType: 'outside', attachedTo: '' }))
     };
@@ -171,6 +244,7 @@ export default function Estimator() {
     if (!existingProjectId || floorsData.length !== totalFloorsCount) {
         const initialFloors = [];
         const initialOpenings = [];
+        const bridgeData = isFromCAD ? JSON.parse(localStorage.getItem('oki_cad_bridge') || '{}') : null;
 
         for (let i = 0; i < totalFloorsCount; i++) {
             const floorName = i === 0 ? "Ground Floor" : i === 1 ? "1st Floor" : i === 2 ? "2nd Floor" : i === 3 ? "3rd Floor" : `${i}th Floor`;
@@ -185,13 +259,19 @@ export default function Estimator() {
             if (buildingType === 'residence') {
                 const bhkCount = parseInt(siteDetails.bhkType.charAt(0)) || 1;
                 initialFloors.push({
-                    floorName, isCommercial: false, hall: { length: '', breadth: '' }, kitchenDining: { length: '', breadth: '' }, foyer: { length: '', breadth: '' },
-                    bedrooms: Array.from({length: bhkCount}).map((_, j) => ({ id: Date.now() + j, length: '', breadth: '' })),
-                    bathrooms: Array.from({length: bhkCount === 1 ? 1 : bhkCount}).map((_, j) => ({ id: Date.now() + 100 + j, length: '', breadth: '', isAttached: false, layoutType: 'outside', attachedTo: '' }))
+                    floorName, isCommercial: false, 
+                    hall: bridgeData?.hall ? { length: bridgeData.hall.length, breadth: bridgeData.hall.breadth } : { length: '', breadth: '' }, 
+                    kitchenDining: bridgeData?.kitchen ? { length: bridgeData.kitchen.length, breadth: bridgeData.kitchen.breadth } : { length: '', breadth: '' }, 
+                    foyer: { length: '', breadth: '' },
+                    bedrooms: bridgeData?.bedrooms ? bridgeData.bedrooms : Array.from({length: bhkCount}).map((_, j) => ({ id: Date.now() + j, length: '', breadth: '' })),
+                    bathrooms: bridgeData?.bathrooms ? bridgeData.bathrooms : Array.from({length: bhkCount === 1 ? 1 : bhkCount}).map((_, j) => ({ id: Date.now() + 100 + j, length: '', breadth: '', isAttached: false, layoutType: 'outside', attachedTo: '' }))
                 });
             } else {
-                if (isComm) initialFloors.push({ floorName, isCommercial: true, shops: [{ id: Date.now(), length: '', breadth: '' }], washrooms: { count: '', length: '', breadth: '' }});
-                else initialFloors.push({ floorName, isCommercial: false, flats: apartmentFlats.map(f => generateEmptyFlat(f.id, f.type)) });
+                if (isComm) {
+                    initialFloors.push({ floorName, isCommercial: true, shops: [{ id: Date.now(), length: '', breadth: '' }], washrooms: { count: '', length: '', breadth: '' }});
+                } else {
+                    initialFloors.push({ floorName, isCommercial: false, flats: bridgeData?.aptFlats ? bridgeData.aptFlats : apartmentFlats.map(f => generateEmptyFlat(f.id, f.type)) });
+                }
             }
         }
         setFloorsData(initialFloors);
@@ -216,7 +296,6 @@ export default function Estimator() {
   const updateOpening = (key: string, index: number | null, field: string, value: string) => setOpeningsData(prev => { const d = JSON.parse(JSON.stringify(prev)); if (index === null) d[activeFloor][key][field] = value; else if(d[activeFloor][key] && d[activeFloor][key][index]) d[activeFloor][key][index][field] = value; return d; });
   const addOpening = (key: string) => setOpeningsData(prev => { const d = JSON.parse(JSON.stringify(prev)); d[activeFloor][key].push({ id: Date.now(), count: '', height: '', width: '' }); return d; });
 
-  // 🟢 Live UI Calculators (Converted to Feet to show accurate SQFT)
   const getRoomArea = (room: any) => toFeetUI(room?.length || room?.width, units?.layout) * toFeetUI(room?.breadth || room?.width, units?.layout);
   const calculateFloorArea = (index: number) => {
     const f = floorsData[index];
@@ -259,7 +338,7 @@ export default function Estimator() {
 
   const handleTransitionToUpperFlats = () => {
       setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); for (let i = 1; i < totalFloorsCount; i++) d[i].flats = apartmentFlats.map(f => generateEmptyFlat(f.id, f.type)); return d; });
-      setActiveFloor(1); setCurrentStep(3); window.scrollTo(0,0);
+      setActiveFloor(1); setCurrentStep(isFromCAD ? 4 : 3); window.scrollTo(0,0);
   };
 
   const handleCopyChoice = (choice: 'yes' | 'no') => {
@@ -280,7 +359,7 @@ export default function Estimator() {
       setActiveFloor(totalFloorsCount - 1); 
       setCurrentStep(5); 
     } else {
-      setActiveFloor(activeFloor + 1); setCurrentStep(3);
+      setActiveFloor(activeFloor + 1); setCurrentStep(isFromCAD ? 4 : 3);
     }
     window.scrollTo(0,0);
   };
@@ -369,7 +448,7 @@ export default function Estimator() {
     } catch (err) { console.error("Settings Parsing Error", err); }
 
     try {
-      const report = generateProjectBOQ(finalSnaps, totalFloorsCount, slabOverhang, rates, masterSettings, units, boqScope);
+      const report = generateProjectBOQ(finalSnaps, totalFloorsCount, slabOverhang, rates, masterSettings, units, boqScope, premiumData);
       setBoqReport(report);
       setCurrentStep(9); 
     } catch (err) { console.error("Calculation Error:", err); }
@@ -390,7 +469,8 @@ export default function Estimator() {
         
         inputs: {
           units, boqScope, structure, floorsData, openingsData, rates, tiles, paintData, laborRates,
-          apartmentData, apartmentFlats, flatsCount, commercialGroundFloor, hasStairs, stairsDim, slabOverhang
+          apartmentData, apartmentFlats, flatsCount, commercialGroundFloor, hasStairs, stairsDim, slabOverhang,
+          premiumData, hiddenSections
         }
       };
 
@@ -419,16 +499,16 @@ export default function Estimator() {
   const ErrorDisplay = () => errorMsg ? (<div className="bg-red-50 text-red-600 border border-red-200 rounded-xl p-4 mt-8 mb-4 font-medium flex items-center gap-3 animate-in slide-in-from-bottom-2 print:hidden"><span className="text-xl">⚠️</span> {errorMsg}</div>) : null;
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
-      <Navbar />
-      <main className="max-w-5xl mx-auto w-full p-4 md:p-8 mt-4 pb-24 print:p-0 print:mt-0 print:max-w-none">
-        
+    <div className="min-h-screen bg-gray-50 flex flex-col font-sans relative">
+      {/* <Navbar /> */}
+      <main className="max-w-5xl mx-auto w-full p-4 md:p-8 mt-4 pb-24 print:p-0 print:mt-0 print:max-w-none relative z-10">
+
         {currentStep < 9 && (
           <div className="mb-10 animate-in fade-in duration-500 print:hidden">
             <div className="flex items-center justify-between text-[10px] md:text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
               <span className={currentStep >= 1 ? "text-[#22c55e]" : ""}>Setup</span>
               <span className={currentStep >= 2 ? "text-[#22c55e]" : ""}>Structure</span>
-              <span className={currentStep >= 3 ? "text-[#22c55e]" : ""}>Layout</span>
+              {!isFromCAD && <span className={currentStep >= 3 ? "text-[#22c55e]" : ""}>Layout</span>}
               <span className={currentStep >= 4 ? "text-[#22c55e]" : ""}>Openings</span>
               <span className={currentStep >= 5 ? "text-[#22c55e]" : ""}>Pricing</span>
               {boqScope === 'full' && <span className={currentStep >= 8 ? "text-[#22c55e]" : ""}>Review</span>}
@@ -444,9 +524,22 @@ export default function Estimator() {
           {/* --- STEP 1: SETUP & CONTEXT --- */}
           {currentStep === 1 && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-2xl mx-auto">
+              
+              {isFromCAD && (
+                <div className="mb-8 p-5 bg-green-50 border border-green-200 rounded-2xl flex flex-col md:flex-row justify-between items-center gap-4 shadow-sm">
+                  <div>
+                    <h3 className="font-bold text-green-900 flex items-center gap-2"><span className="text-xl">✨</span> Layout Auto-Imported</h3>
+                    <p className="text-green-700 text-sm font-medium mt-1">Your floor plan dimensions have been successfully loaded from the CAD Engine.</p>
+                  </div>
+                  <button onClick={clearCadImport} className="text-xs font-bold bg-white text-green-700 border border-green-200 px-4 py-2.5 rounded-xl hover:bg-green-100 transition-colors shadow-sm whitespace-nowrap">
+                    Clear & Start Blank Project
+                  </button>
+                </div>
+              )}
+
               <div className="text-center mb-8">
-                <h1 className="text-3xl font-bold text-gray-900 mb-2">{existingProjectId ? 'Editing Project Setup' : 'Project Setup & Context'}</h1>
-                <p className="text-gray-500 font-medium">Define your project requirements and building scale.</p>
+                <h1 className="text-3xl font-bold text-gray-900 mb-2">{isFromCAD ? 'CAD Import Successful ✨' : existingProjectId ? 'Editing Project Setup' : 'Project Setup & Context'}</h1>
+                <p className="text-gray-500 font-medium">{isFromCAD ? "We've pre-filled your configuration based on your 2D layout." : "Define your project requirements and building scale."}</p>
               </div>
 
               <div className="space-y-6">
@@ -457,7 +550,6 @@ export default function Estimator() {
 
                 <div className="p-6 border border-gray-100 bg-gray-50/50 rounded-2xl">
                   
-                  {/* BOQ Scope Control */}
                   <div className="mb-8">
                     <label className={labelStyle}>BOQ Scope</label>
                     <div className="relative">
@@ -472,16 +564,31 @@ export default function Estimator() {
                   <label className="text-sm font-bold text-gray-900 mb-4 block">Building Typology</label>
                   <div className="flex gap-4 mb-6">
                     <button type="button" onClick={() => setBuildingType('residence')} className={`flex-1 p-4 rounded-xl font-bold transition-all border ${buildingType === 'residence' ? 'bg-white border-[#22c55e] text-[#22c55e] shadow-sm ring-2 ring-[#22c55e]/20' : 'bg-transparent border-gray-200 text-gray-500 hover:bg-white'}`}>🏠 Private Residence</button>
-                    <button type="button" onClick={() => setBuildingType('apartment')} className={`flex-1 p-4 rounded-xl font-bold transition-all border ${buildingType === 'apartment' ? 'bg-white border-[#22c55e] text-[#22c55e] shadow-sm ring-2 ring-[#22c55e]/20' : 'bg-transparent border-gray-200 text-gray-500 hover:bg-white'}`}>🏢 Apartment Complex</button>
+                    <button type="button" onClick={() => { 
+                        if(!isPremium) return alert("Apartment multi-unit generation is a Premium feature. Please upgrade your account from the Dashboard to unlock this capability.");
+                        setBuildingType('apartment'); 
+                      }} 
+                      className={`flex-1 p-4 rounded-xl font-bold transition-all border ${buildingType === 'apartment' ? 'bg-white border-[#22c55e] text-[#22c55e] shadow-sm ring-2 ring-[#22c55e]/20' : 'bg-transparent border-gray-200 text-gray-500 hover:bg-white'} ${!isPremium ? 'opacity-70' : ''}`}
+                    >
+                      🏢 Apartment {(!isPremium) && <span className="text-red-500 ml-1">🔒</span>}
+                    </button>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className={labelStyle}>Total Floors</label>
                       <div className="relative">
-                        <select className={selectStyle} value={totalFloorsCount === 1 ? 'G' : `G+${totalFloorsCount - 1}`} onChange={(e) => setTotalFloorsCount(e.target.value === 'G' ? 1 : parseInt(e.target.value.replace('G+', '')) + 1)}>
+                        <select className={selectStyle} value={totalFloorsCount === 1 ? 'G' : `G+${totalFloorsCount - 1}`} onChange={(e) => {
+                           if (!isPremium && e.target.value !== 'G') {
+                             alert("Multi-Story calculation is a Premium feature. Please upgrade your account from the Dashboard to process multi-level buildings.");
+                             return;
+                           }
+                           setTotalFloorsCount(e.target.value === 'G' ? 1 : parseInt(e.target.value.replace('G+', '')) + 1);
+                        }}>
                           <option value="G">Ground Floor Only</option>
-                          {Array.from({ length: 9 }, (_, i) => (<option key={i + 1} value={`G+${i + 1}`}>G + {i + 1} Floor</option>))}
+                          {Array.from({ length: 9 }, (_, i) => (
+                             <option key={i + 1} value={`G+${i + 1}`}>G + {i + 1} Floor {(!isPremium) && '🔒'}</option>
+                          ))}
                         </select>
                         <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-sm">▼</div>
                       </div>
@@ -544,6 +651,39 @@ export default function Estimator() {
                 </div>
               </div>
 
+              {/* PREMIUM BASEMENT UI */}
+              {isPremium && (
+                <div className="mt-6 p-5 border border-[#22c55e]/30 bg-green-50/30 rounded-2xl">
+                  <label className="flex items-center gap-3 cursor-pointer mb-4">
+                    <input type="checkbox" checked={premiumData.isBasement} onChange={(e) => setPremiumData({...premiumData, isBasement: e.target.checked})} className="w-5 h-5 text-[#22c55e] rounded" />
+                    <span className="font-bold text-gray-900">Include Basement Level <span className="text-[#22c55e] text-xs">★</span></span>
+                  </label>
+                  {premiumData.isBasement && (
+                    <div className="pt-4 border-t border-green-100/50 space-y-4">
+                      <label className={labelStyle}>Basement Wall Structure</label>
+                      <div className="flex gap-4 mb-4">
+                        <button type="button" onClick={() => setPremiumData({...premiumData, wallType: 'Brick'})} className={`flex-1 p-3 rounded-xl font-bold transition-all border ${premiumData.wallType === 'Brick' ? 'bg-white border-[#22c55e] text-[#22c55e] shadow-sm' : 'bg-transparent border-gray-200 text-gray-500'}`}>Standard Brick</button>
+                        <button type="button" onClick={() => setPremiumData({...premiumData, wallType: 'RCC'})} className={`flex-1 p-3 rounded-xl font-bold transition-all border ${premiumData.wallType === 'RCC' ? 'bg-white border-[#22c55e] text-[#22c55e] shadow-sm' : 'bg-transparent border-gray-200 text-gray-500'}`}>RCC Retaining Walls</button>
+                      </div>
+                      {premiumData.wallType === 'RCC' && (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className={labelStyle}>RCC Wall Thickness (Inches)</label>
+                            <input type="number" className={inputStyle} value={premiumData.rccWallThickness} onChange={(e) => setPremiumData({...premiumData, rccWallThickness: e.target.value})} />
+                          </div>
+                          <div>
+                            <label className={labelStyle}>Wall Mesh Size</label>
+                            <select className={selectStyle} value={premiumData.rccWallMeshSize} onChange={(e) => setPremiumData({...premiumData, rccWallMeshSize: e.target.value})}>
+                              <option value="8mm">8mm</option><option value="10mm">10mm</option><option value="12mm">12mm</option><option value="16mm">16mm</option>
+                            </select>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <ErrorDisplay />
               <button type="button" onClick={handleSetupComplete} className="w-full bg-gray-900 text-white font-bold text-lg p-4 rounded-xl mt-4 hover:bg-[#22c55e] transition-colors shadow-md">
                 Continue to Structural Setup ➔
@@ -559,6 +699,7 @@ export default function Estimator() {
                 <h1 className="text-3xl font-bold text-gray-900 flex items-center justify-center gap-3">
                   <span className="text-3xl">🏛️</span> Structural Elements
                 </h1>
+                {isFromCAD && <p className="text-[#22c55e] font-bold mt-2 text-sm uppercase tracking-wide">Layout Dimensions Auto-Synced from CAD!</p>}
               </div>
 
               <div className="border border-gray-200 p-6 rounded-3xl bg-white shadow-sm">
@@ -570,7 +711,7 @@ export default function Estimator() {
                 <div className="space-y-5">
                   <div>
                     <label className={labelStyle}>Number of footings</label>
-                    <input type="number" inputMode="decimal" min="0" placeholder="e.g., 12" className={inputStyle} value={structure.footing.count} onChange={(e) => setStructure({ ...structure, footing: { ...structure.footing, count: e.target.value } })} />
+                    <input type="number" inputMode="decimal" min="0" placeholder="e.g., 12" className={`${inputStyle} ring-2 ring-blue-500/20`} value={structure.footing.count} onChange={(e) => setStructure({ ...structure, footing: { ...structure.footing, count: e.target.value } })} />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -607,15 +748,40 @@ export default function Estimator() {
                     </div>
                     <input type="number" inputMode="decimal" min="0" placeholder="Depth" className={inputStyle} value={structure.footing.depth} onChange={(e) => setStructure({ ...structure, footing: { ...structure.footing, depth: e.target.value } })} />
                   </div>
+
+                  {isPremium && (
+                    <div className="mt-4 p-4 border border-[#22c55e]/30 bg-green-50/30 rounded-2xl grid grid-cols-2 gap-4">
+                      <div>
+                        <label className={labelStyle}>Pad Thickness (Inches) <span className="text-[#22c55e]">★</span></label>
+                        <input type="number" className={inputStyle} value={premiumData.customFootingThickness} onChange={(e) => setPremiumData({...premiumData, customFootingThickness: e.target.value})} />
+                      </div>
+                      <div>
+                        <label className={labelStyle}>Footing Mesh Size <span className="text-[#22c55e]">★</span></label>
+                        <select className={selectStyle} value={premiumData.customFootingMesh} onChange={(e) => setPremiumData({...premiumData, customFootingMesh: e.target.value})}>
+                           <option value="10mm">10mm</option><option value="12mm">12mm</option><option value="16mm">16mm</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
                 </div>
               </div>
 
-              <div className="border border-gray-200 p-6 rounded-3xl bg-white shadow-sm">
+              <div className="border border-gray-200 p-6 rounded-3xl bg-white shadow-sm relative overflow-hidden">
                 <div className="flex justify-between items-center mb-6">
                   <h2 className="font-bold text-lg text-gray-900 flex items-center gap-2">
                     <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">2</span> Columns
                   </h2>
                 </div>
+
+                <div className="mb-5 bg-blue-50 border border-blue-100 p-4 rounded-xl flex items-center gap-4 shadow-inner">
+                  <div className="bg-white p-2 rounded-lg shadow-sm"><span className="text-xl">🔗</span></div>
+                  <div>
+                    <span className="block text-xs font-bold text-blue-900 uppercase tracking-wider mb-0.5">Column Count Locked</span>
+                    <span className="text-sm font-medium text-blue-700">Total columns are securely auto-synced to match your Foundation Footings count ({structure.footing.count || '0'}).</span>
+                  </div>
+                </div>
+
                 <div className="space-y-5">
                   <div>
                     <div className="flex justify-between items-end mb-2">
@@ -655,7 +821,7 @@ export default function Estimator() {
                   
                   {isPremium && (
                     <div className="mt-4 p-4 border border-blue-100 bg-blue-50/50 rounded-2xl">
-                      <span className="text-xs font-bold text-blue-600 uppercase tracking-wider block mb-3">Custom TMT Reinforcement <span className="text-blue-500 ml-1">★</span></span>
+                      <span className="text-xs font-bold text-blue-600 uppercase tracking-wider block mb-3">Custom TMT Reinforcement <span className="text-blue-50 ml-1">★</span></span>
                       <p className="text-xs text-gray-500 mb-4 font-medium">Leave blank to let the engine auto-calculate based on floor count.</p>
                       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                           <div>
@@ -719,8 +885,9 @@ export default function Estimator() {
                         <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.plinthBeam.width} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, width: e.target.value } })} />
                       </div>
                     </div>
+                    {/* 🟢 RESTORED: Plinth Beam TMT Inputs */}
                     {isPremium && (
-                      <div className="p-3 border border-blue-100 bg-blue-50/50 rounded-xl">
+                      <div className="p-3 border border-blue-100 bg-blue-50/50 rounded-xl mt-4">
                         <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block mb-2">Override Plinth TMT <span className="text-blue-500">★</span></span>
                         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                             <div><label className="text-[9px] font-bold text-gray-500 uppercase">Main Size</label><select className={`${selectStyle} py-2 text-sm px-2`} value={structure.plinthBeam.mainTmtSize || ''} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, mainTmtSize: e.target.value } })}><option value="">Auto</option><option value="12mm">12mm</option><option value="16mm">16mm</option><option value="20mm">20mm</option><option value="25mm">25mm</option></select></div>
@@ -762,8 +929,9 @@ export default function Estimator() {
                         <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.roofBeam.width} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, width: e.target.value } })} />
                       </div>
                     </div>
+                    {/* 🟢 RESTORED: Roof Beam TMT Inputs */}
                     {isPremium && (
-                      <div className="p-3 border border-blue-100 bg-blue-50/50 rounded-xl">
+                      <div className="p-3 border border-blue-100 bg-blue-50/50 rounded-xl mt-4">
                         <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block mb-2">Override Roof TMT <span className="text-blue-500">★</span></span>
                         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                             <div><label className="text-[9px] font-bold text-gray-500 uppercase">Main Size</label><select className={`${selectStyle} py-2 text-sm px-2`} value={structure.roofBeam.mainTmtSize || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, mainTmtSize: e.target.value } })}><option value="">Auto</option><option value="12mm">12mm</option><option value="16mm">16mm</option><option value="20mm">20mm</option><option value="25mm">25mm</option></select></div>
@@ -776,19 +944,104 @@ export default function Estimator() {
                     )}
                   </div>
 
+                  {/* PREMIUM FEATURE: SILL & LINTEL BEAMS */}
+                  {isPremium && (
+                    <div className="bg-green-50/30 p-4 rounded-2xl border border-[#22c55e]/30 space-y-4">
+                       <span className="font-bold text-gray-700 block mb-2">Extra Beams (Premium) <span className="text-[#22c55e]">★</span></span>
+                       
+                       {/* Sill Beam */}
+                       <label className="flex items-center gap-3 cursor-pointer">
+                          <input type="checkbox" checked={premiumData.hasSillBeam} onChange={(e) => setPremiumData({...premiumData, hasSillBeam: e.target.checked})} className="w-5 h-5 text-[#22c55e] rounded" />
+                          <span className="font-bold text-gray-700">Include Sill Beams (Under Windows)</span>
+                       </label>
+                       {premiumData.hasSillBeam && (
+                         <div className="grid grid-cols-2 gap-4 pl-8 mb-4">
+                           <div><label className={labelStyle}>Depth (in)</label><input type="number" className={inputStyle} value={premiumData.sillDepth} onChange={(e) => setPremiumData({...premiumData, sillDepth: e.target.value})} /></div>
+                           <div><label className={labelStyle}>Width (in)</label><input type="number" className={inputStyle} value={premiumData.sillWidth} onChange={(e) => setPremiumData({...premiumData, sillWidth: e.target.value})} /></div>
+                         </div>
+                       )}
+
+                       {/* Lintel Beam */}
+                       <div className="pt-2 border-t border-green-200/50">
+                         <label className="flex items-center gap-3 cursor-pointer mt-2">
+                            <input type="checkbox" checked={premiumData.hasLintelBeam} onChange={(e) => setPremiumData({...premiumData, hasLintelBeam: e.target.checked})} className="w-5 h-5 text-[#22c55e] rounded" />
+                            <span className="font-bold text-gray-700">Include Lintel Beams (Over Doors/Windows)</span>
+                         </label>
+                         {premiumData.hasLintelBeam && (
+                           <div className="grid grid-cols-2 gap-4 pl-8 mt-4">
+                             <div><label className={labelStyle}>Depth (in)</label><input type="number" className={inputStyle} value={premiumData.lintelDepth} onChange={(e) => setPremiumData({...premiumData, lintelDepth: e.target.value})} /></div>
+                             <div><label className={labelStyle}>Width (in)</label><input type="number" className={inputStyle} value={premiumData.lintelWidth} onChange={(e) => setPremiumData({...premiumData, lintelWidth: e.target.value})} /></div>
+                           </div>
+                         )}
+                       </div>
+                    </div>
+                  )}
                 </div>
               </div>
+
+              {/* PREMIUM FEATURE: BASE FLOORING & SLAB */}
+              {isPremium && (
+                <div className="border border-gray-200 p-6 rounded-3xl bg-white shadow-sm mt-8">
+                  <h2 className="font-bold text-lg text-gray-900 mb-6 flex items-center gap-2">
+                    <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">4</span> Flooring & Roof Slab <span className="text-[#22c55e] ml-2">★</span>
+                  </h2>
+                  <div className="space-y-6">
+                    
+                    <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                      <label className={labelStyle}>Ground/Basement Floor Casting Type</label>
+                      <div className="flex gap-4 mb-4">
+                        <button type="button" onClick={() => setPremiumData({...premiumData, floorType: 'PCC'})} className={`flex-1 p-3 rounded-xl font-bold transition-all border ${premiumData.floorType === 'PCC' ? 'bg-white border-[#22c55e] text-[#22c55e] shadow-sm' : 'bg-transparent border-gray-200 text-gray-500'}`}>Standard PCC</button>
+                        <button type="button" onClick={() => setPremiumData({...premiumData, floorType: 'RCC'})} className={`flex-1 p-3 rounded-xl font-bold transition-all border ${premiumData.floorType === 'RCC' ? 'bg-white border-[#22c55e] text-[#22c55e] shadow-sm' : 'bg-transparent border-gray-200 text-gray-500'}`}>Heavy Duty RCC</button>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className={labelStyle}>Floor Thickness (Inches)</label>
+                          <input type="number" className={inputStyle} value={premiumData.floorThickness} onChange={(e) => setPremiumData({...premiumData, floorThickness: e.target.value})} />
+                        </div>
+                        {premiumData.floorType === 'RCC' && (
+                          <div>
+                            <label className={labelStyle}>RCC Floor Mesh</label>
+                            <select className={selectStyle} value={premiumData.floorRccMeshSize} onChange={(e) => setPremiumData({...premiumData, floorRccMeshSize: e.target.value})}>
+                              <option value="8mm">8mm</option><option value="10mm">10mm</option><option value="12mm">12mm</option>
+                            </select>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 grid grid-cols-2 gap-4">
+                       <div>
+                          <span className="font-bold text-gray-700 block">Suspended Roof Slab</span>
+                          <p className="text-xs text-gray-500 mt-1">Override default 10mm mesh</p>
+                       </div>
+                       <div>
+                          <label className={labelStyle}>Slab Mesh Size</label>
+                          <select className={selectStyle} value={premiumData.customSlabMesh} onChange={(e) => setPremiumData({...premiumData, customSlabMesh: e.target.value})}>
+                            <option value="8mm">8mm</option><option value="10mm">10mm</option><option value="12mm">12mm</option>
+                          </select>
+                       </div>
+                    </div>
+
+                  </div>
+                </div>
+              )}
 
               <ErrorDisplay />
               <div className="flex gap-4 pt-4">
                 <button onClick={() => validateAndProceed(1)} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
-                <button onClick={() => validateAndProceed(3)} className="w-2/3 bg-[#22c55e] text-white font-bold text-lg p-4 rounded-xl hover:bg-[#1ea950] transition-colors shadow-md">Continue to Layout</button>
+                <button 
+                  onClick={() => validateAndProceed(isFromCAD ? 4 : 3)} 
+                  className="w-2/3 bg-[#22c55e] text-white font-bold text-lg p-4 rounded-xl hover:bg-[#1ea950] transition-colors shadow-md flex items-center justify-center gap-2"
+                >
+                  {isFromCAD ? "Skip to Openings (Layout Auto-Filled) ➔" : "Continue to Layout"}
+                </button>
               </div>
             </div>
           )}
 
           {/* --- STEP 3: LAYOUT --- */}
-          {currentStep === 3 && floorsData[activeFloor] && (
+          {currentStep === 3 && floorsData[activeFloor] && !isFromCAD && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
               
               <div className="mb-8 border-b border-gray-100 pb-6 flex justify-between items-end">
@@ -992,7 +1245,7 @@ export default function Estimator() {
                                                    <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
                                                  </select>
                                                ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
-                                            </div>
+                                          </div>
                                             <input type="number" placeholder="Breadth" className={inputStyle} value={bath.breadth} onChange={e => updateFlatData(fIdx, 'bathrooms', bIdx, 'breadth', e.target.value)} />
                                           </div>
                                         </div>
@@ -1010,13 +1263,9 @@ export default function Estimator() {
                                         <div>
                                           <label className="text-xs font-bold text-gray-500 uppercase block mb-3">Attached To</label>
                                           <div className="relative">
-                                            <select className={selectStyle} value={bath.attachedTo || ''} onChange={(e) => updateFlatData(fIdx, 'bathrooms', bIdx, 'attachedTo', e.target.value)}>
+                                            <select className={selectStyle} value={bath.attachedTo || ''} onChange={e => updateFlatData(fIdx, 'bathrooms', bIdx, 'attachedTo', e.target.value)}>
                                               <option value="">Select Room</option>
-                                              {flat.bedrooms.map((_: any, bedIdx: number) => (
-                                                <option key={bedIdx} value={`Bedroom ${bedIdx + 1}`}>Bedroom {bedIdx + 1}</option>
-                                              ))}
-                                              <option value="Hall">Hall</option>
-                                              <option value="Kitchen">Kitchen</option>
+                                              {flat.bedrooms.map((bed: any, bedIdx: number) => <option key={bed.id} value={bed.name || `Bedroom ${bedIdx + 1}`}>{bed.name || `Bedroom ${bedIdx + 1}`}</option>)}
                                             </select>
                                             <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-sm">▼</div>
                                           </div>
@@ -1144,47 +1393,11 @@ export default function Estimator() {
                   </div>
                 </div>
               ) : (
-                <div className="space-y-6">
-                  {hasStairs && (
-                      <div className="p-6 border border-blue-100 bg-blue-50/50 rounded-2xl mb-4">
-                        <label className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3 block">Stairs Area Provision</label>
-                        <div className="flex gap-4 items-center">
-                          <div className="w-full">
-                            <div className="flex justify-between items-end mb-1">
-                               <label className="text-[10px] font-bold text-blue-500 uppercase tracking-wider block mb-0">Length</label>
-                               {isPremium ? (
-                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
-                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
-                                 </select>
-                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
-                            </div>
-                            <input type="number" inputMode="decimal" min="0" placeholder={`Length`} className={inputStyle} value={stairsDim.length} onChange={(e) => setStairsDim({ ...stairsDim, length: e.target.value })} />
-                          </div>
-                          <span className="font-bold text-gray-400 mt-4">×</span>
-                          <div className="w-full">
-                            <div className="flex justify-between items-end mb-1">
-                               <label className="text-[10px] font-bold text-blue-500 uppercase tracking-wider block mb-0">Width</label>
-                               {isPremium ? (
-                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
-                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
-                                 </select>
-                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
-                            </div>
-                            <input type="number" inputMode="decimal" min="0" placeholder={`Width`} className={inputStyle} value={stairsDim.width} onChange={(e) => setStairsDim({ ...stairsDim, width: e.target.value })} />
-                          </div>
-                        </div>
-                      </div>
-                  )}
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {[
-                      { key: 'hall', label: 'Hall/Living Room' }, 
-                      { key: 'kitchenDining', label: 'Kitchen & Dining' }, 
-                      { key: 'foyer', label: 'Foyer' }
-                    ].map((room) => (
-                      <div key={room.key} className="p-5 border border-gray-100 bg-white rounded-2xl shadow-sm hover:shadow-md transition-shadow">
+                <div className="space-y-8">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="p-5 border border-gray-100 bg-white rounded-2xl shadow-sm">
                         <div className="flex justify-between items-end mb-2">
-                           <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">{room.label}</label>
+                           <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Hall/Living Room</label>
                            {isPremium ? (
                              <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
                                <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
@@ -1192,127 +1405,130 @@ export default function Estimator() {
                            ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
                         </div>
                         <div className="flex gap-4 items-center mt-2">
-                          <input type="number" inputMode="decimal" min="0" placeholder="Length" className={inputStyle} value={floorsData[activeFloor]?.[room.key]?.length || ''} onChange={(e) => updateFloorData(room.key, null, 'length', e.target.value)} />
+                          <input type="number" placeholder="Length" className={inputStyle} value={floorsData[activeFloor].hall?.length || ''} onChange={e => updateFloorData('hall', null, 'length', e.target.value)} />
                           <span className="font-bold text-gray-300">×</span>
-                          <input type="number" inputMode="decimal" min="0" placeholder="Breadth" className={inputStyle} value={floorsData[activeFloor]?.[room.key]?.breadth || ''} onChange={(e) => updateFloorData(room.key, null, 'breadth', e.target.value)} />
+                          <input type="number" placeholder="Breadth" className={inputStyle} value={floorsData[activeFloor].hall?.breadth || ''} onChange={e => updateFloorData('hall', null, 'breadth', e.target.value)} />
                         </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="space-y-4 pt-6 border-t border-gray-100">
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="font-bold text-lg text-gray-900">Bedrooms</h3>
-                      <button onClick={addBedroom} className="text-sm font-semibold text-[#22c55e] bg-green-50 px-4 py-2 rounded-lg hover:bg-green-100 transition-colors">+ Add Room</button>
                     </div>
-                    {floorsData[activeFloor]?.bedrooms?.map((room: any, i: number) => (
-                      <div key={room.id} className="flex flex-col md:flex-row gap-4 items-center p-4 border border-gray-100 bg-white rounded-xl shadow-sm">
-                        <span className="text-sm font-bold text-gray-500 w-full md:w-24">Bedroom {i + 1}</span>
-                        <div className="flex gap-4 w-full items-center">
-                          <div className="w-full">
-                            <div className="flex justify-between items-end mb-1">
-                               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Length</label>
-                               {isPremium ? (
-                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
-                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
-                                 </select>
-                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
-                            </div>
-                            <input type="number" inputMode="decimal" min="0" placeholder="Length" className={inputStyle} value={room.length} onChange={(e) => updateFloorData('bedrooms', i, 'length', e.target.value)} />
-                          </div>
-                          <span className="font-bold text-gray-300 mt-4">×</span>
-                          <div className="w-full">
-                            <div className="flex justify-between items-end mb-1">
-                               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Breadth</label>
-                               {isPremium ? (
-                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
-                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
-                                 </select>
-                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
-                            </div>
-                            <input type="number" inputMode="decimal" min="0" placeholder="Breadth" className={inputStyle} value={room.breadth} onChange={(e) => updateFloorData('bedrooms', i, 'breadth', e.target.value)} />
-                          </div>
+                    <div className="p-5 border border-gray-100 bg-white rounded-2xl shadow-sm">
+                        <div className="flex justify-between items-end mb-2">
+                           <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Kitchen & Dining</label>
+                           {isPremium ? (
+                             <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                               <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                             </select>
+                           ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
                         </div>
-                        <button onClick={() => removeBedroom(i)} className="text-red-400 hover:text-red-600 bg-red-50 p-3 rounded-lg md:ml-auto mt-4 md:mt-0">🗑️</button>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="space-y-4 pt-6 border-t border-gray-100">
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="font-bold text-lg text-gray-900">Bathrooms</h3>
-                      <button onClick={addBathroom} className="text-sm font-semibold text-[#22c55e] bg-green-50 px-4 py-2 rounded-lg hover:bg-green-100 transition-colors">+ Add Bath</button>
+                        <div className="flex gap-4 items-center mt-2">
+                          <input type="number" placeholder="Length" className={inputStyle} value={floorsData[activeFloor].kitchenDining?.length || ''} onChange={e => updateFloorData('kitchenDining', null, 'length', e.target.value)} />
+                          <span className="font-bold text-gray-300">×</span>
+                          <input type="number" placeholder="Breadth" className={inputStyle} value={floorsData[activeFloor].kitchenDining?.breadth || ''} onChange={e => updateFloorData('kitchenDining', null, 'breadth', e.target.value)} />
+                        </div>
                     </div>
-                    {floorsData[activeFloor]?.bathrooms?.map((room: any, i: number) => (
-                      <div key={room.id} className="p-4 border border-gray-100 bg-white rounded-xl shadow-sm space-y-4">
-                        <div className="flex flex-col md:flex-row gap-4 items-center">
-                          <span className="text-sm font-bold text-gray-500 w-full md:w-24">Bathroom {i + 1}</span>
+                  </div>
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center"><h3 className="font-bold text-gray-900">Bedrooms</h3><button onClick={addBedroom} className="text-sm font-semibold text-[#22c55e] bg-green-50 px-4 py-2 rounded-lg hover:bg-green-100 transition-colors">+ Add Bedroom</button></div>
+                    {floorsData[activeFloor].bedrooms?.map((room: any, i: number) => (
+                        <div key={room.id} className="flex flex-col md:flex-row gap-4 items-center p-4 border border-gray-100 bg-white rounded-xl shadow-sm">
+                          <span className="text-sm font-bold text-gray-500 w-full md:w-24">Bedroom {i + 1}</span>
                           <div className="flex gap-4 w-full items-center">
-                            <div className="w-full">
-                              <div className="flex justify-between items-end mb-1">
-                                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Length</label>
-                                 {isPremium ? (
-                                   <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
-                                     <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
-                                   </select>
-                                 ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                              <div className="w-full">
+                                <div className="flex justify-between items-end mb-1">
+                                   <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Length</label>
+                                   {isPremium ? (
+                                     <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                       <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                     </select>
+                                   ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                                </div>
+                                <input type="number" placeholder="Length" className={inputStyle} value={room.length} onChange={(e) => updateFloorData('bedrooms', i, 'length', e.target.value)} />
                               </div>
-                              <input type="number" inputMode="decimal" min="0" placeholder="Length" className={inputStyle} value={room.length} onChange={(e) => updateFloorData('bathrooms', i, 'length', e.target.value)} />
-                            </div>
-                            <span className="font-bold text-gray-300 mt-4">×</span>
-                            <div className="w-full">
-                              <div className="flex justify-between items-end mb-1">
-                                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Breadth</label>
-                                 {isPremium ? (
-                                   <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
-                                     <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
-                                   </select>
-                                 ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                              <span className="font-bold text-gray-300 mt-4">×</span>
+                              <div className="w-full">
+                                <div className="flex justify-between items-end mb-1">
+                                   <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Breadth</label>
+                                   {isPremium ? (
+                                     <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                       <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                     </select>
+                                   ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                                </div>
+                                <input type="number" placeholder="Breadth" className={inputStyle} value={room.breadth} onChange={(e) => updateFloorData('bedrooms', i, 'breadth', e.target.value)} />
                               </div>
-                              <input type="number" inputMode="decimal" min="0" placeholder="Breadth" className={inputStyle} value={room.breadth} onChange={(e) => updateFloorData('bathrooms', i, 'breadth', e.target.value)} />
-                            </div>
                           </div>
-                          <button onClick={() => removeBathroom(i)} className="text-red-400 hover:text-red-600 bg-red-50 p-3 rounded-lg md:ml-auto mt-4 md:mt-0">🗑️</button>
+                          <button onClick={() => removeBedroom(i)} className="text-red-400 hover:text-red-600 bg-red-50 p-3 rounded-lg md:ml-auto mt-4 md:mt-0">🗑️</button>
                         </div>
-                        
-                        <div className="flex gap-4 md:pl-28">
-                          <button type="button" onClick={() => updateFloorData('bathrooms', i, 'isAttached', false)} className={`flex-1 p-2.5 text-sm rounded-xl font-semibold transition-all border ${!room.isAttached ? 'bg-gray-900 border-gray-900 text-white shadow-md' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>Common</button>
-                          <button type="button" onClick={() => updateFloorData('bathrooms', i, 'isAttached', true)} className={`flex-1 p-2.5 text-sm rounded-xl font-semibold transition-all border ${room.isAttached ? 'bg-gray-900 border-gray-900 text-white shadow-md' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>Attached</button>
-                        </div>
-
-                        {/* Advanced Bathroom Feature Logic for Private Residence */}
-                        {room.isAttached && (
-                          <div className="mt-4 p-4 border border-gray-200 bg-gray-50 rounded-xl md:ml-28 space-y-4">
-                            <div>
-                              <label className="text-xs font-bold text-gray-500 uppercase block mb-3">Attached To</label>
-                              <div className="relative">
-                                <select className={selectStyle} value={room.attachedTo || ''} onChange={(e) => updateFloorData('bathrooms', i, 'attachedTo', e.target.value)}>
-                                  <option value="">Select Room</option>
-                                  {floorsData[activeFloor]?.bedrooms?.map((b: any, bIdx: number) => (
-                                    <option key={bIdx} value={`Bedroom ${bIdx + 1}`}>Bedroom {bIdx + 1}</option>
-                                  ))}
-                                  <option value="Hall">Hall</option>
-                                  <option value="Kitchen">Kitchen</option>
-                                </select>
-                                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-sm">▼</div>
+                    ))}
+                  </div>
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center"><h3 className="font-bold text-gray-900">Bathrooms</h3><button onClick={addBathroom} className="text-sm font-semibold text-[#22c55e] bg-green-50 px-4 py-2 rounded-lg hover:bg-green-100 transition-colors">+ Add Bath</button></div>
+                    {floorsData[activeFloor].bathrooms?.map((room: any, i: number) => (
+                        <div key={room.id} className="p-5 border border-gray-100 bg-white rounded-xl shadow-sm space-y-4 relative">
+                          {floorsData[activeFloor].bathrooms.length > 1 && <button onClick={() => removeBathroom(i)} className="absolute top-4 right-4 text-gray-400 hover:text-red-500">✕</button>}
+                          <div className="flex flex-col md:flex-row gap-4 items-center pr-6">
+                              <span className="text-sm font-bold text-gray-500 w-full md:w-24">Bath {i + 1}</span>
+                              <div className="flex gap-4 w-full items-center">
+                                <div className="w-full">
+                                  <div className="flex justify-between items-end mb-1">
+                                     <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Length</label>
+                                     {isPremium ? (
+                                       <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                         <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                       </select>
+                                     ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                                  </div>
+                                  <input type="number" placeholder="Length" className={inputStyle} value={room.length} onChange={(e) => updateFloorData('bathrooms', i, 'length', e.target.value)} />
+                                </div>
+                                <span className="font-bold text-gray-300 mt-4">×</span>
+                                <div className="w-full">
+                                  <div className="flex justify-between items-end mb-1">
+                                     <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Breadth</label>
+                                     {isPremium ? (
+                                       <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                         <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                       </select>
+                                     ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                                  </div>
+                                  <input type="number" placeholder="Breadth" className={inputStyle} value={room.breadth} onChange={(e) => updateFloorData('bathrooms', i, 'breadth', e.target.value)} />
+                                </div>
                               </div>
-                            </div>
-                            <div>
-                              <span className="text-xs font-bold text-gray-500 uppercase block mb-3">Layout Position</span>
-                              <div className="flex flex-col gap-3">
-                                <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-white rounded-lg transition-colors">
-                                  <input type="radio" checked={room.layoutType === 'inside'} onChange={() => updateFloorData('bathrooms', i, 'layoutType', 'inside')} className="w-4 h-4 text-[#22c55e] focus:ring-[#22c55e]" />
-                                  <span className="font-medium text-sm text-gray-700">Inside room footprint <span className="text-gray-400 font-normal">(Ignores extra area)</span></span>
-                                </label>
-                                <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-white rounded-lg transition-colors">
-                                  <input type="radio" checked={room.layoutType === 'outside' || !room.layoutType} onChange={() => updateFloorData('bathrooms', i, 'layoutType', 'outside')} className="w-4 h-4 text-[#22c55e] focus:ring-[#22c55e]" />
-                                  <span className="font-medium text-sm text-gray-700">Outside room footprint <span className="text-gray-400 font-normal">(Adds to total area)</span></span>
-                                </label>
-                              </div>
-                            </div>
                           </div>
-                        )}
-                      </div>
+                          <div className="flex gap-4 md:pl-32">
+                              <button type="button" onClick={() => updateFloorData('bathrooms', i, 'isAttached', false)} className={`flex-1 p-2.5 text-sm rounded-xl font-semibold transition-all border ${!room.isAttached ? 'bg-gray-900 border-gray-900 text-white shadow-md' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>Common</button>
+                              <button type="button" onClick={() => updateFloorData('bathrooms', i, 'isAttached', true)} className={`flex-1 p-2.5 text-sm rounded-xl font-semibold transition-all border ${room.isAttached ? 'bg-gray-900 border-gray-900 text-white shadow-md' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>Attached</button>
+                          </div>
+                          {room.isAttached && (
+                            <div className="mt-4 p-4 border border-gray-200 bg-gray-50 rounded-xl md:ml-32 space-y-4">
+                              <div>
+                                <label className="text-xs font-bold text-gray-500 uppercase block mb-3">Attached To</label>
+                                <div className="relative">
+                                  <select className={selectStyle} value={room.attachedTo || ''} onChange={(e) => updateFloorData('bathrooms', i, 'attachedTo', e.target.value)}>
+                                    <option value="">Select Room</option>
+                                    {floorsData[activeFloor]?.bedrooms?.map((b: any, bIdx: number) => (
+                                      <option key={bIdx} value={`Bedroom ${bIdx + 1}`}>Bedroom {bIdx + 1}</option>
+                                    ))}
+                                    <option value="Hall">Hall</option>
+                                    <option value="Kitchen">Kitchen</option>
+                                  </select>
+                                  <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-sm">▼</div>
+                                </div>
+                              </div>
+                              <div>
+                                <span className="text-xs font-bold text-gray-500 uppercase block mb-3">Layout Position</span>
+                                <div className="flex flex-col gap-3">
+                                  <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-white rounded-lg transition-colors">
+                                    <input type="radio" checked={room.layoutType === 'inside'} onChange={() => updateFloorData('bathrooms', i, 'layoutType', 'inside')} className="w-4 h-4 text-[#22c55e] focus:ring-[#22c55e]" />
+                                    <span className="font-medium text-sm text-gray-700">Inside room footprint <span className="text-gray-400 font-normal">(Ignores extra area)</span></span>
+                                  </label>
+                                  <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-white rounded-lg transition-colors">
+                                    <input type="radio" checked={room.layoutType === 'outside' || !room.layoutType} onChange={() => updateFloorData('bathrooms', i, 'layoutType', 'outside')} className="w-4 h-4 text-[#22c55e] focus:ring-[#22c55e]" />
+                                    <span className="font-medium text-sm text-gray-700">Outside room footprint <span className="text-gray-400 font-normal">(Adds to total area)</span></span>
+                                  </label>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                     ))}
                   </div>
                 </div>
@@ -1338,7 +1554,7 @@ export default function Estimator() {
               <div className="flex gap-4 pt-6">
                 <button onClick={() => { 
                     setErrorMsg(""); 
-                    if (activeFloor === 0) setCurrentStep(2); 
+                    if (activeFloor === 0) setCurrentStep(isFromCAD ? 2 : 3); 
                     else { setActiveFloor(activeFloor - 1); setCurrentStep(4); }
                 }} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
                 <button onClick={() => validateAndProceed(4)} className="w-2/3 bg-[#22c55e] text-white font-bold text-lg p-4 rounded-xl hover:bg-[#1ea950] transition-colors shadow-md">Continue to Openings</button>
@@ -1452,8 +1668,8 @@ export default function Estimator() {
                         </div>
                         
                         <div className="flex gap-4">
-                            <button onClick={() => setCurrentStep(3)} className="w-1/3 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
-                            <button onClick={handleTransitionToUpperFlats} className="w-2/3 bg-orange-600 text-white font-bold text-lg p-4 rounded-xl hover:bg-orange-700 transition-colors shadow-md">Proceed to 1st Floor Layout ➔</button>
+                            <button onClick={() => setCurrentStep(isFromCAD ? 2 : 3)} className="w-1/3 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
+                            <button onClick={handleTransitionToUpperFlats} className="w-2/3 bg-orange-600 text-white font-bold text-lg p-4 rounded-xl hover:bg-orange-700 transition-colors shadow-md">Proceed to 1st Floor {isFromCAD ? "Openings" : "Layout"} ➔</button>
                         </div>
                     </div>
                   ) : (
@@ -1468,7 +1684,7 @@ export default function Estimator() {
                   )
                 ) : (
                   <div className="flex gap-4">
-                    <button onClick={() => setCurrentStep(3)} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
+                    <button onClick={() => setCurrentStep(isFromCAD ? 2 : 3)} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
                     <button onClick={() => { setErrorMsg(""); setCurrentStep(5); window.scrollTo(0,0); }} className="w-2/3 bg-gray-900 text-white font-bold text-lg p-4 rounded-xl hover:bg-[#22c55e] transition-colors shadow-md">
                       Continue to {boqScope === 'civil_only' ? 'Core Materials' : 'Pricing'} ➔
                     </button>
@@ -1827,61 +2043,68 @@ export default function Estimator() {
                 </div>
               )}
 
-              {boqReport?.floorReports?.map((floor: any, fIdx: number) => (
-                <div key={fIdx} className="space-y-6 print:break-inside-avoid mb-12">
-                  <h2 className="text-lg font-bold text-[#15803d] bg-[#22c55e]/10 inline-block px-4 py-2 rounded-xl border border-[#22c55e]/20 print:border-none print:px-0 print:bg-transparent print:text-black print:text-xl">
-                    {floor.floorName}
-                  </h2>
-                  
-                  {floor.sections?.map((section: any, idx: number) => (
-                    <div key={idx} className="border border-gray-100 rounded-2xl overflow-hidden bg-white shadow-sm print:border-b print:rounded-none print:shadow-none mb-6">
-                      <div className="bg-gray-50 p-4 border-b border-gray-100 print:bg-gray-100 print:p-2">
-                        <h3 className="font-bold text-gray-800 text-sm uppercase tracking-wider">{section.title}</h3>
-                      </div>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse min-w-[600px] print:min-w-full print:text-sm">
-                          <thead>
-                            <tr className="border-b border-gray-100 print:border-gray-300">
-                              <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider print:p-2">Material/Service</th>
-                              <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-center print:p-2">Unit</th>
-                              <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-center print:p-2">Qty</th>
-                              <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Rate</th>
-                              <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Amount</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {section.items?.map((item: any, i: number) => (
-                              <tr key={i} className="border-b border-gray-50 hover:bg-gray-50 transition-colors print:border-gray-200">
-                                <td className="p-4 font-semibold text-sm text-gray-900 print:p-2">{item?.name}</td>
-                                <td className="p-4 text-center font-medium text-sm text-gray-500 print:p-2">{item?.unit}</td>
-                                <td className="p-4 text-center font-bold text-sm text-[#22c55e] print:p-2 print:text-black">{item?.qty || 0}</td>
-                                <td className="p-4 text-right font-medium text-sm text-gray-600 print:p-2">₹{item?.rate || 0}</td>
-                                <td className="p-4 text-right font-bold text-sm text-gray-900 print:p-2">₹{Math.ceil((item?.qty || 0) * (item?.rate || 0)).toLocaleString()}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                          <tfoot>
-                            <tr className="bg-gray-50/50 print:bg-transparent">
-                              <td colSpan={4} className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Section Subtotal:</td>
-                              <td className="p-4 font-bold text-base text-gray-900 text-right print:p-2">₹{(section?.sectionTotal || 0).toLocaleString()}</td>
-                            </tr>
-                          </tfoot>
-                        </table>
-                      </div>
-                    </div>
-                  ))}
+              {/* FINAL REPORT MAP - WRAPS SECTIONS */}
+              {boqReport.floorReports.map((floor: any, fIdx: number) => (
+                <div key={fIdx} className="mb-10">
+                  {floor.sections?.map((section: any, idx: number) => {
+                    const isHidden = hiddenSections[`f${fIdx}_s${idx}`];
+                    return (
+                      <div key={idx} className={`border border-gray-100 rounded-2xl overflow-hidden bg-white shadow-sm print:border-b print:rounded-none print:shadow-none mb-6 ${isHidden ? 'opacity-70 print:hidden' : ''}`}>
+                        <div className="bg-gray-50 p-4 border-b border-gray-100 print:bg-gray-100 print:p-2 flex justify-between items-center">
+                          <h3 className="font-bold text-gray-800 text-sm uppercase tracking-wider">{section.title}</h3>
+                          
+                          <button onClick={() => toggleSection(fIdx, idx)} className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-colors print:hidden ${isHidden ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`} title="Hide this section from the final bill and total calculation">
+                            {isHidden ? '🚫 Hidden from Total' : '👁️ Visible'}
+                          </button>
+                        </div>
 
+                        {!isHidden && (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse min-w-[600px] print:min-w-full print:text-sm">
+                              <thead>
+                                <tr className="border-b border-gray-100 print:border-gray-300">
+                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider print:p-2">Material/Service</th>
+                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-center print:p-2">Unit</th>
+                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-center print:p-2">Qty</th>
+                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Rate</th>
+                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Amount</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {section.items?.map((item: any, i: number) => (
+                                  <tr key={i} className="border-b border-gray-50 hover:bg-gray-50 transition-colors print:border-gray-200">
+                                    <td className="p-4 font-semibold text-sm text-gray-900 print:p-2">{item?.name}</td>
+                                    <td className="p-4 text-center font-medium text-sm text-gray-500 print:p-2">{item?.unit}</td>
+                                    <td className="p-4 text-center font-bold text-sm text-[#22c55e] print:p-2 print:text-black">{item?.qty || 0}</td>
+                                    <td className="p-4 text-right font-medium text-sm text-gray-600 print:p-2">₹{item?.rate || 0}</td>
+                                    <td className="p-4 text-right font-bold text-sm text-gray-900 print:p-2">₹{Math.ceil((item?.qty || 0) * (item?.rate || 0)).toLocaleString()}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                              <tfoot>
+                                <tr className="bg-gray-50/50 print:bg-transparent">
+                                  <td colSpan={4} className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Section Subtotal:</td>
+                                  <td className="p-4 font-bold text-base text-gray-900 text-right print:p-2">₹{(section?.sectionTotal || 0).toLocaleString()}</td>
+                                </tr>
+                              </tfoot>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  
                   <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200 mt-4 flex flex-col md:flex-row justify-between md:items-center gap-2 print:bg-transparent print:border-black print:border-2">
-                      <h3 className="font-bold text-gray-900 text-lg uppercase tracking-wider">{floor.floorName} Subtotal</h3>
-                      <span className="text-2xl font-black text-[#15803d] print:text-black">₹{(floor.floorTotal || 0).toLocaleString()}</span>
+                    <h3 className="font-bold text-gray-900 text-lg uppercase tracking-wider">{floor.floorName} Subtotal</h3>
+                    <span className="text-2xl font-black text-[#15803d] print:text-black">₹{getVisibleFloorTotal(floor, fIdx).toLocaleString()}</span>
                   </div>
                 </div>
               ))}
-              
+
               <div className="bg-gray-900 text-white p-8 rounded-2xl text-center shadow-lg mt-12 print:shadow-none print:bg-white print:text-black print:border-2 print:border-black print:break-inside-avoid">
                 <p className="text-sm font-semibold uppercase tracking-widest text-gray-400 mb-2 print:text-gray-600">Total Project Estimate</p>
                 <h2 className="text-5xl md:text-6xl font-black text-[#22c55e] print:text-black">
-                  ₹ {Math.ceil(boqReport?.grandTotal || 0).toLocaleString()}
+                  ₹ {Math.ceil(getVisibleGrandTotal()).toLocaleString()}
                 </h2>
               </div>
 
