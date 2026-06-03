@@ -451,21 +451,17 @@ export default function Dashboard() {
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           
-          {/* SUSPENSE: 2D Layout - Coming Soon */}
-          <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-xl opacity-60 cursor-not-allowed relative overflow-hidden flex flex-col">
-            <div className="absolute top-6 right-6 bg-gray-800 text-[#22c55e] border border-[#22c55e]/30 text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full z-20">
-              Coming Soon
+          {/* Active: Generate 2D Layout */}
+          <Link href="/generate-2d-layout" className="bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden flex flex-col">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none transition-all group-hover:bg-purple-500/30"></div>
+            <div className="w-14 h-14 bg-purple-500/20 text-purple-400 rounded-xl flex items-center justify-center mb-6 relative z-10">
+              <span className="text-2xl">📐</span>
             </div>
-            <div className="absolute top-0 right-0 w-32 h-32 bg-[#22c55e]/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none"></div>
-            
-            <div className="w-14 h-14 bg-gray-800 text-gray-500 rounded-xl flex items-center justify-center mb-6 relative z-10">
-              <span className="text-2xl grayscale">📐</span>
-            </div>
-            <h2 className="text-2xl font-bold text-gray-300 mb-2 relative z-10">Generate 2D Layout</h2>
-            <p className="text-gray-500 text-sm font-medium leading-relaxed relative z-10 flex-grow">
+            <h2 className="text-2xl font-bold text-white mb-2 relative z-10">Generate 2D Layout</h2>
+            <p className="text-gray-400 text-sm font-medium leading-relaxed relative z-10 flex-grow">
               Provide your plot dimensions and facing direction to auto-generate 3 distinct architectural floor plan concepts instantly.
             </p>
-          </div>
+          </Link>
           
           {/* Estimate BOQ */}
           <Link href="/estimate-boq" className="bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden flex flex-col">
