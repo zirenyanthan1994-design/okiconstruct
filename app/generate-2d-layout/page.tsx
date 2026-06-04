@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 
@@ -8,7 +8,7 @@ const CanvasEditor = dynamic(() => import('./CanvasEditor'), {
   loading: () => <div className="p-10 text-center font-bold text-gray-500 bg-white rounded-xl shadow-sm border border-gray-200">Loading Workspace...</div>
 });
 
-interface CanvasRoom { id: string; name: string; widthFt: number; heightFt: number; x: number; y: number; }
+interface CanvasRoom { id: string; name: string; widthFt: number; heightFt: number; x: number; y: number; rotation?: number; }
 interface RoomDim { length: string; breadth: string; }
 interface Bedroom extends RoomDim { id: number; name: string; }
 interface Bathroom extends RoomDim { id: number; type: 'common' | 'attached'; attachedTo: string; placement: 'inside' | 'outside'; }
@@ -23,14 +23,12 @@ interface FlatConfig {
   bathrooms: Bathroom[];
 }
 
-// --- EXTRACTED COMPONENTS ---
 const ToggleBtn = ({ label, active, onClick }: { label: string, active: boolean, onClick: () => void }) => (
   <button type="button" onClick={onClick} className={`py-3 px-6 rounded-lg text-sm font-semibold transition-all w-full ${active ? 'bg-blue-50 border-2 border-blue-600 text-blue-700' : 'bg-white border-2 border-gray-200 text-gray-600 hover:border-blue-300'}`}>
     {label}
   </button>
 );
 
-// 🛠️ THE FIX: Redesigned NumberInput completely bypasses native mobile arrows
 const NumberInput = ({ value, onChange, unit, placeholder }: { value: string, onChange: (v: string) => void, unit: string, placeholder: string }) => {
   return (
     <div className="relative flex-1 flex items-center border border-gray-300 rounded-lg focus-within:border-blue-500 overflow-hidden bg-white transition-colors">
@@ -77,18 +75,15 @@ const SingleDimensionInput = ({ label, value, unit, onChange }: { label: string,
   </div>
 );
 
-// --- MAIN APPLICATION COMPONENT ---
-
 export default function LayoutGenerator() {
-  const [isPremium] = useState(false); // Make sure to sync this dynamically with Firebase later!
+  const canvasRef = useRef<any>(null); // To trigger downloads from outside
+
+  const [isPremium] = useState(false); 
   const [generationCount, setGenerationCount] = useState(0);
   const [savedProjectsDb, setSavedProjectsDb] = useState<string[]>([]);
   const [isSaved, setIsSaved] = useState(false);
-  
-  // 🧱 NEW WALL STATE: Tracks which limit they hit
   const [limitError, setLimitError] = useState<'PROJECT' | 'LAYOUT' | null>(null);
 
-  // Hidden AI Preferences Profile State
   const [aiPreferences, setAiPreferences] = useState({
     openConceptKitchen: 0.50,
     rearPrivacyBathrooms: 0.50,
@@ -105,11 +100,9 @@ export default function LayoutGenerator() {
   const [wallThickness, setWallThickness] = useState('Single Brick (5")');
   const [autoFillGaps, setAutoFillGaps] = useState(true);
 
-  // SHARED
   const [stairsDim, setStairsDim] = useState<RoomDim>({ length: '12', breadth: '8' });
   const [passageWidth, setPassageWidth] = useState('4');
 
-  // PRIVATE RESIDENCE STATE
   const [hall, setHall] = useState<RoomDim>({ length: '14', breadth: '14' });
   const [kitchen, setKitchen] = useState<RoomDim>({ length: '14', breadth: '14' });
   const [bedrooms, setBedrooms] = useState<Bedroom[]>([
@@ -121,7 +114,6 @@ export default function LayoutGenerator() {
     { id: 2, type: 'common', attachedTo: '', placement: 'outside', length: '6', breadth: '4' }
   ]);
 
-  // APARTMENT COMPLEX STATE
   const [aptFlatsCount, setAptFlatsCount] = useState(2);
   const [aptLayout, setAptLayout] = useState('Single Line');
   const [aptFrontEntrance, setAptFrontEntrance] = useState('Yes');
@@ -130,7 +122,6 @@ export default function LayoutGenerator() {
   const [externalCorridorWidth, setExternalCorridorWidth] = useState('6');
   const [aptFlats, setAptFlats] = useState<FlatConfig[]>([]);
 
-  // COMMERCIAL STATE
   const [commChambersCount, setCommChambersCount] = useState(4);
   const [commChambersDim, setCommChambersDim] = useState<RoomDim>({ length: '15', breadth: '15' });
   const [commBathType, setCommBathType] = useState('Shared Floor Bathrooms');
@@ -207,7 +198,6 @@ export default function LayoutGenerator() {
         window.scrollTo({ top: 0, behavior: 'smooth' }); return;
     }
     
-    // 🛑 1-PROJECT WALL
     if (!isPremium && savedProjectsDb.length >= 1 && !savedProjectsDb.includes(projectName.trim().toLowerCase())) {
         setLimitError('PROJECT');
         window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); return;
@@ -246,13 +236,11 @@ export default function LayoutGenerator() {
         window.scrollTo({ top: 0, behavior: 'smooth' }); return;
     }
 
-    // 🛑 1-PROJECT WALL
     if (!isPremium && savedProjectsDb.length >= 1 && !savedProjectsDb.includes(projNameClean)) {
         setLimitError('PROJECT');
         window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); return;
     }
 
-    // 🛑 3-LAYOUT WALL
     if (!isPremium && generationCount >= 3) {
         setLimitError('LAYOUT');
         window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); return;
@@ -791,8 +779,23 @@ export default function LayoutGenerator() {
         {canvasRooms.length > 0 && (
           <div className="mt-8 space-y-6">
             <div className={`bg-white rounded-2xl shadow-sm border border-gray-200 p-8 ${isLocked ? 'pointer-events-none opacity-90' : ''}`}>
-              <h2 className="text-xl font-bold text-gray-900 mb-6 text-center border-b border-gray-100 pb-4">Calculated Structural Layout</h2>
-              <CanvasEditor initialRooms={canvasRooms} entranceType={entranceType} wallThickness={wallThickness} />
+              
+              {/* THE NEW EXTERNAL EXPORT BUTTONS (ONLY VISIBLE IF SAVED) */}
+              <div className="flex flex-col sm:flex-row justify-between items-center border-b border-gray-100 pb-4 mb-6">
+                 <h2 className="text-xl font-bold text-gray-900 text-center sm:text-left w-full sm:w-auto mb-4 sm:mb-0">Calculated Structural Layout</h2>
+                 {isSaved && (
+                   <div className="flex gap-2 w-full sm:w-auto">
+                     <button onClick={() => canvasRef.current?.downloadImage()} className="flex-1 bg-white border border-gray-200 text-gray-700 text-xs font-bold py-2 px-3 rounded shadow-sm hover:bg-gray-50 transition-all flex items-center justify-center">
+                       🖼️ JPG
+                     </button>
+                     <button onClick={() => canvasRef.current?.downloadCAD()} className="flex-1 bg-[#22c55e] text-white text-xs font-bold py-2 px-3 rounded shadow-sm hover:bg-[#1ea950] transition-all flex items-center justify-center">
+                       📐 CAD
+                     </button>
+                   </div>
+                 )}
+              </div>
+              
+              <CanvasEditor ref={canvasRef} initialRooms={canvasRooms} entranceType={entranceType} wallThickness={wallThickness} />
             </div>
 
             <div className="flex flex-col sm:flex-row gap-4 w-full bg-white p-4 border border-gray-200 rounded-xl shadow-sm">
@@ -805,17 +808,43 @@ export default function LayoutGenerator() {
                 </button>
               ) : (
                 <>
-                  {/* Note: The Download buttons were moved natively into CanvasEditor.tsx in the last update for performance! */}
-                  
                   <button 
                     onClick={() => {
                       setIsNavigating(true);
+
+                      // --- MAGIC FIX: WE CALCULATE THE COLUMNS EXACTLY HOW THE CANVAS DOES ---
+                      const uniqueCorners: { x: number; y: number }[] = [];
+                      const SCALE = 10;
+                      canvasRooms.forEach((r) => {
+                        if (!r.name.toLowerCase().includes('bathroom')) {
+                          const w = r.widthFt * SCALE;
+                          const h = r.heightFt * SCALE;
+                          const rad = (r.rotation || 0) * (Math.PI / 180);
+                          const getRotatedPoint = (px: number, py: number) => ({
+                            x: r.x + px * Math.cos(rad) - py * Math.sin(rad),
+                            y: r.y + px * Math.sin(rad) + py * Math.cos(rad)
+                          });
+                          const pts = [ getRotatedPoint(0, 0), getRotatedPoint(w, 0), getRotatedPoint(0, h), getRotatedPoint(w, h) ];
+                          pts.forEach((p) => {
+                            if (!uniqueCorners.some((uc) => Math.abs(uc.x - p.x) < 5 && Math.abs(uc.y - p.y) < 5)) {
+                              uniqueCorners.push(p);
+                            }
+                          });
+                        }
+                      });
+                      
+                      const exactColumnsCount = uniqueCorners.length;
+                      // -----------------------------------------------------------------------
+
                       const cadData = {
                         isFromCAD: true,
                         projectName, typology, floors, bhk, globalUnit, staircase, entranceType, wallThickness,
                         stairsDim, passageWidth, hall, kitchen, bedrooms, bathrooms,
                         aptFlatsCount, aptLayout, aptFrontEntrance, aptStairCount, aptStairPlacement, externalCorridorWidth, aptFlats,
-                        commChambersCount, commChambersDim, commBathType, commSharedBathCount, commBathDim, commLayout, commStairPlace
+                        commChambersCount, commChambersDim, commBathType, commSharedBathCount, commBathDim, commLayout, commStairPlace,
+                        // NEW FIX: PASSING THE COLUMNS TO THE BOQ PAGE SO IT DOESN'T CRASH!
+                        columnsCount: exactColumnsCount,
+                        footingsCount: exactColumnsCount 
                       };
                       
                       localStorage.setItem('oki_cad_bridge', JSON.stringify(cadData));
@@ -825,7 +854,7 @@ export default function LayoutGenerator() {
                       }, 800);
                     }} 
                     disabled={isNavigating}
-                    className={`flex-1 sm:flex-[2] text-white text-sm font-bold py-3 px-8 rounded-lg shadow transition-all flex items-center justify-center ${isNavigating ? 'bg-gray-600 cursor-not-allowed' : 'bg-[#0f172a] hover:bg-black'}`}
+                    className={`flex-1 sm:flex-[2] text-white text-sm font-bold py-4 px-8 rounded-lg shadow transition-all flex items-center justify-center ${isNavigating ? 'bg-gray-600 cursor-not-allowed' : 'bg-[#0f172a] hover:bg-black'}`}
                   >
                     <span className="mr-2">{isNavigating ? '⏳' : '📊'}</span> 
                     {isNavigating ? 'Loading...' : 'Proceed To Estimate BOQ'}

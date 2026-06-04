@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { Stage, Layer, Rect, Text, Group, Transformer, Line, Arc, Circle, Path } from 'react-konva';
 
 const SCALE = 10;
@@ -31,7 +31,6 @@ interface CanvasEditorProps {
   wallThickness?: string;
 }
 
-// --- MOBILE TOUCH HELPERS ---
 const getDistance = (p1: { x: number; y: number }, p2: { x: number; y: number }) => {
   return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
 };
@@ -40,28 +39,67 @@ const getAngle = (p1: { x: number; y: number }, p2: { x: number; y: number }) =>
   return (Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180) / Math.PI;
 };
 
-export default function CanvasEditor({
+const CanvasEditor = forwardRef(({
   initialRooms,
   entranceType,
   wallThickness = 'Single Brick (5")'
-}: CanvasEditorProps) {
+}: CanvasEditorProps, ref) => {
   const [rooms, setRooms] = useState<CanvasRoom[]>([]);
   const [history, setHistory] = useState<CanvasRoom[][]>([]);
   const [selectedId, selectShape] = useState<string | null>(null);
   
-  // DYNAMIC SCREEN SIZING FOR PERFORMANCE
   const [stageSize, setStageSize] = useState({ width: 1000, height: 600 });
 
   const trRef = useRef<any>(null);
   const stageRef = useRef<any>(null);
 
-  // --- MOBILE TOUCH REFS ---
   const lastDistRef = useRef<number>(0);
   const lastAngleRef = useRef<number>(0);
   const isTransformingRef = useRef<boolean>(false);
 
+  // EXPOSE DOWNLOAD METHODS TO PARENT UI
+  useImperativeHandle(ref, () => ({
+    downloadImage: () => {
+      selectShape(null); 
+      setTimeout(() => {
+        if (!stageRef.current) return;
+        // HIGH RES EXPORT (pixelRatio 4 creates a 5MB+ image)
+        const uri = stageRef.current.toDataURL({ pixelRatio: 4, mimeType: 'image/jpeg', quality: 1 });
+        const link = document.createElement('a');
+        link.download = 'OkiConstruct_Blueprint_HighRes.jpg';
+        link.href = uri;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }, 150);
+    },
+    downloadCAD: () => {
+      let dxf = "0\nSECTION\n2\nENTITIES\n";
+      rooms.forEach(r => {
+        const x = r.x;
+        const y = -r.y; 
+        const w = r.widthFt * SCALE;
+        const h = r.heightFt * SCALE;
+
+        dxf += `0\nLWPOLYLINE\n8\n0\n90\n4\n70\n1\n`;
+        dxf += `10\n${x}\n20\n${y}\n`;
+        dxf += `10\n${x+w}\n20\n${y}\n`;
+        dxf += `10\n${x+w}\n20\n${y-h}\n`;
+        dxf += `10\n${x}\n20\n${y-h}\n`;
+      });
+      dxf += "0\nENDSEC\n0\nEOF\n";
+      
+      const blob = new Blob([dxf], { type: 'application/dxf' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'OkiConstruct_CAD_Layout.dxf';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  }));
+
   useEffect(() => {
-    // Snap canvas exactly to the device screen size to save RAM
     if (typeof window !== 'undefined') {
       setStageSize({
         width: window.innerWidth > 1200 ? 1200 : window.innerWidth,
@@ -81,47 +119,6 @@ export default function CanvasEditor({
       setHistory(history.slice(0, -1));
       selectShape(null);
     }
-  };
-
-  // --- COMPRESSED INSTANT EXPORT ---
-  const downloadImage = () => {
-    selectShape(null); // Hide transformer before screenshot
-    setTimeout(() => {
-      if (!stageRef.current) return;
-      // pixelRatio 1 and quality 0.8 forces a lightweight A4 size export!
-      const uri = stageRef.current.toDataURL({ pixelRatio: 1, mimeType: 'image/jpeg', quality: 0.8 });
-      const link = document.createElement('a');
-      link.download = 'OkiConstruct_Blueprint.jpg';
-      link.href = uri;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    }, 150);
-  };
-
-  const downloadCAD = () => {
-    let dxf = "0\nSECTION\n2\nENTITIES\n";
-    rooms.forEach(r => {
-      const x = r.x;
-      const y = -r.y; 
-      const w = r.widthFt * SCALE;
-      const h = r.heightFt * SCALE;
-
-      dxf += `0\nLWPOLYLINE\n8\n0\n90\n4\n70\n1\n`;
-      dxf += `10\n${x}\n20\n${y}\n`;
-      dxf += `10\n${x+w}\n20\n${y}\n`;
-      dxf += `10\n${x+w}\n20\n${y-h}\n`;
-      dxf += `10\n${x}\n20\n${y-h}\n`;
-    });
-    dxf += "0\nENDSEC\n0\nEOF\n";
-    
-    const blob = new Blob([dxf], { type: 'application/dxf' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'OkiConstruct_CAD_Layout.dxf';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
   };
 
   const gridPattern = useMemo(() => {
@@ -289,7 +286,6 @@ export default function CanvasEditor({
     setRooms(populatedRooms);
     setHistory([]);
     
-    // Auto-center the blueprint when it first loads
     if (stageRef.current) {
         stageRef.current.position({ x: 50, y: 50 });
         stageRef.current.scale({ x: 1, y: 1 });
@@ -351,7 +347,6 @@ export default function CanvasEditor({
     selectShape(null);
   };
 
-  // --- PERFORMANCE: OPTIMIZED WHEEL ZOOM ---
   const handleWheel = (e: any) => {
     e.evt.preventDefault();
     const scaleBy = 1.05;
@@ -376,7 +371,6 @@ export default function CanvasEditor({
     stage.batchDraw();
   };
 
-  // --- PERFORMANCE: OPTIMIZED TOUCH ZOOM ---
   const handleTouchMove = (e: any) => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -528,10 +522,16 @@ export default function CanvasEditor({
     }
   };
 
+  // ------------------------------------------------------------------
+  // 📏 ADVANCED WALL THICKNESS CALCULATION ALGORITHM
+  // Scans layout to count vertical and horizontal walls accurately.
+  // ------------------------------------------------------------------
   let currentMinX = Infinity;
   let currentMinY = Infinity;
   let currentMaxX = -Infinity;
   let currentMaxY = -Infinity;
+  const uniqueX = new Set<number>();
+  const uniqueY = new Set<number>();
 
   rooms.forEach((r) => {
     if (r.x < currentMinX) currentMinX = r.x;
@@ -539,8 +539,14 @@ export default function CanvasEditor({
     
     const w = r.widthFt * SCALE;
     const h = r.heightFt * SCALE;
-    const rad = (r.rotation || 0) * (Math.PI / 180);
     
+    // Track unique wall coordinates (rounded to handle floating point tolerance)
+    uniqueX.add(Math.round(r.x / 5) * 5);
+    uniqueX.add(Math.round((r.x + w) / 5) * 5);
+    uniqueY.add(Math.round(r.y / 5) * 5);
+    uniqueY.add(Math.round((r.y + h) / 5) * 5);
+
+    const rad = (r.rotation || 0) * (Math.PI / 180);
     const pts = [
         { x: r.x, y: r.y },
         { x: r.x + w * Math.cos(rad) - 0 * Math.sin(rad), y: r.y + w * Math.sin(rad) + 0 * Math.cos(rad) },
@@ -556,8 +562,16 @@ export default function CanvasEditor({
     });
   });
 
-  const totalWidthFt = Math.round((currentMaxX - currentMinX) / SCALE);
-  const totalHeightFt = Math.round((currentMaxY - currentMinY) / SCALE);
+  const internalWidthFt = (currentMaxX - currentMinX) / SCALE;
+  const internalHeightFt = (currentMaxY - currentMinY) / SCALE;
+
+  // Multiply wall count by thickness (5" or 9")
+  const wallThickInches = wallThickness.includes('Double') ? 9 : 5;
+  const addedWidthFt = (uniqueX.size * wallThickInches) / 12;
+  const addedHeightFt = (uniqueY.size * wallThickInches) / 12;
+
+  const trueTotalWidthFt = (internalWidthFt + addedWidthFt).toFixed(1);
+  const trueTotalHeightFt = (internalHeightFt + addedHeightFt).toFixed(1);
 
   const uniqueCorners: { x: number; y: number }[] = [];
   rooms.forEach((r) => {
@@ -742,8 +756,6 @@ export default function CanvasEditor({
 
   return (
     <div className="relative w-full border-2 border-gray-300 rounded-lg overflow-hidden bg-white shadow-sm">
-      
-      {/* LEFT TOOLBAR */}
       <button
         onClick={handleUndo}
         disabled={history.length === 0}
@@ -754,17 +766,6 @@ export default function CanvasEditor({
         ↩ Undo
       </button>
 
-      {/* RIGHT EXPORT MENU */}
-      <div className="absolute top-4 right-4 z-20 flex gap-2">
-        <button onClick={downloadImage} className="bg-white text-gray-800 px-3 py-2 text-sm font-bold rounded shadow border border-gray-200 hover:bg-gray-50 transition-colors">
-          🖼️ JPG
-        </button>
-        <button onClick={downloadCAD} className="bg-[#22c55e] text-white px-3 py-2 text-sm font-bold rounded shadow hover:bg-[#1ea950] transition-colors">
-          📐 CAD (.DXF)
-        </button>
-      </div>
-
-      {/* FLOATING ACTION MENU */}
       {selectedElement && (
         <div
           style={toolbarStyle}
@@ -778,7 +779,6 @@ export default function CanvasEditor({
         </div>
       )}
 
-      {/* CANVAS WORKSPACE (Removed the 3000x3000 wrapper to save RAM) */}
       <div 
         tabIndex={0} 
         className="w-full relative overflow-hidden cursor-crosshair focus:outline-none bg-gray-50"
@@ -796,16 +796,26 @@ export default function CanvasEditor({
           ref={stageRef}
         >
           <Layer>
-            {/* GRID BACKGROUND */}
             <Rect id="grid-bg" x={-2000} y={-2000} width={8000} height={8000} fillPatternImage={gridPattern} listening={false} perfectDrawEnabled={false} />
 
-            {/* OVERALL EXTERIOR DIMENSIONS */}
+            {/* OVERALL EXTERIOR DIMENSIONS ON ALL 4 SIDES */}
             {rooms.length > 0 && currentMinX !== Infinity && (
               <Group listening={false}>
+                {/* TOP */}
                 <Line points={[currentMinX, currentMinY - 20, currentMaxX, currentMinY - 20]} stroke="#dc2626" strokeWidth={1.5} perfectDrawEnabled={false} />
-                <Text text={`TOTAL WIDTH: ${totalWidthFt}'`} x={currentMinX + (currentMaxX - currentMinX) / 2 - 45} y={currentMinY - 35} fontSize={12} fontStyle="bold" fill="#dc2626" />
+                <Text text={`TOTAL WIDTH: ${trueTotalWidthFt}'`} x={currentMinX + (currentMaxX - currentMinX) / 2 - 45} y={currentMinY - 35} fontSize={12} fontStyle="bold" fill="#dc2626" />
+                
+                {/* BOTTOM */}
+                <Line points={[currentMinX, currentMaxY + 20, currentMaxX, currentMaxY + 20]} stroke="#dc2626" strokeWidth={1.5} perfectDrawEnabled={false} />
+                <Text text={`TOTAL WIDTH: ${trueTotalWidthFt}'`} x={currentMinX + (currentMaxX - currentMinX) / 2 - 45} y={currentMaxY + 25} fontSize={12} fontStyle="bold" fill="#dc2626" />
+                
+                {/* LEFT */}
                 <Line points={[currentMinX - 20, currentMinY, currentMinX - 20, currentMaxY]} stroke="#dc2626" strokeWidth={1.5} perfectDrawEnabled={false} />
-                <Text text={`TOTAL LENGTH: ${totalHeightFt}'`} x={currentMinX - 35} y={currentMinY + (currentMaxY - currentMinY) / 2 + 45} rotation={270} fontSize={12} fontStyle="bold" fill="#dc2626" />
+                <Text text={`TOTAL LENGTH: ${trueTotalHeightFt}'`} x={currentMinX - 35} y={currentMinY + (currentMaxY - currentMinY) / 2 + 45} rotation={270} fontSize={12} fontStyle="bold" fill="#dc2626" />
+                
+                {/* RIGHT */}
+                <Line points={[currentMaxX + 20, currentMinY, currentMaxX + 20, currentMaxY]} stroke="#dc2626" strokeWidth={1.5} perfectDrawEnabled={false} />
+                <Text text={`TOTAL LENGTH: ${trueTotalHeightFt}'`} x={currentMaxX + 35} y={currentMinY + (currentMaxY - currentMinY) / 2 - 45} rotation={90} fontSize={12} fontStyle="bold" fill="#dc2626" />
               </Group>
             )}
 
@@ -882,7 +892,6 @@ export default function CanvasEditor({
               <Rect key={`col-${i}`} x={c.x - 6} y={c.y - 6} width={12} height={12} fill="#0f172a" perfectDrawEnabled={false} />
             ))}
 
-            {/* INTERACTIVE ELEMENTS */}
             {rooms.map((room) => (
               <Group key={room.id + '-elements'} x={room.x} y={room.y} rotation={room.rotation || 0}>
                 {room.elements?.map((el) => (
@@ -926,4 +935,7 @@ export default function CanvasEditor({
       </div>
     </div>
   );
-}
+});
+
+CanvasEditor.displayName = 'CanvasEditor';
+export default CanvasEditor;
