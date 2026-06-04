@@ -1,13 +1,13 @@
 "use client";
 import { useState } from "react";
 import { auth, db, storage } from "../lib/firebase";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, doc, getDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 interface PaymentModalProps {
   paymentType: string;
   amount: number;
-  projectId?: string; // ADDED: To track which project to unlock
+  projectId?: string; 
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -50,16 +50,21 @@ export default function PaymentModal({ paymentType, amount, projectId, onClose, 
       const snapshot = await uploadBytes(storageRef, file);
       const downloadUrl = await getDownloadURL(snapshot.ref);
 
-      // 2. Save Transaction to Firestore
+      // 2. SECRET AFFILIATE CHECK: See if this user was referred by someone
+      const userDoc = await getDoc(doc(db, "users", auth.currentUser.uid));
+      const affiliateCode = userDoc.exists() ? (userDoc.data().referredBy || null) : null;
+
+      // 3. Save Transaction to Firestore with the Affiliate Code
       await addDoc(collection(db, "transactions"), {
         uid: auth.currentUser.uid,
         userName: auth.currentUser.displayName || "Builder",
         email: auth.currentUser.email,
         paymentType,
         amount,
-        projectId: projectId || null, // ADDED: Saves the project ID
+        projectId: projectId || null, 
         utrNumber: utr,
         screenshotUrl: downloadUrl,
+        affiliateCode: affiliateCode, // <-- The code is permanently locked to the receipt
         status: "Pending",
         createdAt: serverTimestamp()
       });

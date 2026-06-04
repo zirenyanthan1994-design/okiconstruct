@@ -48,6 +48,9 @@ export default function CanvasEditor({
   const [rooms, setRooms] = useState<CanvasRoom[]>([]);
   const [history, setHistory] = useState<CanvasRoom[][]>([]);
   const [selectedId, selectShape] = useState<string | null>(null);
+  
+  // DYNAMIC SCREEN SIZING FOR PERFORMANCE
+  const [stageSize, setStageSize] = useState({ width: 1000, height: 600 });
 
   const trRef = useRef<any>(null);
   const stageRef = useRef<any>(null);
@@ -56,6 +59,16 @@ export default function CanvasEditor({
   const lastDistRef = useRef<number>(0);
   const lastAngleRef = useRef<number>(0);
   const isTransformingRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    // Snap canvas exactly to the device screen size to save RAM
+    if (typeof window !== 'undefined') {
+      setStageSize({
+        width: window.innerWidth > 1200 ? 1200 : window.innerWidth,
+        height: window.innerHeight > 800 ? 600 : window.innerHeight * 0.65
+      });
+    }
+  }, []);
 
   const commitHistory = (currentRooms: CanvasRoom[]) => {
     setHistory((prev) => [...prev, currentRooms]);
@@ -70,12 +83,13 @@ export default function CanvasEditor({
     }
   };
 
-  // --- INSTANT EXPORT FUNCTIONS ---
+  // --- COMPRESSED INSTANT EXPORT ---
   const downloadImage = () => {
     selectShape(null); // Hide transformer before screenshot
     setTimeout(() => {
       if (!stageRef.current) return;
-      const uri = stageRef.current.toDataURL({ pixelRatio: 3, mimeType: 'image/jpeg', quality: 1 });
+      // pixelRatio 1 and quality 0.8 forces a lightweight A4 size export!
+      const uri = stageRef.current.toDataURL({ pixelRatio: 1, mimeType: 'image/jpeg', quality: 0.8 });
       const link = document.createElement('a');
       link.download = 'OkiConstruct_Blueprint.jpg';
       link.href = uri;
@@ -87,11 +101,9 @@ export default function CanvasEditor({
 
   const downloadCAD = () => {
     let dxf = "0\nSECTION\n2\nENTITIES\n";
-    
-    // Add Rooms
     rooms.forEach(r => {
       const x = r.x;
-      const y = -r.y; // DXF Y-axis is inverted
+      const y = -r.y; 
       const w = r.widthFt * SCALE;
       const h = r.heightFt * SCALE;
 
@@ -101,7 +113,6 @@ export default function CanvasEditor({
       dxf += `10\n${x+w}\n20\n${y-h}\n`;
       dxf += `10\n${x}\n20\n${y-h}\n`;
     });
-
     dxf += "0\nENDSEC\n0\nEOF\n";
     
     const blob = new Blob([dxf], { type: 'application/dxf' });
@@ -176,23 +187,6 @@ export default function CanvasEditor({
           if (extWalls.includes('left') && placed < 2) { elements.push({ id: room.id + '-win-l', type: 'window', x: -4, y: h / 2 - 20, width: 8, height: 40, rotation: 0 }); placed++; }
           if (extWalls.includes('right') && placed < 2) { elements.push({ id: room.id + '-win-r', type: 'window', x: w - 4, y: h / 2 - 20, width: 8, height: 40, rotation: 0 }); placed++; }
 
-          if (placed === 1) {
-            elements.pop(); 
-            const wall = extWalls[0];
-            if (wall === 'top') {
-              elements.push({ id: room.id + '-win-t1', type: 'window', x: w / 3 - 20, y: -4, width: 40, height: 8, rotation: 0 });
-              elements.push({ id: room.id + '-win-t2', type: 'window', x: (w / 3) * 2 - 20, y: -4, width: 40, height: 8, rotation: 0 });
-            } else if (wall === 'bot') {
-              elements.push({ id: room.id + '-win-b1', type: 'window', x: w / 3 - 20, y: h - 4, width: 40, height: 8, rotation: 0 });
-              elements.push({ id: room.id + '-win-b2', type: 'window', x: (w / 3) * 2 - 20, y: h - 4, width: 40, height: 8, rotation: 0 });
-            } else if (wall === 'left') {
-              elements.push({ id: room.id + '-win-l1', type: 'window', x: -4, y: h / 3 - 20, width: 8, height: 40, rotation: 0 });
-              elements.push({ id: room.id + '-win-l2', type: 'window', x: -4, y: (h / 3) * 2 - 20, width: 8, height: 40, rotation: 0 });
-            } else if (wall === 'right') {
-              elements.push({ id: room.id + '-win-r1', type: 'window', x: w - 4, y: h / 3 - 20, width: 8, height: 40, rotation: 0 });
-              elements.push({ id: room.id + '-win-r2', type: 'window', x: w - 4, y: (h / 3) * 2 - 20, width: 8, height: 40, rotation: 0 });
-            }
-          }
         } else {
           if (extWalls.length > 0) {
             extWalls.forEach((wall) => {
@@ -294,12 +288,11 @@ export default function CanvasEditor({
 
     setRooms(populatedRooms);
     setHistory([]);
-
-    // RESET STAGE POSITION ON LOAD
+    
+    // Auto-center the blueprint when it first loads
     if (stageRef.current) {
-        stageRef.current.position({ x: 0, y: 0 });
+        stageRef.current.position({ x: 50, y: 50 });
         stageRef.current.scale({ x: 1, y: 1 });
-        stageRef.current.rotation(0);
         stageRef.current.batchDraw();
     }
   }, [initialRooms, entranceType]);
@@ -358,63 +351,13 @@ export default function CanvasEditor({
     selectShape(null);
   };
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!selectedId) return;
-
-      if (['Delete', 'Backspace'].includes(e.key)) {
-        e.preventDefault();
-        handleDeleteElement();
-        return;
-      }
-
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-        e.preventDefault();
-        const STEP = e.shiftKey ? 10 : 1;
-        setRooms((prevRooms) =>
-          prevRooms.map((room) => {
-            if (room.id === selectedId) {
-              let nx = room.x;
-              let ny = room.y;
-              if (e.key === 'ArrowUp') ny -= STEP;
-              if (e.key === 'ArrowDown') ny += STEP;
-              if (e.key === 'ArrowLeft') nx -= STEP;
-              if (e.key === 'ArrowRight') nx += STEP;
-              return { ...room, x: nx, y: ny };
-            }
-            if (room.elements?.some((el) => el.id === selectedId)) {
-              return {
-                ...room,
-                elements: room.elements.map((el) => {
-                  if (el.id === selectedId) {
-                    let nx = el.x;
-                    let ny = el.y;
-                    if (e.key === 'ArrowUp') ny -= STEP;
-                    if (e.key === 'ArrowDown') ny += STEP;
-                    if (e.key === 'ArrowLeft') nx -= STEP;
-                    if (e.key === 'ArrowRight') nx += STEP;
-                    return { ...el, x: nx, y: ny };
-                  }
-                  return el;
-                }),
-              };
-            }
-            return room;
-          })
-        );
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedId, rooms]);
-
   // --- PERFORMANCE: OPTIMIZED WHEEL ZOOM ---
   const handleWheel = (e: any) => {
     e.evt.preventDefault();
     const scaleBy = 1.05;
     const stage = stageRef.current;
     if (!stage) return;
-
+    
     const oldScale = stage.scaleX();
     const pointer = stage.getPointerPosition();
 
@@ -425,7 +368,6 @@ export default function CanvasEditor({
 
     const newScale = e.evt.deltaY > 0 ? oldScale / scaleBy : oldScale * scaleBy;
 
-    // Direct GPU manipulation (Bypasses laggy React updates)
     stage.scale({ x: newScale, y: newScale });
     stage.position({
       x: pointer.x - mousePointTo.x * newScale,
@@ -434,7 +376,7 @@ export default function CanvasEditor({
     stage.batchDraw();
   };
 
-  // --- PERFORMANCE: OPTIMIZED MOBILE TOUCH EVENT HANDLERS ---
+  // --- PERFORMANCE: OPTIMIZED TOUCH ZOOM ---
   const handleTouchMove = (e: any) => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -443,9 +385,7 @@ export default function CanvasEditor({
     const touch2 = e.evt.touches[1];
 
     if (touch1 && touch2) {
-      if (stage.isDragging()) {
-        stage.stopDrag();
-      }
+      if (stage.isDragging()) stage.stopDrag();
 
       const p1 = { x: touch1.clientX, y: touch1.clientY };
       const p2 = { x: touch2.clientX, y: touch2.clientY };
@@ -696,14 +636,8 @@ export default function CanvasEditor({
     let hitY = 0;
     let hitW = el.width;
     let hitH = el.height;
-    if (el.type === 'door') {
-      hitY = -el.width;
-      hitH = el.width;
-    }
-    if (el.type === 'main-door') {
-      hitY = -el.width / 1.5;
-      hitH = el.width / 1.5;
-    }
+    if (el.type === 'door') { hitY = -el.width; hitH = el.width; }
+    if (el.type === 'main-door') { hitY = -el.width / 1.5; hitH = el.width / 1.5; }
     return <Rect x={hitX} y={hitY} width={hitW} height={hitH} fill="rgba(0,0,0,0.01)" />;
   };
 
@@ -711,62 +645,62 @@ export default function CanvasEditor({
     const stroke = '#334155';
     switch (el.type) {
       case 'window':
-        return <Rect width={el.width} height={el.height} fill="#e0f2fe" stroke="#0ea5e9" strokeWidth={1.5} />;
+        return <Rect width={el.width} height={el.height} fill="#e0f2fe" stroke="#0ea5e9" strokeWidth={1.5} perfectDrawEnabled={false} />;
       case 'door':
         return (
           <Group>
-            <Line points={[0, 0, el.width, 0]} stroke={stroke} strokeWidth={2} />
-            <Arc x={0} y={0} innerRadius={el.width} outerRadius={el.width} angle={90} rotation={0} stroke={stroke} strokeWidth={1} dash={[4, 4]} />
+            <Line points={[0, 0, el.width, 0]} stroke={stroke} strokeWidth={2} perfectDrawEnabled={false} />
+            <Arc x={0} y={0} innerRadius={el.width} outerRadius={el.width} angle={90} rotation={0} stroke={stroke} strokeWidth={1} dash={[4, 4]} perfectDrawEnabled={false} />
           </Group>
         );
       case 'main-door':
         return (
           <Group>
-            <Line points={[0, 0, 0, -el.width / 1.5]} stroke="#0f172a" strokeWidth={3} />
-            <Arc x={0} y={0} innerRadius={el.width / 1.5} outerRadius={el.width / 1.5} angle={90} rotation={270} stroke="#0f172a" strokeWidth={2} />
-            <Line points={[el.width, 0, el.width, -el.width / 1.5]} stroke="#0f172a" strokeWidth={3} />
-            <Arc x={el.width} y={0} innerRadius={el.width / 1.5} outerRadius={el.width / 1.5} angle={90} rotation={180} stroke="#0f172a" strokeWidth={2} />
+            <Line points={[0, 0, 0, -el.width / 1.5]} stroke="#0f172a" strokeWidth={3} perfectDrawEnabled={false} />
+            <Arc x={0} y={0} innerRadius={el.width / 1.5} outerRadius={el.width / 1.5} angle={90} rotation={270} stroke="#0f172a" strokeWidth={2} perfectDrawEnabled={false} />
+            <Line points={[el.width, 0, el.width, -el.width / 1.5]} stroke="#0f172a" strokeWidth={3} perfectDrawEnabled={false} />
+            <Arc x={el.width} y={0} innerRadius={el.width / 1.5} outerRadius={el.width / 1.5} angle={90} rotation={180} stroke="#0f172a" strokeWidth={2} perfectDrawEnabled={false} />
           </Group>
         );
       case 'bed':
         return (
           <Group>
-            <Rect width={el.width} height={el.height} stroke={stroke} strokeWidth={1.5} cornerRadius={3} />
-            <Rect x={5} y={5} width={el.width / 2.5} height={12} stroke={stroke} strokeWidth={1} cornerRadius={2} />
-            <Rect x={el.width / 2 + 3} y={5} width={el.width / 2.5} height={12} stroke={stroke} strokeWidth={1} cornerRadius={2} />
-            <Line points={[0, 25, el.width, 25]} stroke={stroke} strokeWidth={1} />
+            <Rect width={el.width} height={el.height} stroke={stroke} strokeWidth={1.5} cornerRadius={3} perfectDrawEnabled={false} />
+            <Rect x={5} y={5} width={el.width / 2.5} height={12} stroke={stroke} strokeWidth={1} cornerRadius={2} perfectDrawEnabled={false} />
+            <Rect x={el.width / 2 + 3} y={5} width={el.width / 2.5} height={12} stroke={stroke} strokeWidth={1} cornerRadius={2} perfectDrawEnabled={false} />
+            <Line points={[0, 25, el.width, 25]} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />
           </Group>
         );
       case 'wc':
         return (
           <Group>
-            <Rect width={el.width} height={el.height / 3} stroke={stroke} strokeWidth={1} />
-            <Circle x={el.width / 2} y={el.height / 1.5} radius={el.width / 2.5} stroke={stroke} strokeWidth={1} />
+            <Rect width={el.width} height={el.height / 3} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />
+            <Circle x={el.width / 2} y={el.height / 1.5} radius={el.width / 2.5} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />
           </Group>
         );
       case 'shower':
         return (
           <Group>
-            <Rect width={el.width} height={el.height} stroke={stroke} strokeWidth={1} />
-            <Line points={[0, 0, el.width, el.height]} stroke={stroke} strokeWidth={1} opacity={0.3} />
-            <Line points={[el.width, 0, 0, el.height]} stroke={stroke} strokeWidth={1} opacity={0.3} />
+            <Rect width={el.width} height={el.height} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />
+            <Line points={[0, 0, el.width, el.height]} stroke={stroke} strokeWidth={1} opacity={0.3} perfectDrawEnabled={false} />
+            <Line points={[el.width, 0, 0, el.height]} stroke={stroke} strokeWidth={1} opacity={0.3} perfectDrawEnabled={false} />
           </Group>
         );
       case 'sofa':
         return (
           <Group>
-            <Rect width={el.width} height={el.height} stroke={stroke} strokeWidth={1.5} cornerRadius={2} />
-            <Line points={[el.width / 3, 0, el.width / 3, el.height]} stroke={stroke} strokeWidth={1} />
-            <Line points={[(el.width / 3) * 2, 0, (el.width / 3) * 2, el.height]} stroke={stroke} strokeWidth={1} />
+            <Rect width={el.width} height={el.height} stroke={stroke} strokeWidth={1.5} cornerRadius={2} perfectDrawEnabled={false} />
+            <Line points={[el.width / 3, 0, el.width / 3, el.height]} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />
+            <Line points={[(el.width / 3) * 2, 0, (el.width / 3) * 2, el.height]} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />
           </Group>
         );
       case 'kitchen':
         return (
           <Group>
-            <Rect width={el.width} height={el.height / 3} stroke={stroke} strokeWidth={1} fill="#f8fafc" />
-            <Rect x={el.width - el.width / 4} y={0} width={el.width / 4} height={el.height} stroke={stroke} strokeWidth={1} fill="#f8fafc" />
-            <Circle x={el.width / 2} y={el.height / 6} radius={5} stroke={stroke} strokeWidth={1} />
-            <Circle x={el.width / 2 + 15} y={el.height / 6} radius={5} stroke={stroke} strokeWidth={1} />
+            <Rect width={el.width} height={el.height / 3} stroke={stroke} strokeWidth={1} fill="#f8fafc" perfectDrawEnabled={false} />
+            <Rect x={el.width - el.width / 4} y={0} width={el.width / 4} height={el.height} stroke={stroke} strokeWidth={1} fill="#f8fafc" perfectDrawEnabled={false} />
+            <Circle x={el.width / 2} y={el.height / 6} radius={5} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />
+            <Circle x={el.width / 2 + 15} y={el.height / 6} radius={5} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />
           </Group>
         );
       case 'stairs':
@@ -776,28 +710,27 @@ export default function CanvasEditor({
         
         for (let i = 0; i <= stepCount; i++) {
           if (isHorizontal) {
-            stepLines.push(<Line key={i} points={[i * 10, 0, i * 10, el.height]} stroke={stroke} strokeWidth={1} />);
+            stepLines.push(<Line key={i} points={[i * 10, 0, i * 10, el.height]} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />);
           } else {
-            stepLines.push(<Line key={i} points={[0, i * 10, el.width, i * 10]} stroke={stroke} strokeWidth={1} />);
+            stepLines.push(<Line key={i} points={[0, i * 10, el.width, i * 10]} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />);
           }
         }
-        
         const arrowY = el.height / 2;
         const arrowX = el.width / 2;
         
         return (
           <Group>
-            <Rect width={el.width} height={el.height} stroke={stroke} strokeWidth={1} />
+            <Rect width={el.width} height={el.height} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />
             {stepLines}
             {isHorizontal ? (
               <Group>
-                <Line points={[10, arrowY, el.width - 10, arrowY]} stroke="#000" strokeWidth={2} />
-                <Path data={`M ${el.width - 15} ${arrowY - 5} L ${el.width - 5} ${arrowY} L ${el.width - 15} ${arrowY + 5}`} fill="#000" />
+                <Line points={[10, arrowY, el.width - 10, arrowY]} stroke="#000" strokeWidth={2} perfectDrawEnabled={false} />
+                <Path data={`M ${el.width - 15} ${arrowY - 5} L ${el.width - 5} ${arrowY} L ${el.width - 15} ${arrowY + 5}`} fill="#000" perfectDrawEnabled={false} />
               </Group>
             ) : (
               <Group>
-                <Line points={[arrowX, el.height - 10, arrowX, 10]} stroke="#000" strokeWidth={2} />
-                <Path data={`M ${arrowX - 5} 15 L ${arrowX} 5 L ${arrowX + 5} 15`} fill="#000" />
+                <Line points={[arrowX, el.height - 10, arrowX, 10]} stroke="#000" strokeWidth={2} perfectDrawEnabled={false} />
+                <Path data={`M ${arrowX - 5} 15 L ${arrowX} 5 L ${arrowX + 5} 15`} fill="#000" perfectDrawEnabled={false} />
               </Group>
             )}
           </Group>
@@ -840,190 +773,156 @@ export default function CanvasEditor({
           <span className="text-[10px] font-bold text-gray-500 py-1 px-2 border-r border-gray-200 uppercase tracking-wide">
             {selectedElement.type}
           </span>
-          <button
-            onClick={handleDuplicate}
-            className="text-[10px] font-bold bg-blue-50 text-blue-600 px-2 py-1 rounded hover:bg-blue-100 transition-colors"
-          >
-            📋 Copy
-          </button>
-          <button
-            onClick={handleDeleteElement}
-            className="text-[10px] font-bold bg-red-50 text-red-600 px-2 py-1 rounded hover:bg-red-100 transition-colors"
-          >
-            🗑 Delete
-          </button>
+          <button onClick={handleDuplicate} className="text-[10px] font-bold bg-blue-50 text-blue-600 px-2 py-1 rounded hover:bg-blue-100 transition-colors">📋 Copy</button>
+          <button onClick={handleDeleteElement} className="text-[10px] font-bold bg-red-50 text-red-600 px-2 py-1 rounded hover:bg-red-100 transition-colors">🗑 Delete</button>
         </div>
       )}
 
-      {/* THE NATIVE BROWSER SLIDE / SCROLLBAR WRAPPER */}
-      <div tabIndex={0} className="w-full max-h-[650px] overflow-auto cursor-crosshair focus:outline-none bg-gray-50">
-        <div style={{ width: '3000px', height: '3000px' }} className="relative">
-          <Stage
-            width={3000}
-            height={3000}
-            onMouseDown={checkDeselect}
-            onTouchStart={checkDeselect}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
-            onWheel={handleWheel}
-            draggable={!selectedId && !isTransformingRef.current}
-            ref={stageRef}
-          >
-            <Layer>
-              <Rect id="grid-bg" x={-2000} y={-2000} width={8000} height={8000} fillPatternImage={gridPattern} listening={false} perfectDrawEnabled={false} />
+      {/* CANVAS WORKSPACE (Removed the 3000x3000 wrapper to save RAM) */}
+      <div 
+        tabIndex={0} 
+        className="w-full relative overflow-hidden cursor-crosshair focus:outline-none bg-gray-50"
+        style={{ height: stageSize.height }}
+      >
+        <Stage
+          width={stageSize.width}
+          height={stageSize.height}
+          onMouseDown={checkDeselect}
+          onTouchStart={checkDeselect}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onWheel={handleWheel}
+          draggable={!selectedId && !isTransformingRef.current}
+          ref={stageRef}
+        >
+          <Layer>
+            {/* GRID BACKGROUND */}
+            <Rect id="grid-bg" x={-2000} y={-2000} width={8000} height={8000} fillPatternImage={gridPattern} listening={false} perfectDrawEnabled={false} />
 
-              {/* OVERALL EXTERIOR DIMENSIONS */}
-              {rooms.length > 0 && currentMinX !== Infinity && (
-                <Group listening={false}>
-                  <Line points={[currentMinX, currentMinY - 20, currentMaxX, currentMinY - 20]} stroke="#dc2626" strokeWidth={1.5} />
-                  <Line points={[currentMinX, currentMinY - 25, currentMinX, currentMinY - 15]} stroke="#dc2626" strokeWidth={2} />
-                  <Line points={[currentMaxX, currentMinY - 25, currentMaxX, currentMinY - 15]} stroke="#dc2626" strokeWidth={2} />
-                  <Text text={`TOTAL WIDTH: ${totalWidthFt}'`} x={currentMinX + (currentMaxX - currentMinX) / 2 - 45} y={currentMinY - 35} fontSize={12} fontStyle="bold" fill="#dc2626" />
+            {/* OVERALL EXTERIOR DIMENSIONS */}
+            {rooms.length > 0 && currentMinX !== Infinity && (
+              <Group listening={false}>
+                <Line points={[currentMinX, currentMinY - 20, currentMaxX, currentMinY - 20]} stroke="#dc2626" strokeWidth={1.5} perfectDrawEnabled={false} />
+                <Text text={`TOTAL WIDTH: ${totalWidthFt}'`} x={currentMinX + (currentMaxX - currentMinX) / 2 - 45} y={currentMinY - 35} fontSize={12} fontStyle="bold" fill="#dc2626" />
+                <Line points={[currentMinX - 20, currentMinY, currentMinX - 20, currentMaxY]} stroke="#dc2626" strokeWidth={1.5} perfectDrawEnabled={false} />
+                <Text text={`TOTAL LENGTH: ${totalHeightFt}'`} x={currentMinX - 35} y={currentMinY + (currentMaxY - currentMinY) / 2 + 45} rotation={270} fontSize={12} fontStyle="bold" fill="#dc2626" />
+              </Group>
+            )}
 
-                  <Line points={[currentMinX, currentMaxY + 20, currentMaxX, currentMaxY + 20]} stroke="#dc2626" strokeWidth={1.5} />
-                  <Line points={[currentMinX, currentMaxY + 15, currentMinX, currentMaxY + 25]} stroke="#dc2626" strokeWidth={2} />
-                  <Line points={[currentMaxX, currentMaxY + 15, currentMaxX, currentMaxY + 25]} stroke="#dc2626" strokeWidth={2} />
-                  <Text text={`TOTAL WIDTH: ${totalWidthFt}'`} x={currentMinX + (currentMaxX - currentMinX) / 2 - 45} y={currentMaxY + 25} fontSize={12} fontStyle="bold" fill="#dc2626" />
+            {/* ROOM BACKGROUNDS & WALLS */}
+            {rooms.map((room) => {
+              const w = room.widthFt * SCALE;
+              const h = room.heightFt * SCALE;
+              const extThick = wallThickness.includes('Double') ? 7.5 : 4.1;
+              const intThick = 4.1;
 
-                  <Line points={[currentMinX - 20, currentMinY, currentMinX - 20, currentMaxY]} stroke="#dc2626" strokeWidth={1.5} />
-                  <Line points={[currentMinX - 25, currentMinY, currentMinX - 15, currentMinY]} stroke="#dc2626" strokeWidth={2} />
-                  <Line points={[currentMinX - 25, currentMaxY, currentMinX - 15, currentMaxY]} stroke="#dc2626" strokeWidth={2} />
-                  <Text text={`TOTAL LENGTH: ${totalHeightFt}'`} x={currentMinX - 35} y={currentMinY + (currentMaxY - currentMinY) / 2 + 45} rotation={270} fontSize={12} fontStyle="bold" fill="#dc2626" />
+              const isMinX = Math.abs(room.x - currentMinX) < 1;
+              const isMaxX = Math.abs(room.x + w - currentMaxX) < 1;
+              const isMinY = Math.abs(room.y - currentMinY) < 1;
+              const isMaxY = Math.abs(room.y + h - currentMaxY) < 1;
 
-                  <Line points={[currentMaxX + 20, currentMinY, currentMaxX + 20, currentMaxY]} stroke="#dc2626" strokeWidth={1.5} />
-                  <Line points={[currentMaxX + 15, currentMinY, currentMaxX + 25, currentMinY]} stroke="#dc2626" strokeWidth={2} />
-                  <Line points={[currentMaxX + 15, currentMaxY, currentMaxX + 25, currentMaxY]} stroke="#dc2626" strokeWidth={2} />
-                  <Text text={`TOTAL LENGTH: ${totalHeightFt}'`} x={currentMaxX + 35} y={currentMinY + (currentMaxY - currentMinY) / 2 - 45} rotation={90} fontSize={12} fontStyle="bold" fill="#dc2626" />
-                </Group>
-              )}
+              const dimColor = '#2563eb';
+              const isPassage = room.name.toLowerCase().includes('passage') || room.name.toLowerCase().includes('corridor');
+              const isBathroom = room.name.toLowerCase().includes('bathroom');
+              const labelFontSize = isBathroom ? 7 : 11;
 
-              {/* ROOM BACKGROUNDS & WALLS */}
-              {rooms.map((room) => {
-                const w = room.widthFt * SCALE;
-                const h = room.heightFt * SCALE;
-                const extThick = wallThickness.includes('Double') ? 7.5 : 4.1;
-                const intThick = 4.1;
+              const isSelected = selectedId === room.id;
 
-                const isMinX = Math.abs(room.x - currentMinX) < 1;
-                const isMaxX = Math.abs(room.x + w - currentMaxX) < 1;
-                const isMinY = Math.abs(room.y - currentMinY) < 1;
-                const isMaxY = Math.abs(room.y + h - currentMaxY) < 1;
+              return (
+                <Group
+                  key={room.id}
+                  id={room.id}
+                  x={room.x}
+                  y={room.y}
+                  rotation={room.rotation || 0}
+                  draggable
+                  dragBoundFunc={(pos) => ({ x: Math.round(pos.x / SCALE) * SCALE, y: Math.round(pos.y / SCALE) * SCALE })}
+                  onMouseDown={(e) => handleSelect(e, room.id)}
+                  onTouchStart={(e) => handleSelect(e, room.id)}
+                  onDragEnd={(e) => handleDragEnd(e, room.id)}
+                  onTransformEnd={(e) => handleTransformEnd(e, room.id)}
+                >
+                  <Rect width={w} height={h} fill={isSelected ? '#e0f2fe' : '#ffffff'} opacity={0.95} perfectDrawEnabled={false} />
+                  {isSelected && <Rect width={w} height={h} stroke="#0ea5e9" strokeWidth={4} listening={false} perfectDrawEnabled={false} />}
 
-                const dimColor = '#2563eb';
-                const isPassage = room.name.toLowerCase().includes('passage') || room.name.toLowerCase().includes('corridor');
-                const isBathroom = room.name.toLowerCase().includes('bathroom');
-                const labelFontSize = isBathroom ? 7 : 11;
+                  <Line points={[0, 0, w, 0]} stroke="#0f172a" strokeWidth={isMinY ? extThick : intThick} perfectDrawEnabled={false} />
+                  <Line points={[0, h, w, h]} stroke="#0f172a" strokeWidth={isMaxY ? extThick : intThick} perfectDrawEnabled={false} />
+                  <Line points={[0, 0, 0, h]} stroke="#0f172a" strokeWidth={isMinX ? extThick : intThick} perfectDrawEnabled={false} />
+                  <Line points={[w, 0, w, h]} stroke="#0f172a" strokeWidth={isMaxX ? extThick : intThick} perfectDrawEnabled={false} />
 
-                const isSelected = selectedId === room.id;
-
-                return (
-                  <Group
-                    key={room.id}
-                    id={room.id}
-                    x={room.x}
-                    y={room.y}
-                    width={w}
-                    height={h}
-                    rotation={room.rotation || 0}
-                    draggable
-                    dragBoundFunc={(pos) => ({ x: Math.round(pos.x / SCALE) * SCALE, y: Math.round(pos.y / SCALE) * SCALE })}
-                    onMouseDown={(e) => handleSelect(e, room.id)}
-                    onTouchStart={(e) => handleSelect(e, room.id)}
-                    onDragEnd={(e) => handleDragEnd(e, room.id)}
-                    onTransformEnd={(e) => handleTransformEnd(e, room.id)}
-                  >
-                    {/* Fill & Selection Indicator for Mobile */}
-                    <Rect width={w} height={h} fill={isSelected ? '#e0f2fe' : '#ffffff'} opacity={0.95} perfectDrawEnabled={false} />
-                    {isSelected && (
-                      <Rect width={w} height={h} stroke="#0ea5e9" strokeWidth={4} listening={false} perfectDrawEnabled={false} />
-                    )}
-
-                    {/* Walls */}
-                    <Line points={[0, 0, w, 0]} stroke="#0f172a" strokeWidth={isMinY ? extThick : intThick} />
-                    <Line points={[0, h, w, h]} stroke="#0f172a" strokeWidth={isMaxY ? extThick : intThick} />
-                    <Line points={[0, 0, 0, h]} stroke="#0f172a" strokeWidth={isMinX ? extThick : intThick} />
-                    <Line points={[w, 0, w, h]} stroke="#0f172a" strokeWidth={isMaxX ? extThick : intThick} />
-
-                    {/* BLUE INTERNAL DIMENSIONS */}
-                    <Group opacity={0.9} listening={false}>
-                      <Line points={[15, 15, w - 15, 15]} stroke={dimColor} strokeWidth={0.5} />
-                      <Text text={`${Math.round(room.widthFt)}'`} x={0} y={17} width={w} align="center" fontSize={9} fontStyle="bold" fill={dimColor} />
-
-                      <Line points={[15, h - 15, w - 15, h - 15]} stroke={dimColor} strokeWidth={0.5} />
-                      <Text text={`${Math.round(room.widthFt)}'`} x={0} y={h - 26} width={w} align="center" fontSize={9} fontStyle="bold" fill={dimColor} />
-
-                      <Line points={[15, 15, 15, h - 15]} stroke={dimColor} strokeWidth={0.5} />
-                      <Text text={`${Math.round(room.heightFt)}'`} x={26} y={h} width={h} align="center" fontSize={9} fontStyle="bold" fill={dimColor} rotation={270} />
-
-                      <Line points={[w - 15, 15, w - 15, h - 15]} stroke={dimColor} strokeWidth={0.5} />
-                      <Text text={`${Math.round(room.heightFt)}'`} x={w - 17} y={h} width={h} align="center" fontSize={9} fontStyle="bold" fill={dimColor} rotation={270} />
-                    </Group>
-
-                    {/* ROOM TEXT */}
-                    <Group
-                      x={isPassage ? w / 2 : 0}
-                      y={isPassage ? h / 2 : h / 2 - 15}
-                      rotation={isPassage ? 90 : 0}
-                      offsetX={isPassage ? h / 2 : 0}
-                      offsetY={isPassage ? 15 : 0}
-                      listening={false}
-                    >
-                      <Text text={room.name.toUpperCase()} width={isPassage ? h : w} align="center" fontSize={labelFontSize} fontStyle="bold" fill="#0f172a" opacity={0.8} />
-                      <Text text={`${Math.round(room.widthFt)}' x ${Math.round(room.heightFt)}'`} width={isPassage ? h : w} y={12} align="center" fontSize={isBathroom ? 6 : 9} fill="#16a34a" fontStyle="bold" />
-                    </Group>
+                  <Group opacity={0.9} listening={false}>
+                    <Line points={[15, 15, w - 15, 15]} stroke={dimColor} strokeWidth={0.5} perfectDrawEnabled={false} />
+                    <Text text={`${Math.round(room.widthFt)}'`} x={0} y={17} width={w} align="center" fontSize={9} fontStyle="bold" fill={dimColor} />
+                    <Line points={[15, h - 15, w - 15, h - 15]} stroke={dimColor} strokeWidth={0.5} perfectDrawEnabled={false} />
+                    <Text text={`${Math.round(room.widthFt)}'`} x={0} y={h - 26} width={w} align="center" fontSize={9} fontStyle="bold" fill={dimColor} />
+                    <Line points={[15, 15, 15, h - 15]} stroke={dimColor} strokeWidth={0.5} perfectDrawEnabled={false} />
+                    <Text text={`${Math.round(room.heightFt)}'`} x={26} y={h} width={h} align="center" fontSize={9} fontStyle="bold" fill={dimColor} rotation={270} />
+                    <Line points={[w - 15, 15, w - 15, h - 15]} stroke={dimColor} strokeWidth={0.5} perfectDrawEnabled={false} />
+                    <Text text={`${Math.round(room.heightFt)}'`} x={w - 17} y={h} width={h} align="center" fontSize={9} fontStyle="bold" fill={dimColor} rotation={270} />
                   </Group>
-                );
-              })}
 
-              {renderMergedWall()}
-
-              {/* DEDUPLICATED COLUMNS WITH ROTATION FIX */}
-              {uniqueCorners.map((c, i) => (
-                <Rect key={`col-${i}`} x={c.x - 6} y={c.y - 6} width={12} height={12} fill="#0f172a" />
-              ))}
-
-              {/* INTERACTIVE ELEMENTS */}
-              {rooms.map((room) => (
-                <Group key={room.id + '-elements'} x={room.x} y={room.y} rotation={room.rotation || 0}>
-                  {room.elements?.map((el) => (
-                    <Group
-                      key={el.id}
-                      id={el.id}
-                      x={el.x}
-                      y={el.y}
-                      width={el.width}
-                      height={el.height}
-                      rotation={el.rotation || 0}
-                      draggable
-                      onMouseDown={(e) => handleSelect(e, el.id)}
-                      onTouchStart={(e) => handleSelect(e, el.id)}
-                      onDragEnd={(e) => handleDragEnd(e, el.id, room.id)}
-                      onTransformEnd={(e) => handleTransformEnd(e, el.id, room.id)}
-                    >
-                      {renderHitbox(el)}
-                      {renderElement(el)}
-                    </Group>
-                  ))}
+                  <Group
+                    x={isPassage ? w / 2 : 0}
+                    y={isPassage ? h / 2 : h / 2 - 15}
+                    rotation={isPassage ? 90 : 0}
+                    offsetX={isPassage ? h / 2 : 0}
+                    offsetY={isPassage ? 15 : 0}
+                    listening={false}
+                  >
+                    <Text text={room.name.toUpperCase()} width={isPassage ? h : w} align="center" fontSize={labelFontSize} fontStyle="bold" fill="#0f172a" opacity={0.8} />
+                    <Text text={`${Math.round(room.widthFt)}' x ${Math.round(room.heightFt)}'`} width={isPassage ? h : w} y={12} align="center" fontSize={isBathroom ? 6 : 9} fill="#16a34a" fontStyle="bold" />
+                  </Group>
                 </Group>
-              ))}
+              );
+            })}
 
-              {selectedId && (
-                <Transformer
-                  ref={trRef}
-                  rotateEnabled={true}
-                  boundBoxFunc={(oldBox, newBox) => {
-                    if (newBox.width < 10 || newBox.height < 10) return oldBox;
-                    return newBox;
-                  }}
-                  borderStroke="#16a34a"
-                  anchorStroke="#16a34a"
-                  anchorFill="#ffffff"
-                  anchorSize={8}
-                />
-              )}
-            </Layer>
-          </Stage>
-        </div>
+            {renderMergedWall()}
+
+            {uniqueCorners.map((c, i) => (
+              <Rect key={`col-${i}`} x={c.x - 6} y={c.y - 6} width={12} height={12} fill="#0f172a" perfectDrawEnabled={false} />
+            ))}
+
+            {/* INTERACTIVE ELEMENTS */}
+            {rooms.map((room) => (
+              <Group key={room.id + '-elements'} x={room.x} y={room.y} rotation={room.rotation || 0}>
+                {room.elements?.map((el) => (
+                  <Group
+                    key={el.id}
+                    id={el.id}
+                    x={el.x}
+                    y={el.y}
+                    width={el.width}
+                    height={el.height}
+                    rotation={el.rotation || 0}
+                    draggable
+                    onMouseDown={(e) => handleSelect(e, el.id)}
+                    onTouchStart={(e) => handleSelect(e, el.id)}
+                    onDragEnd={(e) => handleDragEnd(e, el.id, room.id)}
+                    onTransformEnd={(e) => handleTransformEnd(e, el.id, room.id)}
+                  >
+                    {renderHitbox(el)}
+                    {renderElement(el)}
+                  </Group>
+                ))}
+              </Group>
+            ))}
+
+            {selectedId && (
+              <Transformer
+                ref={trRef}
+                rotateEnabled={true}
+                boundBoxFunc={(oldBox, newBox) => {
+                  if (newBox.width < 10 || newBox.height < 10) return oldBox;
+                  return newBox;
+                }}
+                borderStroke="#16a34a"
+                anchorStroke="#16a34a"
+                anchorFill="#ffffff"
+                anchorSize={8}
+              />
+            )}
+          </Layer>
+        </Stage>
       </div>
     </div>
   );

@@ -42,6 +42,8 @@ export default function Dashboard() {
   const [authError, setAuthError] = useState("");
   
   const [isOnboarding, setIsOnboarding] = useState(false);
+  const [referralCode, setReferralCode] = useState(""); // <-- ADDED: Affiliate state
+  
   const [profileForm, setProfileForm] = useState({
     role: ROLES[0],
     name: "",
@@ -52,6 +54,15 @@ export default function Dashboard() {
 
   // UX State for the Welcome Greeting
   const [showWelcome, setShowWelcome] = useState(true);
+
+  // <-- ADDED: Scans the URL for the affiliate code instantly when they load the page
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const ref = urlParams.get('ref');
+      if (ref) setReferralCode(ref.toUpperCase());
+    }
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -178,6 +189,7 @@ export default function Dashboard() {
         role: profileForm.role,
         gender: profileForm.gender,
         avatar: profileForm.avatar,
+        referredBy: referralCode.trim().toUpperCase(), // <-- ADDED: Saves the affiliate code
         tier: "standard", 
         isFeatured: false,
         popularityScore: 0,
@@ -337,6 +349,19 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* <-- ADDED: Referral code input box during onboarding --> */}
+            <div className="mt-6 bg-purple-50/50 p-5 rounded-xl border border-purple-100">
+              <label className="text-xs font-semibold text-purple-600 uppercase tracking-wider block mb-2">Referral Code (Optional)</label>
+              <input 
+                type="text" 
+                placeholder="e.g. PARTNER20" 
+                className="w-full border border-purple-200 rounded-lg p-3 text-gray-900 outline-none uppercase focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 bg-white font-bold"
+                value={referralCode}
+                onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
+              />
+              <p className="text-[10px] text-purple-400 mt-2 font-medium uppercase tracking-widest">Did an affiliate send you? Enter their code here.</p>
             </div>
 
             <button type="submit" className="w-full bg-[#22c55e] text-white rounded-xl p-4 font-semibold text-lg hover:bg-[#1ea950] transition-colors shadow-md mt-8">

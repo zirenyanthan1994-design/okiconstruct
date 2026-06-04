@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 
 const CanvasEditor = dynamic(() => import('./CanvasEditor'), { 
   ssr: false, 
@@ -29,18 +30,20 @@ const ToggleBtn = ({ label, active, onClick }: { label: string, active: boolean,
   </button>
 );
 
+// 🛠️ THE FIX: Redesigned NumberInput completely bypasses native mobile arrows
 const NumberInput = ({ value, onChange, unit, placeholder }: { value: string, onChange: (v: string) => void, unit: string, placeholder: string }) => {
   return (
     <div className="relative flex-1 flex items-center border border-gray-300 rounded-lg focus-within:border-blue-500 overflow-hidden bg-white transition-colors">
       <input 
-        type="number" 
+        type="text" 
+        inputMode="decimal"
         value={value} 
-        onChange={e => onChange(e.target.value)} 
-        className="w-full p-3 pr-20 focus:outline-none text-gray-800 bg-transparent" 
+        onChange={e => onChange(e.target.value.replace(/[^0-9.]/g, ''))} 
+        className="w-full py-2.5 pl-2 pr-[60px] sm:pr-[68px] text-center font-black text-gray-900 focus:outline-none bg-transparent" 
         placeholder={placeholder} 
       />
       <div className="absolute right-0 flex h-full">
-        <div className="flex flex-col border-l border-r border-gray-200 bg-gray-50 w-7">
+        <div className="flex flex-col border-l border-r border-gray-200 bg-gray-50 w-6 sm:w-7">
           <button type="button" tabIndex={-1} onClick={() => onChange(String((parseFloat(value) || 0) + 1))} className="flex-1 flex items-center justify-center hover:bg-gray-200 text-gray-500 border-b border-gray-200 transition-colors">
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 15l7-7 7 7" /></svg>
           </button>
@@ -48,8 +51,8 @@ const NumberInput = ({ value, onChange, unit, placeholder }: { value: string, on
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7" /></svg>
           </button>
         </div>
-        <div className="flex items-center justify-center px-2.5 bg-blue-50 min-w-[38px]">
-          <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">{unit}</span>
+        <div className="flex items-center justify-center px-1.5 sm:px-2.5 bg-blue-50 min-w-[30px] sm:min-w-[38px]">
+          <span className="text-[9px] sm:text-[10px] font-black text-blue-600 uppercase tracking-wider">{unit}</span>
         </div>
       </div>
     </div>
@@ -77,10 +80,13 @@ const SingleDimensionInput = ({ label, value, unit, onChange }: { label: string,
 // --- MAIN APPLICATION COMPONENT ---
 
 export default function LayoutGenerator() {
-  const [isPremium] = useState(true); 
+  const [isPremium] = useState(false); // Make sure to sync this dynamically with Firebase later!
   const [generationCount, setGenerationCount] = useState(0);
   const [savedProjectsDb, setSavedProjectsDb] = useState<string[]>([]);
   const [isSaved, setIsSaved] = useState(false);
+  
+  // 🧱 NEW WALL STATE: Tracks which limit they hit
+  const [limitError, setLimitError] = useState<'PROJECT' | 'LAYOUT' | null>(null);
 
   // Hidden AI Preferences Profile State
   const [aiPreferences, setAiPreferences] = useState({
@@ -137,7 +143,6 @@ export default function LayoutGenerator() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   
-  // Controls the loading UI when bridging to the BOQ Estimator
   const [isNavigating, setIsNavigating] = useState(false);
 
   useEffect(() => {
@@ -202,9 +207,10 @@ export default function LayoutGenerator() {
         window.scrollTo({ top: 0, behavior: 'smooth' }); return;
     }
     
+    // 🛑 1-PROJECT WALL
     if (!isPremium && savedProjectsDb.length >= 1 && !savedProjectsDb.includes(projectName.trim().toLowerCase())) {
-        setErrorMessage('Free users can only create 1 project. Please upgrade to Premium to create more.');
-        window.scrollTo({ top: 0, behavior: 'smooth' }); return;
+        setLimitError('PROJECT');
+        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); return;
     }
     
     if (!savedProjectsDb.includes(projectName.trim().toLowerCase())) {
@@ -224,6 +230,7 @@ export default function LayoutGenerator() {
     
     setIsSaved(true);
     setErrorMessage('');
+    setLimitError(null);
   };
 
   const handleGenerateCAD = async () => {
@@ -239,14 +246,16 @@ export default function LayoutGenerator() {
         window.scrollTo({ top: 0, behavior: 'smooth' }); return;
     }
 
+    // 🛑 1-PROJECT WALL
     if (!isPremium && savedProjectsDb.length >= 1 && !savedProjectsDb.includes(projNameClean)) {
-        setErrorMessage('Free users can only create 1 project. Please upgrade to Premium to create more projects.');
-        window.scrollTo({ top: 0, behavior: 'smooth' }); return;
+        setLimitError('PROJECT');
+        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); return;
     }
 
+    // 🛑 3-LAYOUT WALL
     if (!isPremium && generationCount >= 3) {
-        setErrorMessage('You have used up your free generating layout facility (3/3). Please upgrade to Premium for unlimited rendering.');
-        window.scrollTo({ top: 0, behavior: 'smooth' }); return;
+        setLimitError('LAYOUT');
+        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); return;
     }
 
     if (typology === 'Commercial' && staircase === 'No Stairs') {
@@ -256,6 +265,7 @@ export default function LayoutGenerator() {
 
     setIsProcessing(true);
     setErrorMessage('');
+    setLimitError(null);
     
     const compiledRooms: any[] = [];
     
@@ -378,12 +388,6 @@ export default function LayoutGenerator() {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-10 font-sans">
-      <style dangerouslySetInnerHTML={{__html: `
-        input[type="number"]::-webkit-inner-spin-button,
-        input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-        input[type="number"] { -moz-appearance: textfield; }
-      `}} />
-
       <div className="max-w-4xl mx-auto space-y-8 mt-8 px-4">
         
         <fieldset disabled={isLocked} className={`space-y-8 min-w-0 p-0 m-0 border-0 ${isLocked ? 'opacity-80' : ''}`}>
@@ -754,13 +758,35 @@ export default function LayoutGenerator() {
 
         {errorMessage && <div className="p-4 rounded-xl border border-red-200 bg-red-50 text-red-600 font-bold text-sm text-center">{errorMessage}</div>}
 
-        <button 
-          onClick={handleGenerateCAD} 
-          disabled={isProcessing || isLocked} 
-          className={`w-full font-bold py-4 rounded-xl transition-all shadow-md text-lg ${(isProcessing || isLocked) ? 'bg-gray-400 text-white cursor-not-allowed' : 'bg-[#0f172a] hover:bg-black text-white hover:shadow-lg'}`}
-        >
-          {isProcessing ? "Generating AI powered 2D layout..." : "Calculate & Render Blueprint"}
-        </button>
+        {/* 🛑 PAY-AS-YOU-GO WALLS UI */}
+        {limitError === 'PROJECT' && (
+          <div className="bg-purple-50 border border-purple-200 rounded-2xl p-6 text-center mb-6 shadow-sm animate-in fade-in slide-in-from-bottom-4">
+            <div className="text-3xl mb-2">🏢</div>
+            <h3 className="text-lg font-black text-gray-900 mb-2">Project Limit Reached</h3>
+            <p className="text-sm font-medium text-gray-600 mb-4">Free users can only create 1 project workspace. You need a new workspace to save this layout.</p>
+            <Link href="/upgrade" className="inline-block bg-purple-600 text-white font-bold px-6 py-3 rounded-xl shadow-md hover:bg-purple-700 transition-all">Unlock New Project Workspace ➔</Link>
+          </div>
+        )}
+
+        {limitError === 'LAYOUT' && (
+          <div className="bg-[#22c55e]/10 border border-[#22c55e]/30 rounded-2xl p-6 text-center mb-6 shadow-sm animate-in fade-in slide-in-from-bottom-4">
+            <div className="text-3xl mb-2">📐</div>
+            <h3 className="text-lg font-black text-gray-900 mb-2">Generation Limit Reached</h3>
+            <p className="text-sm font-medium text-gray-600 mb-4">You have used your 3 free layout generations for this project.</p>
+            <Link href="/upgrade" className="inline-block bg-[#22c55e] text-white font-bold px-6 py-3 rounded-xl shadow-md hover:bg-[#1ea950] transition-all">Unlock Unlimited Layouts ➔</Link>
+          </div>
+        )}
+
+        {/* Hides the generate button if a limit is hit */}
+        {!limitError && (
+          <button 
+            onClick={handleGenerateCAD} 
+            disabled={isProcessing || isLocked} 
+            className={`w-full font-bold py-4 rounded-xl transition-all shadow-md text-lg ${(isProcessing || isLocked) ? 'bg-gray-400 text-white cursor-not-allowed' : 'bg-[#0f172a] hover:bg-black text-white hover:shadow-lg'}`}
+          >
+            {isProcessing ? "Generating AI powered 2D layout..." : "Calculate & Render Blueprint"}
+          </button>
+        )}
 
         {canvasRooms.length > 0 && (
           <div className="mt-8 space-y-6">
@@ -779,12 +805,7 @@ export default function LayoutGenerator() {
                 </button>
               ) : (
                 <>
-                  <button onClick={() => alert("Image downloaded successfully!")} className="flex-1 bg-gray-50 border border-gray-300 text-gray-700 text-sm font-bold py-3 px-5 rounded-lg hover:bg-gray-100 transition-all flex items-center justify-center">
-                    <span className="mr-2">📥</span> Export Image / PDF
-                  </button>
-                  <button onClick={() => alert("Check your 'output_blueprints' folder on the server.")} className="flex-1 bg-gray-50 border border-gray-300 text-gray-700 text-sm font-bold py-3 px-5 rounded-lg hover:bg-gray-100 transition-all flex items-center justify-center">
-                    <span className="mr-2">📐</span> Download CAD (.dxf)
-                  </button>
+                  {/* Note: The Download buttons were moved natively into CanvasEditor.tsx in the last update for performance! */}
                   
                   <button 
                     onClick={() => {

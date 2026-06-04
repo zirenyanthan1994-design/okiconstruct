@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from 'react';
 import { auth, db } from '../lib/firebase';
-import { collection, getDocs, doc, getDoc, setDoc, updateDoc, Timestamp } from 'firebase/firestore'; 
+import { collection, getDocs, doc, getDoc, setDoc, updateDoc, Timestamp, query, where, increment } from 'firebase/firestore'; 
 import { onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -102,7 +102,7 @@ export default function AdminPortal() {
   const [users, setUsers] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [transactions, setTransactions] = useState<any[]>([]);
-  const [selectedUser, setSelectedUser] = useState<any | null>(null); // For CRM Modal
+  const [selectedUser, setSelectedUser] = useState<any | null>(null); 
   
   const [settings, setSettings] = useState(defaultSettings);
   const [pricingPlans, setPricingPlans] = useState(DEFAULT_PRICING);
@@ -119,7 +119,7 @@ export default function AdminPortal() {
         await fetchMasterData();
         await loadCloudSettings();
       } else {
-        setAuthStatus('NORMAL_USER'); // Triggers the Stealth 404
+        setAuthStatus('NORMAL_USER'); 
       }
     });
     return () => unsubscribe();
@@ -156,7 +156,6 @@ export default function AdminPortal() {
       const fetchedProjects: any[] = [];
       projectsSnap.forEach((doc) => fetchedProjects.push({ id: doc.id, ...doc.data() }));
 
-      // Fetch Transaction History
       const txSnap = await getDocs(collection(db, "transactions"));
       const fetchedTx: any[] = [];
       txSnap.forEach(doc => fetchedTx.push({ id: doc.id, ...doc.data() }));
@@ -218,29 +217,42 @@ export default function AdminPortal() {
   };
 
   // ==========================================
-  // CRM ACTIONS (Approve, Reject, Manage)
+  // CRM ACTIONS (Approve & Affiliate Payout)
   // ==========================================
   const handleApproveTransaction = async (tx: any) => {
     if(!confirm(`Approve this payment of ₹${tx.amount}?`)) return;
     try {
       await updateDoc(doc(db, "transactions", tx.id), { status: "Approved", approvedAt: Timestamp.now() });
       
+      // 💰 AFFILIATE COMMISSION DISTRIBUTION LOGIC
+      if (tx.affiliateCode) {
+        const affQ = query(collection(db, "affiliates"), where("affiliateCode", "==", tx.affiliateCode));
+        const affSnap = await getDocs(affQ);
+        
+        if (!affSnap.empty) {
+          const affDoc = affSnap.docs[0];
+          const affData = affDoc.data();
+          const commissionEarned = tx.amount * ((affData.commissionRate || 20) / 100);
+          
+          await updateDoc(doc(db, "affiliates", affDoc.id), {
+            totalRevenueGenerated: increment(tx.amount),
+            totalEarned: increment(commissionEarned),
+            balanceRemaining: increment(commissionEarned)
+          });
+        }
+      }
+
       // Determine what was purchased and unlock the corresponding feature
       if (tx.paymentType === "New Premium Project Workspace" || tx.paymentType === "Unlock Unlimited Layouts") {
-        
         if (tx.projectId) {
-           // It's a layout unlock for a specific project
            await updateDoc(doc(db, "boq_projects", tx.projectId), {
              isPremiumLayout: true
            });
         }
-        // If it was a New Project purchase, the frontend already tracks it or we can flag the user
-        // We will add logic on the frontend to allow them to create a project if they have an approved 'New Project' transaction
-        
-        alert("Payment approved! The user's micro-transaction feature is now unlocked.");
+        alert("Payment approved! Workspace unlocked & Affiliate Commission Paid.");
       } else {
         // Standard Subscription Upgrade Logic
-        let addDays = 30; // Default 1 month
+        let addDays = 30; 
         if (tx.paymentType.includes("2 Month")) addDays = 60;
         if (tx.paymentType.includes("3 Month")) addDays = 90;
         if (tx.paymentType.includes("6 Month")) addDays = 180;
@@ -258,7 +270,7 @@ export default function AdminPortal() {
           planExpiry: Timestamp.fromDate(expiryDate),
           lastPaymentAmount: tx.amount
         });
-        alert("User successfully upgraded to Premium VIP!");
+        alert("User successfully upgraded to Premium VIP & Affiliate Commission Paid!");
       }
 
       fetchMasterData();
