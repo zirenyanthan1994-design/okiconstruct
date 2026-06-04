@@ -111,7 +111,7 @@ export default function Estimator() {
 
   const isPremium = userData?.tier === 'premium' || userData?.planStatus === 'premium' || auth?.currentUser?.email?.toLowerCase() === 'okiconstruct2026@gmail.com';
 
-  // 🟢 AGGRESSIVE BRIDGE INTERCEPTOR: Forces UI update perfectly
+  // 🟢 AGGRESSIVE BRIDGE INTERCEPTOR: Forces UI auto-fill perfectly
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const bridgeData = localStorage.getItem('oki_cad_bridge');
@@ -120,8 +120,17 @@ export default function Estimator() {
         const cad = JSON.parse(bridgeData);
         setIsFromCAD(true);
         if (cad.projectName) setProjectName(cad.projectName);
-        if (cad.typology === 'Private Residence') setBuildingType('residence');
-        else setBuildingType('apartment');
+        
+        if (cad.typology === 'Private Residence') {
+            setBuildingType('residence');
+            setCommercialGroundFloor(false);
+        } else if (cad.typology === 'Apartment Complex') {
+            setBuildingType('apartment');
+            setCommercialGroundFloor(false);
+        } else if (cad.typology === 'Commercial') {
+            setBuildingType('apartment');
+            setCommercialGroundFloor(true);
+        }
 
         if (cad.floors === 'Ground Floor Only') setTotalFloorsCount(1);
         else if (cad.floors === 'G + 1') setTotalFloorsCount(2);
@@ -147,6 +156,14 @@ export default function Estimator() {
                  ...prev, corridor: { hasCorridor: true, length: '30', width: cad.externalCorridorWidth } 
               }));
           }
+        }
+
+        // 🟢 AUTO-FILL THE COLUMNS AND FOOTINGS TO PREVENT 'NaN' CRASHES!
+        if (cad.columnsCount || cad.footingsCount) {
+            setStructure((prev: any) => ({
+                ...prev,
+                footing: { ...prev.footing, count: String(cad.columnsCount || cad.footingsCount) }
+            }));
         }
         
         let mappedUnit = 'feet';
@@ -239,6 +256,7 @@ export default function Estimator() {
     };
   };
 
+  // 🟢 AUTO-FILL THE ACTUAL LAYOUT INPUTS FOR THE USER TO VERIFY
   const handleSetupComplete = () => {
     if (!projectName.trim()) return setErrorMsg("Please provide a Project Name to begin.");
     if (!existingProjectId || floorsData.length !== totalFloorsCount) {
@@ -258,19 +276,69 @@ export default function Estimator() {
 
             if (buildingType === 'residence') {
                 const bhkCount = parseInt(siteDetails.bhkType.charAt(0)) || 1;
+                
+                let mappedBedrooms = Array.from({length: bhkCount}).map((_, j) => ({ id: Date.now() + j, length: '', breadth: '' }));
+                if (bridgeData?.bedrooms?.length > 0) {
+                    mappedBedrooms = bridgeData.bedrooms.map((b: any, idx: number) => ({ id: Date.now() + idx, length: b.length, breadth: b.breadth }));
+                }
+
+                let mappedBathrooms = Array.from({length: bhkCount === 1 ? 1 : bhkCount}).map((_, j) => ({ id: Date.now() + 100 + j, length: '', breadth: '', isAttached: false, layoutType: 'outside', attachedTo: '' }));
+                if (bridgeData?.bathrooms?.length > 0) {
+                    mappedBathrooms = bridgeData.bathrooms.map((b: any, idx: number) => ({ 
+                        id: Date.now() + 100 + idx, 
+                        length: b.length, 
+                        breadth: b.breadth,
+                        isAttached: b.type === 'attached',
+                        layoutType: b.placement || 'outside',
+                        attachedTo: b.attachedTo || ''
+                    }));
+                }
+
                 initialFloors.push({
                     floorName, isCommercial: false, 
                     hall: bridgeData?.hall ? { length: bridgeData.hall.length, breadth: bridgeData.hall.breadth } : { length: '', breadth: '' }, 
                     kitchenDining: bridgeData?.kitchen ? { length: bridgeData.kitchen.length, breadth: bridgeData.kitchen.breadth } : { length: '', breadth: '' }, 
                     foyer: { length: '', breadth: '' },
-                    bedrooms: bridgeData?.bedrooms ? bridgeData.bedrooms : Array.from({length: bhkCount}).map((_, j) => ({ id: Date.now() + j, length: '', breadth: '' })),
-                    bathrooms: bridgeData?.bathrooms ? bridgeData.bathrooms : Array.from({length: bhkCount === 1 ? 1 : bhkCount}).map((_, j) => ({ id: Date.now() + 100 + j, length: '', breadth: '', isAttached: false, layoutType: 'outside', attachedTo: '' }))
+                    bedrooms: mappedBedrooms,
+                    bathrooms: mappedBathrooms
                 });
             } else {
                 if (isComm) {
-                    initialFloors.push({ floorName, isCommercial: true, shops: [{ id: Date.now(), length: '', breadth: '' }], washrooms: { count: '', length: '', breadth: '' }});
+                    let shops = [{ id: Date.now(), length: '', breadth: '' }];
+                    let washrooms = { count: '', length: '', breadth: '' };
+
+                    if (bridgeData?.typology === 'Commercial') {
+                        shops = [];
+                        for (let c = 0; c < Number(bridgeData.commChambersCount || 1); c++) {
+                            shops.push({ id: Date.now() + c, length: bridgeData.commChambersDim?.length || '', breadth: bridgeData.commChambersDim?.breadth || '' });
+                        }
+                        const wCount = bridgeData.commBathType === 'Shared Floor Bathrooms' ? bridgeData.commSharedBathCount : bridgeData.commChambersCount;
+                        washrooms = { count: String(wCount || ''), length: bridgeData.commBathDim?.length || '', breadth: bridgeData.commBathDim?.breadth || '' };
+                    }
+
+                    initialFloors.push({ floorName, isCommercial: true, shops, washrooms });
                 } else {
-                    initialFloors.push({ floorName, isCommercial: false, flats: bridgeData?.aptFlats ? bridgeData.aptFlats : apartmentFlats.map(f => generateEmptyFlat(f.id, f.type)) });
+                    let flatsToUse = apartmentFlats.map(f => generateEmptyFlat(f.id, f.type));
+                    
+                    if (bridgeData?.aptFlats?.length > 0) {
+                        flatsToUse = bridgeData.aptFlats.map((flat: any) => ({
+                            id: flat.id,
+                            type: `${flat.bhk}BHK`,
+                            hall: { length: flat.hall?.length || '', breadth: flat.hall?.breadth || '' },
+                            kitchen: { length: flat.kitchen?.length || '', breadth: flat.kitchen?.breadth || '' },
+                            passageWidth: flat.passageWidth || '4',
+                            bedrooms: flat.bedrooms?.map((b: any, idx: number) => ({ id: Date.now() + idx, length: b.length, breadth: b.breadth })) || [],
+                            bathrooms: flat.bathrooms?.map((b: any, idx: number) => ({
+                                id: Date.now() + 100 + idx,
+                                length: b.length,
+                                breadth: b.breadth,
+                                isAttached: b.type === 'attached',
+                                layoutType: b.placement || 'outside',
+                                attachedTo: b.attachedTo || ''
+                            })) || []
+                        }));
+                    }
+                    initialFloors.push({ floorName, isCommercial: false, flats: flatsToUse });
                 }
             }
         }
@@ -338,7 +406,7 @@ export default function Estimator() {
 
   const handleTransitionToUpperFlats = () => {
       setFloorsData(prev => { const d = JSON.parse(JSON.stringify(prev)); for (let i = 1; i < totalFloorsCount; i++) d[i].flats = apartmentFlats.map(f => generateEmptyFlat(f.id, f.type)); return d; });
-      setActiveFloor(1); setCurrentStep(isFromCAD ? 4 : 3); window.scrollTo(0,0);
+      setActiveFloor(1); setCurrentStep(3); window.scrollTo(0,0);
   };
 
   const handleCopyChoice = (choice: 'yes' | 'no') => {
@@ -359,7 +427,7 @@ export default function Estimator() {
       setActiveFloor(totalFloorsCount - 1); 
       setCurrentStep(5); 
     } else {
-      setActiveFloor(activeFloor + 1); setCurrentStep(isFromCAD ? 4 : 3);
+      setActiveFloor(activeFloor + 1); setCurrentStep(3);
     }
     window.scrollTo(0,0);
   };
@@ -508,7 +576,7 @@ export default function Estimator() {
             <div className="flex items-center justify-between text-[10px] md:text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
               <span className={currentStep >= 1 ? "text-[#22c55e]" : ""}>Setup</span>
               <span className={currentStep >= 2 ? "text-[#22c55e]" : ""}>Structure</span>
-              {!isFromCAD && <span className={currentStep >= 3 ? "text-[#22c55e]" : ""}>Layout</span>}
+              <span className={currentStep >= 3 ? "text-[#22c55e]" : ""}>Layout</span>
               <span className={currentStep >= 4 ? "text-[#22c55e]" : ""}>Openings</span>
               <span className={currentStep >= 5 ? "text-[#22c55e]" : ""}>Pricing</span>
               {boqScope === 'full' && <span className={currentStep >= 8 ? "text-[#22c55e]" : ""}>Review</span>}
@@ -885,7 +953,6 @@ export default function Estimator() {
                         <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.plinthBeam.width} onChange={(e) => setStructure({ ...structure, plinthBeam: { ...structure.plinthBeam, width: e.target.value } })} />
                       </div>
                     </div>
-                    {/* 🟢 RESTORED: Plinth Beam TMT Inputs */}
                     {isPremium && (
                       <div className="p-3 border border-blue-100 bg-blue-50/50 rounded-xl mt-4">
                         <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block mb-2">Override Plinth TMT <span className="text-blue-500">★</span></span>
@@ -929,7 +996,6 @@ export default function Estimator() {
                         <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.roofBeam.width} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, width: e.target.value } })} />
                       </div>
                     </div>
-                    {/* 🟢 RESTORED: Roof Beam TMT Inputs */}
                     {isPremium && (
                       <div className="p-3 border border-blue-100 bg-blue-50/50 rounded-xl mt-4">
                         <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block mb-2">Override Roof TMT <span className="text-blue-500">★</span></span>
@@ -1031,17 +1097,17 @@ export default function Estimator() {
               <div className="flex gap-4 pt-4">
                 <button onClick={() => validateAndProceed(1)} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
                 <button 
-                  onClick={() => validateAndProceed(isFromCAD ? 4 : 3)} 
+                  onClick={() => validateAndProceed(3)} 
                   className="w-2/3 bg-[#22c55e] text-white font-bold text-lg p-4 rounded-xl hover:bg-[#1ea950] transition-colors shadow-md flex items-center justify-center gap-2"
                 >
-                  {isFromCAD ? "Skip to Openings (Layout Auto-Filled) ➔" : "Continue to Layout"}
+                  Continue to Layout ➔
                 </button>
               </div>
             </div>
           )}
 
           {/* --- STEP 3: LAYOUT --- */}
-          {currentStep === 3 && floorsData[activeFloor] && !isFromCAD && (
+          {currentStep === 3 && floorsData[activeFloor] && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
               
               <div className="mb-8 border-b border-gray-100 pb-6 flex justify-between items-end">
@@ -1554,7 +1620,7 @@ export default function Estimator() {
               <div className="flex gap-4 pt-6">
                 <button onClick={() => { 
                     setErrorMsg(""); 
-                    if (activeFloor === 0) setCurrentStep(isFromCAD ? 2 : 3); 
+                    if (activeFloor === 0) setCurrentStep(2); 
                     else { setActiveFloor(activeFloor - 1); setCurrentStep(4); }
                 }} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
                 <button onClick={() => validateAndProceed(4)} className="w-2/3 bg-[#22c55e] text-white font-bold text-lg p-4 rounded-xl hover:bg-[#1ea950] transition-colors shadow-md">Continue to Openings</button>
@@ -1660,6 +1726,7 @@ export default function Estimator() {
                                                     <option value="3BHK">3 BHK</option>
                                                     <option value="4BHK">4 BHK</option>
                                                 </select>
+                                                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-sm">▼</div>
                                             </div>
                                         </div>
                                     ))}
@@ -1668,8 +1735,8 @@ export default function Estimator() {
                         </div>
                         
                         <div className="flex gap-4">
-                            <button onClick={() => setCurrentStep(isFromCAD ? 2 : 3)} className="w-1/3 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
-                            <button onClick={handleTransitionToUpperFlats} className="w-2/3 bg-orange-600 text-white font-bold text-lg p-4 rounded-xl hover:bg-orange-700 transition-colors shadow-md">Proceed to 1st Floor {isFromCAD ? "Openings" : "Layout"} ➔</button>
+                            <button onClick={() => setCurrentStep(3)} className="w-1/3 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
+                            <button onClick={handleTransitionToUpperFlats} className="w-2/3 bg-orange-600 text-white font-bold text-lg p-4 rounded-xl hover:bg-orange-700 transition-colors shadow-md">Proceed to 1st Floor Layout ➔</button>
                         </div>
                     </div>
                   ) : (
@@ -1684,7 +1751,7 @@ export default function Estimator() {
                   )
                 ) : (
                   <div className="flex gap-4">
-                    <button onClick={() => setCurrentStep(isFromCAD ? 2 : 3)} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
+                    <button onClick={() => setCurrentStep(3)} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
                     <button onClick={() => { setErrorMsg(""); setCurrentStep(5); window.scrollTo(0,0); }} className="w-2/3 bg-gray-900 text-white font-bold text-lg p-4 rounded-xl hover:bg-[#22c55e] transition-colors shadow-md">
                       Continue to {boqScope === 'civil_only' ? 'Core Materials' : 'Pricing'} ➔
                     </button>
@@ -1816,7 +1883,7 @@ export default function Estimator() {
 
               <ErrorDisplay />
               <div className="flex gap-4 pt-4">
-                <button onClick={() => { setErrorMsg(""); setCurrentStep(4); window.scrollTo(0,0); }} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back to Openings</button>
+                <button onClick={() => { setErrorMsg(""); setCurrentStep(4); window.scrollTo(0,0); }} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
                 {boqScope === 'civil_only' ? (
                    <button onClick={handleGenerateBOQ} className="w-2/3 bg-gray-900 text-white font-bold text-lg p-4 rounded-xl hover:bg-[#22c55e] transition-colors shadow-md">Generate Civil BOQ ✨</button>
                 ) : (
