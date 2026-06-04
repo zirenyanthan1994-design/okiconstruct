@@ -351,7 +351,7 @@ export default function LayoutGenerator() {
     };
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/layout/generate', {
+     const response = await fetch('https://YOUR-RENDER-URL.onrender.com/api/layout/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
