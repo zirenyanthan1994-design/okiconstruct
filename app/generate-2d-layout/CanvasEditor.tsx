@@ -48,7 +48,6 @@ export default function CanvasEditor({
   const [rooms, setRooms] = useState<CanvasRoom[]>([]);
   const [history, setHistory] = useState<CanvasRoom[][]>([]);
   const [selectedId, selectShape] = useState<string | null>(null);
-  const [stageConfig, setStageConfig] = useState({ scale: 1, x: 0, y: 0 });
 
   const trRef = useRef<any>(null);
   const stageRef = useRef<any>(null);
@@ -69,6 +68,49 @@ export default function CanvasEditor({
       setHistory(history.slice(0, -1));
       selectShape(null);
     }
+  };
+
+  // --- INSTANT EXPORT FUNCTIONS ---
+  const downloadImage = () => {
+    selectShape(null); // Hide transformer before screenshot
+    setTimeout(() => {
+      if (!stageRef.current) return;
+      const uri = stageRef.current.toDataURL({ pixelRatio: 3, mimeType: 'image/jpeg', quality: 1 });
+      const link = document.createElement('a');
+      link.download = 'OkiConstruct_Blueprint.jpg';
+      link.href = uri;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }, 150);
+  };
+
+  const downloadCAD = () => {
+    let dxf = "0\nSECTION\n2\nENTITIES\n";
+    
+    // Add Rooms
+    rooms.forEach(r => {
+      const x = r.x;
+      const y = -r.y; // DXF Y-axis is inverted
+      const w = r.widthFt * SCALE;
+      const h = r.heightFt * SCALE;
+
+      dxf += `0\nLWPOLYLINE\n8\n0\n90\n4\n70\n1\n`;
+      dxf += `10\n${x}\n20\n${y}\n`;
+      dxf += `10\n${x+w}\n20\n${y}\n`;
+      dxf += `10\n${x+w}\n20\n${y-h}\n`;
+      dxf += `10\n${x}\n20\n${y-h}\n`;
+    });
+
+    dxf += "0\nENDSEC\n0\nEOF\n";
+    
+    const blob = new Blob([dxf], { type: 'application/dxf' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'OkiConstruct_CAD_Layout.dxf';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const gridPattern = useMemo(() => {
@@ -252,7 +294,14 @@ export default function CanvasEditor({
 
     setRooms(populatedRooms);
     setHistory([]);
-    setStageConfig({ scale: 1, x: 0, y: 0 });
+
+    // RESET STAGE POSITION ON LOAD
+    if (stageRef.current) {
+        stageRef.current.position({ x: 0, y: 0 });
+        stageRef.current.scale({ x: 1, y: 1 });
+        stageRef.current.rotation(0);
+        stageRef.current.batchDraw();
+    }
   }, [initialRooms, entranceType]);
 
   const selectedElement = rooms.flatMap((r) => r.elements || []).find((e) => e.id === selectedId);
@@ -262,8 +311,9 @@ export default function CanvasEditor({
   if (selectedElement && selectedRoomId && stageRef.current) {
     const parentRoom = rooms.find((r) => r.id === selectedRoomId);
     if (parentRoom) {
-      const screenX = (parentRoom.x + selectedElement.x) * stageConfig.scale + stageConfig.x;
-      const screenY = (parentRoom.y + selectedElement.y) * stageConfig.scale + stageConfig.y;
+      const stage = stageRef.current;
+      const screenX = (parentRoom.x + selectedElement.x) * stage.scaleX() + stage.x();
+      const screenY = (parentRoom.y + selectedElement.y) * stage.scaleY() + stage.y();
       toolbarStyle = {
         position: 'absolute',
         left: `${screenX + 30}px`,
@@ -358,10 +408,13 @@ export default function CanvasEditor({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedId, rooms]);
 
+  // --- PERFORMANCE: OPTIMIZED WHEEL ZOOM ---
   const handleWheel = (e: any) => {
     e.evt.preventDefault();
     const scaleBy = 1.05;
-    const stage = e.target.getStage();
+    const stage = stageRef.current;
+    if (!stage) return;
+
     const oldScale = stage.scaleX();
     const pointer = stage.getPointerPosition();
 
@@ -372,16 +425,18 @@ export default function CanvasEditor({
 
     const newScale = e.evt.deltaY > 0 ? oldScale / scaleBy : oldScale * scaleBy;
 
-    setStageConfig({
-      scale: newScale,
+    // Direct GPU manipulation (Bypasses laggy React updates)
+    stage.scale({ x: newScale, y: newScale });
+    stage.position({
       x: pointer.x - mousePointTo.x * newScale,
       y: pointer.y - mousePointTo.y * newScale,
     });
+    stage.batchDraw();
   };
 
-  // --- MOBILE TOUCH EVENT HANDLERS ---
+  // --- PERFORMANCE: OPTIMIZED MOBILE TOUCH EVENT HANDLERS ---
   const handleTouchMove = (e: any) => {
-    const stage = e.target.getStage();
+    const stage = stageRef.current;
     if (!stage) return;
 
     const touch1 = e.evt.touches[0];
@@ -599,7 +654,7 @@ export default function CanvasEditor({
         trRef.current.getLayer().batchDraw();
       }
     }
-  }, [selectedId, rooms, stageConfig]);
+  }, [selectedId, rooms]);
 
   const renderMergedWall = () => {
     if (entranceType !== 'Hall / Living Room') return null;
@@ -754,6 +809,8 @@ export default function CanvasEditor({
 
   return (
     <div className="relative w-full border-2 border-gray-300 rounded-lg overflow-hidden bg-white shadow-sm">
+      
+      {/* LEFT TOOLBAR */}
       <button
         onClick={handleUndo}
         disabled={history.length === 0}
@@ -763,6 +820,16 @@ export default function CanvasEditor({
       >
         ↩ Undo
       </button>
+
+      {/* RIGHT EXPORT MENU */}
+      <div className="absolute top-4 right-4 z-20 flex gap-2">
+        <button onClick={downloadImage} className="bg-white text-gray-800 px-3 py-2 text-sm font-bold rounded shadow border border-gray-200 hover:bg-gray-50 transition-colors">
+          🖼️ JPG
+        </button>
+        <button onClick={downloadCAD} className="bg-[#22c55e] text-white px-3 py-2 text-sm font-bold rounded shadow hover:bg-[#1ea950] transition-colors">
+          📐 CAD (.DXF)
+        </button>
+      </div>
 
       {/* FLOATING ACTION MENU */}
       {selectedElement && (
@@ -799,19 +866,15 @@ export default function CanvasEditor({
             onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
             onWheel={handleWheel}
-            scaleX={stageConfig.scale}
-            scaleY={stageConfig.scale}
-            x={stageConfig.x}
-            y={stageConfig.y}
             draggable={!selectedId && !isTransformingRef.current}
             ref={stageRef}
           >
             <Layer>
-              <Rect id="grid-bg" x={-2000} y={-2000} width={8000} height={8000} fillPatternImage={gridPattern} />
+              <Rect id="grid-bg" x={-2000} y={-2000} width={8000} height={8000} fillPatternImage={gridPattern} listening={false} perfectDrawEnabled={false} />
 
               {/* OVERALL EXTERIOR DIMENSIONS */}
               {rooms.length > 0 && currentMinX !== Infinity && (
-                <Group>
+                <Group listening={false}>
                   <Line points={[currentMinX, currentMinY - 20, currentMaxX, currentMinY - 20]} stroke="#dc2626" strokeWidth={1.5} />
                   <Line points={[currentMinX, currentMinY - 25, currentMinX, currentMinY - 15]} stroke="#dc2626" strokeWidth={2} />
                   <Line points={[currentMaxX, currentMinY - 25, currentMaxX, currentMinY - 15]} stroke="#dc2626" strokeWidth={2} />
@@ -870,9 +933,9 @@ export default function CanvasEditor({
                     onTransformEnd={(e) => handleTransformEnd(e, room.id)}
                   >
                     {/* Fill & Selection Indicator for Mobile */}
-                    <Rect width={w} height={h} fill={isSelected ? '#e0f2fe' : '#ffffff'} opacity={0.95} />
+                    <Rect width={w} height={h} fill={isSelected ? '#e0f2fe' : '#ffffff'} opacity={0.95} perfectDrawEnabled={false} />
                     {isSelected && (
-                      <Rect width={w} height={h} stroke="#0ea5e9" strokeWidth={4} listening={false} />
+                      <Rect width={w} height={h} stroke="#0ea5e9" strokeWidth={4} listening={false} perfectDrawEnabled={false} />
                     )}
 
                     {/* Walls */}
@@ -882,7 +945,7 @@ export default function CanvasEditor({
                     <Line points={[w, 0, w, h]} stroke="#0f172a" strokeWidth={isMaxX ? extThick : intThick} />
 
                     {/* BLUE INTERNAL DIMENSIONS */}
-                    <Group opacity={0.9}>
+                    <Group opacity={0.9} listening={false}>
                       <Line points={[15, 15, w - 15, 15]} stroke={dimColor} strokeWidth={0.5} />
                       <Text text={`${Math.round(room.widthFt)}'`} x={0} y={17} width={w} align="center" fontSize={9} fontStyle="bold" fill={dimColor} />
 
@@ -903,6 +966,7 @@ export default function CanvasEditor({
                       rotation={isPassage ? 90 : 0}
                       offsetX={isPassage ? h / 2 : 0}
                       offsetY={isPassage ? 15 : 0}
+                      listening={false}
                     >
                       <Text text={room.name.toUpperCase()} width={isPassage ? h : w} align="center" fontSize={labelFontSize} fontStyle="bold" fill="#0f172a" opacity={0.8} />
                       <Text text={`${Math.round(room.widthFt)}' x ${Math.round(room.heightFt)}'`} width={isPassage ? h : w} y={12} align="center" fontSize={isBathroom ? 6 : 9} fill="#16a34a" fontStyle="bold" />
