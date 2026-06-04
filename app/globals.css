@@ -22,3 +22,14 @@
     border-color: #22c55e !important;
   }
 }
+/* Hide number input arrows to prevent text clipping on mobile */
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type='number'] {
+  -moz-appearance: textfield; /* Firefox */
+  appearance: textfield;
+}

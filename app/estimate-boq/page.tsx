@@ -493,7 +493,7 @@ export default function Estimator() {
   const updateTile = (roomKey: string, field: 'size' | 'type' | 'price', value: string) => setTiles(prev => ({ ...prev, [roomKey]: { ...(prev[roomKey] || { size: '', type: '', price: '' }), [field]: value } }));
   const validateAndProceed = (targetStep: number) => { setErrorMsg(""); setCurrentStep(targetStep); window.scrollTo({ top: 0, behavior: 'smooth' }); };
 
-  const inputStyle = "w-full border border-gray-200 bg-gray-50 rounded-xl p-4 text-gray-900 font-medium focus:bg-white focus:ring-2 focus:ring-[#22c55e]/30 focus:border-[#22c55e] transition-all outline-none";
+  const inputStyle = "w-full border border-gray-200 bg-gray-50 rounded-xl px-3 py-3 md:p-4 text-center md:text-left text-gray-900 font-medium focus:bg-white focus:ring-2 focus:ring-[#22c55e]/30 focus:border-[#22c55e] transition-all outline-none";
   const selectStyle = "w-full border border-gray-200 bg-gray-50 rounded-xl p-4 text-gray-900 font-medium focus:bg-white focus:ring-2 focus:ring-[#22c55e]/30 focus:border-[#22c55e] transition-all outline-none cursor-pointer appearance-none";
   const labelStyle = "text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block";
   const ErrorDisplay = () => errorMsg ? (<div className="bg-red-50 text-red-600 border border-red-200 rounded-xl p-4 mt-8 mb-4 font-medium flex items-center gap-3 animate-in slide-in-from-bottom-2 print:hidden"><span className="text-xl">⚠️</span> {errorMsg}</div>) : null;
