@@ -5,7 +5,6 @@ import { collection, getDocs, doc, getDoc, setDoc, updateDoc, Timestamp } from '
 import { onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-// import Navbar from '../components/Navbar'; 
 
 // ==========================================
 // 🛑 HARDCODED ADMIN CREDENTIALS
@@ -62,6 +61,11 @@ const DEFAULT_PRICING = [
   { id: '5y', months: 60, label: '5 Years', price: 59940, discount: 40 }
 ];
 
+const DEFAULT_PAY_AS_YOU_GO = {
+  newProjectPrice: 299,
+  unlockLayoutPrice: 99
+};
+
 const formatLabel = (key: string) => {
   const result = key.replace(/([A-Z])/g, " $1");
   return result.charAt(0).toUpperCase() + result.slice(1);
@@ -102,6 +106,7 @@ export default function AdminPortal() {
   
   const [settings, setSettings] = useState(defaultSettings);
   const [pricingPlans, setPricingPlans] = useState(DEFAULT_PRICING);
+  const [payAsYouGoPricing, setPayAsYouGoPricing] = useState(DEFAULT_PAY_AS_YOU_GO);
   const [saveStatus, setSaveStatus] = useState("");
 
   // SECURITY GATEWAY INITIALIZATION
@@ -181,8 +186,10 @@ export default function AdminPortal() {
          setSettings(engineDoc.data().settings);
       }
       const pricingDoc = await getDoc(doc(db, "platform", "billing"));
-      if (pricingDoc.exists() && pricingDoc.data().plans) {
-        setPricingPlans(pricingDoc.data().plans);
+      if (pricingDoc.exists()) {
+        const data = pricingDoc.data();
+        if (data.plans) setPricingPlans(data.plans);
+        if (data.payAsYouGo) setPayAsYouGoPricing(data.payAsYouGo);
       }
     } catch (err) {
       console.error("Failed to load cloud settings, using defaults.", err);
@@ -192,7 +199,7 @@ export default function AdminPortal() {
   const handleSaveChanges = async () => {
     try {
       await setDoc(doc(db, "platform", "engine"), { settings }, { merge: true });
-      await setDoc(doc(db, "platform", "billing"), { plans: pricingPlans }, { merge: true });
+      await setDoc(doc(db, "platform", "billing"), { plans: pricingPlans, payAsYouGo: payAsYouGoPricing }, { merge: true });
       setSaveStatus("Cloud Sync Successful! All systems updated.");
     } catch (error) {
       console.error(error);
@@ -205,6 +212,7 @@ export default function AdminPortal() {
     if(confirm("Are you sure you want to reset all formulas and pricing to factory defaults globally?")) {
       setSettings(defaultSettings);
       setPricingPlans(DEFAULT_PRICING);
+      setPayAsYouGoPricing(DEFAULT_PAY_AS_YOU_GO);
       handleSaveChanges();
     }
   };
@@ -217,27 +225,42 @@ export default function AdminPortal() {
     try {
       await updateDoc(doc(db, "transactions", tx.id), { status: "Approved", approvedAt: Timestamp.now() });
       
-      // Calculate Expiry Date based on plan
-      let addDays = 30; // Default 1 month
-      if (tx.paymentType.includes("2 Month")) addDays = 60;
-      if (tx.paymentType.includes("3 Month")) addDays = 90;
-      if (tx.paymentType.includes("6 Month")) addDays = 180;
-      if (tx.paymentType.includes("1 Year")) addDays = 365;
-      if (tx.paymentType.includes("2 Year")) addDays = 730;
-      if (tx.paymentType.includes("3 Year")) addDays = 1095;
-      if (tx.paymentType.includes("4 Year")) addDays = 1460;
-      if (tx.paymentType.includes("5 Year")) addDays = 1825;
+      // Determine what was purchased and unlock the corresponding feature
+      if (tx.paymentType === "New Premium Project Workspace" || tx.paymentType === "Unlock Unlimited Layouts") {
+        
+        if (tx.projectId) {
+           // It's a layout unlock for a specific project
+           await updateDoc(doc(db, "boq_projects", tx.projectId), {
+             isPremiumLayout: true
+           });
+        }
+        // If it was a New Project purchase, the frontend already tracks it or we can flag the user
+        // We will add logic on the frontend to allow them to create a project if they have an approved 'New Project' transaction
+        
+        alert("Payment approved! The user's micro-transaction feature is now unlocked.");
+      } else {
+        // Standard Subscription Upgrade Logic
+        let addDays = 30; // Default 1 month
+        if (tx.paymentType.includes("2 Month")) addDays = 60;
+        if (tx.paymentType.includes("3 Month")) addDays = 90;
+        if (tx.paymentType.includes("6 Month")) addDays = 180;
+        if (tx.paymentType.includes("1 Year")) addDays = 365;
+        if (tx.paymentType.includes("2 Year")) addDays = 730;
+        if (tx.paymentType.includes("3 Year")) addDays = 1095;
+        if (tx.paymentType.includes("4 Year")) addDays = 1460;
+        if (tx.paymentType.includes("5 Year")) addDays = 1825;
 
-      const expiryDate = new Date();
-      expiryDate.setDate(expiryDate.getDate() + addDays);
+        const expiryDate = new Date();
+        expiryDate.setDate(expiryDate.getDate() + addDays);
 
-      await updateDoc(doc(db, "users", tx.uid), {
-        tier: "premium",
-        planExpiry: Timestamp.fromDate(expiryDate),
-        lastPaymentAmount: tx.amount
-      });
+        await updateDoc(doc(db, "users", tx.uid), {
+          tier: "premium",
+          planExpiry: Timestamp.fromDate(expiryDate),
+          lastPaymentAmount: tx.amount
+        });
+        alert("User successfully upgraded to Premium VIP!");
+      }
 
-      alert("User successfully upgraded to Premium!");
       fetchMasterData();
     } catch (err) { console.error("Approval failed:", err); alert("Failed to approve transaction."); }
   };
@@ -356,8 +379,6 @@ export default function AdminPortal() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans pb-20 relative">
       
-      {/* <Navbar /> */}
-
       <main className="max-w-[1400px] mx-auto p-4 md:p-8 mt-4 w-full flex-grow">
         
         <div className="mb-10 flex flex-col md:flex-row justify-between items-start md:items-end border-b border-gray-200 pb-6 gap-6">
@@ -529,7 +550,7 @@ export default function AdminPortal() {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 bg-white p-6 md:p-8 rounded-3xl border border-gray-100 shadow-sm">
               <div>
                 <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-3"><span className="bg-gray-100 p-2 rounded-xl text-xl">💳</span> Global Pricing</h2>
-                <p className="font-medium text-gray-500 mt-2 text-sm">Control the base prices and discount incentives displayed on the Upgrade page.</p>
+                <p className="font-medium text-gray-500 mt-2 text-sm">Control the base prices, pay-as-you-go micro-transactions, and discount incentives.</p>
               </div>
               <div className="flex gap-4 mt-6 md:mt-0 w-full md:w-auto">
                  <button onClick={handleResetSettings} className="flex-1 md:flex-none border border-gray-200 bg-white text-gray-600 px-6 py-3 font-bold rounded-xl hover:bg-gray-50 transition-colors text-sm">Reset Defaults</button>
@@ -537,20 +558,52 @@ export default function AdminPortal() {
               </div>
             </div>
 
+            {/* PAY AS YOU GO SECTION */}
+            <section className="bg-white border border-purple-100 rounded-3xl p-6 md:p-10 shadow-sm mb-8">
+              <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
+                 <span className="bg-purple-100 text-purple-600 w-8 h-8 rounded-full flex items-center justify-center text-sm">⚡</span> Pay-As-You-Go Limits
+              </h2>
+              <p className="text-sm font-medium text-gray-500 mb-6">Set the prices for one-time unlocks used by free-tier users when they hit their limits.</p>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="border border-gray-200 p-5 rounded-2xl bg-gray-50/50">
+                   <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block mb-3">Price for a New Project Workspace</label>
+                   <div className="relative">
+                     <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">₹</span>
+                     <input type="number" className={`${inputStyle} pl-8 border-purple-200 focus:border-purple-500 focus:ring-purple-500/20`} value={payAsYouGoPricing.newProjectPrice} onChange={(e) => setPayAsYouGoPricing({...payAsYouGoPricing, newProjectPrice: Number(e.target.value)})} />
+                   </div>
+                   <p className="text-xs text-gray-400 mt-3 font-medium">Bypasses the strict 1-project free limit.</p>
+                </div>
+                
+                <div className="border border-gray-200 p-5 rounded-2xl bg-gray-50/50">
+                   <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block mb-3">Price to Unlock Unlimited Layouts</label>
+                   <div className="relative">
+                     <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">₹</span>
+                     <input type="number" className={`${inputStyle} pl-8 border-purple-200 focus:border-purple-500 focus:ring-purple-500/20`} value={payAsYouGoPricing.unlockLayoutPrice} onChange={(e) => setPayAsYouGoPricing({...payAsYouGoPricing, unlockLayoutPrice: Number(e.target.value)})} />
+                   </div>
+                   <p className="text-xs text-gray-400 mt-3 font-medium">Bypasses the 3-layout free limit per individual project.</p>
+                </div>
+              </div>
+            </section>
+
+            {/* SUBSCRIPTION SECTION */}
             <section className="bg-white border border-blue-100 rounded-3xl p-6 md:p-10 shadow-sm mb-8">
+              <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
+                 <span className="bg-blue-100 text-blue-600 w-8 h-8 rounded-full flex items-center justify-center text-sm">📅</span> Monthly/Yearly Subscription Plans
+              </h2>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {pricingPlans.map((plan, i) => {
                   const finalPrice = Math.ceil(plan.price - (plan.price * (plan.discount/100)));
                   return (
-                    <div key={plan.id} className="border border-gray-200 p-4 rounded-2xl bg-gray-50/50 hover:border-blue-300 transition-colors">
-                      <div className="font-black text-gray-900 mb-4 pb-2 border-b border-gray-200">{plan.label} VIP</div>
+                    <div key={plan.id} className="border border-gray-200 p-5 rounded-2xl bg-gray-50/50 hover:border-blue-300 transition-colors">
+                      <div className="font-black text-gray-900 mb-4 pb-3 border-b border-gray-200">{plan.label} VIP</div>
                       <div className="space-y-4">
-                        <div><label className="text-[10px] font-bold text-gray-400 uppercase">Base Price (₹)</label><input type="number" className="w-full border border-gray-200 rounded-lg p-2 font-bold focus:border-[#22c55e] outline-none" value={plan.price} onChange={(e) => updatePricing(i, 'price', e.target.value)} /></div>
+                        <div><label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-2">Base Price</label><div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-medium text-sm">₹</span><input type="number" className="w-full border border-gray-200 rounded-lg p-2.5 pl-7 font-bold focus:border-[#22c55e] outline-none" value={plan.price} onChange={(e) => updatePricing(i, 'price', e.target.value)} /></div></div>
                         <div>
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Discount (%)</label>
-                          <div className="relative"><input type="number" className="w-full border border-gray-200 rounded-lg p-2 font-bold focus:border-[#22c55e] outline-none pr-8" value={plan.discount} onChange={(e) => updatePricing(i, 'discount', e.target.value)} /><span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">%</span></div>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-2">Discount</label>
+                          <div className="relative"><input type="number" className="w-full border border-gray-200 rounded-lg p-2.5 font-bold focus:border-[#22c55e] outline-none pr-8" value={plan.discount} onChange={(e) => updatePricing(i, 'discount', e.target.value)} /><span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">%</span></div>
                         </div>
-                        <div className="pt-3 flex justify-between items-center text-sm border-t border-gray-100"><span className="font-bold text-gray-500">Final Price:</span><span className="font-black text-[#22c55e] text-lg">₹{finalPrice.toLocaleString()}</span></div>
+                        <div className="pt-4 flex justify-between items-center text-sm border-t border-gray-100"><span className="font-bold text-gray-500">Final:</span><span className="font-black text-[#22c55e] text-xl">₹{finalPrice.toLocaleString()}</span></div>
                       </div>
                     </div>
                   )
