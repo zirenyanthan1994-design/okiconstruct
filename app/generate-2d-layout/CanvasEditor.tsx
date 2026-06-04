@@ -31,6 +31,15 @@ interface CanvasEditorProps {
   wallThickness?: string;
 }
 
+// --- MOBILE TOUCH HELPERS ---
+const getDistance = (p1: { x: number; y: number }, p2: { x: number; y: number }) => {
+  return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+};
+
+const getAngle = (p1: { x: number; y: number }, p2: { x: number; y: number }) => {
+  return (Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180) / Math.PI;
+};
+
 export default function CanvasEditor({
   initialRooms,
   entranceType,
@@ -43,6 +52,11 @@ export default function CanvasEditor({
 
   const trRef = useRef<any>(null);
   const stageRef = useRef<any>(null);
+
+  // --- MOBILE TOUCH REFS ---
+  const lastDistRef = useRef<number>(0);
+  const lastAngleRef = useRef<number>(0);
+  const isTransformingRef = useRef<boolean>(false);
 
   const commitHistory = (currentRooms: CanvasRoom[]) => {
     setHistory((prev) => [...prev, currentRooms]);
@@ -363,6 +377,63 @@ export default function CanvasEditor({
       x: pointer.x - mousePointTo.x * newScale,
       y: pointer.y - mousePointTo.y * newScale,
     });
+  };
+
+  // --- MOBILE TOUCH EVENT HANDLERS ---
+  const handleTouchMove = (e: any) => {
+    const stage = e.target.getStage();
+    if (!stage) return;
+
+    const touch1 = e.evt.touches[0];
+    const touch2 = e.evt.touches[1];
+
+    if (touch1 && touch2) {
+      if (stage.isDragging()) {
+        stage.stopDrag();
+      }
+
+      const p1 = { x: touch1.clientX, y: touch1.clientY };
+      const p2 = { x: touch2.clientX, y: touch2.clientY };
+
+      if (!isTransformingRef.current) {
+        isTransformingRef.current = true;
+        lastDistRef.current = getDistance(p1, p2);
+        lastAngleRef.current = getAngle(p1, p2) - stage.rotation();
+        return;
+      }
+
+      const dist = getDistance(p1, p2);
+      const newScale = stage.scaleX() * (dist / lastDistRef.current);
+      const boundedScale = Math.max(0.2, Math.min(newScale, 5));
+
+      const angle = getAngle(p1, p2);
+      const newRotation = angle - lastAngleRef.current;
+
+      const pointer = stage.getPointerPosition() || { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+      const stageX = stage.x();
+      const stageY = stage.y();
+
+      const mousePointTo = {
+        x: (pointer.x - stageX) / stage.scaleX(),
+        y: (pointer.y - stageY) / stage.scaleY(),
+      };
+
+      stage.scale({ x: boundedScale, y: boundedScale });
+      stage.rotation(newRotation);
+
+      const newPos = {
+        x: pointer.x - mousePointTo.x * boundedScale,
+        y: pointer.y - mousePointTo.y * boundedScale,
+      };
+      stage.position(newPos);
+
+      lastDistRef.current = dist;
+      stage.batchDraw();
+    }
+  };
+
+  const handleTouchEnd = () => {
+    isTransformingRef.current = false;
   };
 
   const checkDeselect = (e: any) => {
@@ -725,12 +796,14 @@ export default function CanvasEditor({
             height={3000}
             onMouseDown={checkDeselect}
             onTouchStart={checkDeselect}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
             onWheel={handleWheel}
             scaleX={stageConfig.scale}
             scaleY={stageConfig.scale}
             x={stageConfig.x}
             y={stageConfig.y}
-            draggable={!selectedId}
+            draggable={!selectedId && !isTransformingRef.current}
             ref={stageRef}
           >
             <Layer>
@@ -778,6 +851,8 @@ export default function CanvasEditor({
                 const isBathroom = room.name.toLowerCase().includes('bathroom');
                 const labelFontSize = isBathroom ? 7 : 11;
 
+                const isSelected = selectedId === room.id;
+
                 return (
                   <Group
                     key={room.id}
@@ -790,11 +865,15 @@ export default function CanvasEditor({
                     draggable
                     dragBoundFunc={(pos) => ({ x: Math.round(pos.x / SCALE) * SCALE, y: Math.round(pos.y / SCALE) * SCALE })}
                     onMouseDown={(e) => handleSelect(e, room.id)}
+                    onTouchStart={(e) => handleSelect(e, room.id)}
                     onDragEnd={(e) => handleDragEnd(e, room.id)}
                     onTransformEnd={(e) => handleTransformEnd(e, room.id)}
                   >
-                    {/* Fill */}
-                    <Rect width={w} height={h} fill={selectedId === room.id ? '#f1f5f9' : '#ffffff'} opacity={0.95} />
+                    {/* Fill & Selection Indicator for Mobile */}
+                    <Rect width={w} height={h} fill={isSelected ? '#e0f2fe' : '#ffffff'} opacity={0.95} />
+                    {isSelected && (
+                      <Rect width={w} height={h} stroke="#0ea5e9" strokeWidth={4} listening={false} />
+                    )}
 
                     {/* Walls */}
                     <Line points={[0, 0, w, 0]} stroke="#0f172a" strokeWidth={isMinY ? extThick : intThick} />
@@ -853,6 +932,7 @@ export default function CanvasEditor({
                       rotation={el.rotation || 0}
                       draggable
                       onMouseDown={(e) => handleSelect(e, el.id)}
+                      onTouchStart={(e) => handleSelect(e, el.id)}
                       onDragEnd={(e) => handleDragEnd(e, el.id, room.id)}
                       onTransformEnd={(e) => handleTransformEnd(e, el.id, room.id)}
                     >
