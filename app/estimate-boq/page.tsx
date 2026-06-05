@@ -108,6 +108,7 @@ export default function Estimator() {
 
   const isPremium = userData?.tier === 'premium' || userData?.planStatus === 'premium' || auth?.currentUser?.email?.toLowerCase() === 'okiconstruct2026@gmail.com';
 
+  // 🟢 AGGRESSIVE BRIDGE INTERCEPTOR: Forces UI auto-fill perfectly
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const bridgeData = localStorage.getItem('oki_cad_bridge');
@@ -251,7 +252,7 @@ export default function Estimator() {
     };
   };
 
-  // 🚀 THE CORE FIX: Catching Manual Canvas Additions
+  // 🚀 ADVANCED MANUAL DATA CATCHER (Restores Missing Quantities)
   const handleSetupComplete = () => {
     if (!projectName.trim()) return setErrorMsg("Please provide a Project Name to begin.");
     if (!existingProjectId || floorsData.length !== totalFloorsCount) {
@@ -259,7 +260,7 @@ export default function Estimator() {
         const initialOpenings = [];
         const bridgeData = isFromCAD ? JSON.parse(localStorage.getItem('oki_cad_bridge') || '{}') : null;
 
-        // Catch Manual Extra Rooms from Canvas
+        // Catch Manual Additions
         let extraBeds: any[] = [];
         let extraBaths: any[] = [];
         let extraShops: any[] = [];
@@ -267,17 +268,18 @@ export default function Estimator() {
         if (bridgeData?.canvasRooms) {
             const manualRooms = bridgeData.canvasRooms.filter((r: any) => r.id.startsWith('manual_'));
             
+            // STRICT FALLBACKS (|| '0') applied here to prevent NaN crashes!
             extraBeds = manualRooms
               .filter((r: any) => !r.id.includes('_bath_') && !r.id.includes('_chamber_') && !r.id.includes('_col_'))
-              .map((b: any, idx: number) => ({ id: Date.now() + 500 + idx, length: String(b.widthFt), breadth: String(b.heightFt) }));
+              .map((b: any, idx: number) => ({ id: Date.now() + 500 + idx, length: String(b.widthFt || '0'), breadth: String(b.heightFt || '0') }));
             
             extraBaths = manualRooms
               .filter((r: any) => r.id.includes('_bath_'))
-              .map((b: any, idx: number) => ({ id: Date.now() + 600 + idx, length: String(b.widthFt), breadth: String(b.heightFt), isAttached: false, layoutType: 'outside', attachedTo: '' }));
+              .map((b: any, idx: number) => ({ id: Date.now() + 600 + idx, length: String(b.widthFt || '0'), breadth: String(b.heightFt || '0'), isAttached: false, layoutType: 'outside', attachedTo: '' }));
             
             extraShops = manualRooms
               .filter((r: any) => r.id.includes('_chamber_'))
-              .map((b: any, idx: number) => ({ id: Date.now() + 700 + idx, length: String(b.widthFt), breadth: String(b.heightFt) }));
+              .map((b: any, idx: number) => ({ id: Date.now() + 700 + idx, length: String(b.widthFt || '0'), breadth: String(b.heightFt || '0') }));
         }
 
         for (let i = 0; i < totalFloorsCount; i++) {
@@ -295,7 +297,7 @@ export default function Estimator() {
                 
                 let mappedBedrooms = Array.from({length: bhkCount}).map((_, j) => ({ id: Date.now() + j, length: '', breadth: '' }));
                 if (bridgeData?.bedrooms?.length > 0) {
-                    mappedBedrooms = bridgeData.bedrooms.map((b: any, idx: number) => ({ id: Date.now() + idx, length: b.length, breadth: b.breadth }));
+                    mappedBedrooms = bridgeData.bedrooms.map((b: any, idx: number) => ({ id: Date.now() + idx, length: b.length || '0', breadth: b.breadth || '0' }));
                 }
                 mappedBedrooms = [...mappedBedrooms, ...extraBeds];
 
@@ -303,8 +305,8 @@ export default function Estimator() {
                 if (bridgeData?.bathrooms?.length > 0) {
                     mappedBathrooms = bridgeData.bathrooms.map((b: any, idx: number) => ({ 
                         id: Date.now() + 100 + idx, 
-                        length: b.length, 
-                        breadth: b.breadth,
+                        length: b.length || '0', 
+                        breadth: b.breadth || '0',
                         isAttached: b.type === 'attached',
                         layoutType: b.placement || 'outside',
                         attachedTo: b.attachedTo || ''
@@ -314,8 +316,8 @@ export default function Estimator() {
 
                 initialFloors.push({
                     floorName, isCommercial: false, 
-                    hall: bridgeData?.hall ? { length: bridgeData.hall.length, breadth: bridgeData.hall.breadth } : { length: '', breadth: '' }, 
-                    kitchenDining: bridgeData?.kitchen ? { length: bridgeData.kitchen.length, breadth: bridgeData.kitchen.breadth } : { length: '', breadth: '' }, 
+                    hall: bridgeData?.hall ? { length: bridgeData.hall.length || '0', breadth: bridgeData.hall.breadth || '0' } : { length: '', breadth: '' }, 
+                    kitchenDining: bridgeData?.kitchen ? { length: bridgeData.kitchen.length || '0', breadth: bridgeData.kitchen.breadth || '0' } : { length: '', breadth: '' }, 
                     foyer: { length: '', breadth: '' },
                     bedrooms: mappedBedrooms,
                     bathrooms: mappedBathrooms
@@ -328,10 +330,10 @@ export default function Estimator() {
                     if (bridgeData?.typology === 'Commercial') {
                         shops = [];
                         for (let c = 0; c < Number(bridgeData.commChambersCount || 1); c++) {
-                            shops.push({ id: Date.now() + c, length: bridgeData.commChambersDim?.length || '', breadth: bridgeData.commChambersDim?.breadth || '' });
+                            shops.push({ id: Date.now() + c, length: bridgeData.commChambersDim?.length || '0', breadth: bridgeData.commChambersDim?.breadth || '0' });
                         }
                         const wCount = bridgeData.commBathType === 'Shared Floor Bathrooms' ? bridgeData.commSharedBathCount : bridgeData.commChambersCount;
-                        washrooms = { count: String(wCount || ''), length: bridgeData.commBathDim?.length || '', breadth: bridgeData.commBathDim?.breadth || '' };
+                        washrooms = { count: String(wCount || '0'), length: bridgeData.commBathDim?.length || '0', breadth: bridgeData.commBathDim?.breadth || '0' };
                     }
                     shops = [...shops, ...extraShops];
 
@@ -343,18 +345,18 @@ export default function Estimator() {
                         flatsToUse = bridgeData.aptFlats.map((flat: any) => ({
                             id: flat.id,
                             type: `${flat.bhk}BHK`,
-                            hall: { length: flat.hall?.length || '', breadth: flat.hall?.breadth || '' },
-                            kitchen: { length: flat.kitchen?.length || '', breadth: flat.kitchen?.breadth || '' },
+                            hall: { length: flat.hall?.length || '0', breadth: flat.hall?.breadth || '0' },
+                            kitchen: { length: flat.kitchen?.length || '0', breadth: flat.kitchen?.breadth || '0' },
                             passageWidth: flat.passageWidth || '4',
                             bedrooms: [
-                              ...(flat.bedrooms?.map((b: any, idx: number) => ({ id: Date.now() + idx, length: b.length, breadth: b.breadth })) || []),
+                              ...(flat.bedrooms?.map((b: any, idx: number) => ({ id: Date.now() + idx, length: b.length || '0', breadth: b.breadth || '0' })) || []),
                               ...(flat.id === 1 ? extraBeds : []) 
                             ],
                             bathrooms: [
                               ...(flat.bathrooms?.map((b: any, idx: number) => ({
                                   id: Date.now() + 100 + idx,
-                                  length: b.length,
-                                  breadth: b.breadth,
+                                  length: b.length || '0',
+                                  breadth: b.breadth || '0',
                                   isAttached: b.type === 'attached',
                                   layoutType: b.placement || 'outside',
                                   attachedTo: b.attachedTo || ''
@@ -567,14 +569,16 @@ export default function Estimator() {
         }
       };
 
+      const cleanPayload = JSON.parse(JSON.stringify(payload)); // Scrub all undefined
+
       if (existingProjectId) {
-         payload.updatedAt = serverTimestamp();
-         await updateDoc(doc(db, "boq_projects", existingProjectId), payload);
+         cleanPayload.updatedAt = serverTimestamp();
+         await updateDoc(doc(db, "boq_projects", existingProjectId), cleanPayload);
          setIsSaved(true); 
          alert(`Success! Modifications to your BOQ have been saved to the cloud.\nProject ID: ${existingProjectId}`);
       } else {
-         payload.createdAt = serverTimestamp();
-         const docRef = await addDoc(collection(db, "boq_projects"), payload);
+         cleanPayload.createdAt = serverTimestamp();
+         const docRef = await addDoc(collection(db, "boq_projects"), cleanPayload);
          setExistingProjectId(docRef.id);
          setIsSaved(true); 
          alert(`Success! Estimate securely saved to the cloud.\nProject ID: ${docRef.id}`);
@@ -1347,6 +1351,7 @@ export default function Estimator() {
                                         <button type="button" onClick={() => updateFlatData(fIdx, 'bathrooms', bIdx, 'isAttached', true)} className={`flex-1 p-2 text-sm rounded-lg font-bold transition-all border ${bath.isAttached ? 'bg-gray-900 border-gray-900 text-white shadow-md' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>Attached</button>
                                     </div>
 
+                                    {/* Advanced Flat Bathroom Settings */}
                                     {bath.isAttached && (
                                       <div className="mt-4 p-4 border border-gray-200 bg-gray-50 rounded-xl md:ml-28 space-y-4">
                                         <div>

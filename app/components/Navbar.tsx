@@ -43,7 +43,7 @@ export default function Navbar() {
 
         {/* DESKTOP LINKS */}
         <nav className="hidden lg:flex items-center gap-6">
-          <Link href="/generate-2d-layout" className="text-sm font-bold text-gray-600 hover:text-[#22c55e] transition-colors">Layout Generator</Link>
+          <Link href="/generate-2d-layout" className="text-sm font-bold text-gray-600 hover:text-[#22c55e] transition-colors">Generate 2D Layout</Link>
           <Link href="/estimate-boq" className="text-sm font-bold text-gray-600 hover:text-[#22c55e] transition-colors">Estimate BOQ</Link>
           <Link href="/track-expenditure" className="text-sm font-bold text-gray-600 hover:text-[#22c55e] transition-colors">Track Expenses</Link>
           <Link href="/upgrade" className="text-sm font-bold text-purple-600 bg-purple-50 px-3 py-1.5 rounded-lg hover:bg-purple-100 transition-colors">🚀 Upgrade</Link>

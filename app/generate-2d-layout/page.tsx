@@ -144,6 +144,58 @@ export default function LayoutGenerator() {
     }
   }, []);
 
+  // 🚀 NEW: Profile "View Layout" Interceptor
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const editData = localStorage.getItem('oki_layout_edit');
+      if (editData) {
+        try {
+          const data = JSON.parse(editData);
+          setProjectName(data.projectName || '');
+          setTypology(data.typology || 'Private Residence');
+          setFloors(data.floors || 'Ground Floor Only');
+          setBhk(data.bhk || 2);
+          setGlobalUnit(data.globalUnit || 'ft');
+          setStaircase(data.staircase || 'Internal Stairs');
+          setEntranceType(data.entranceType || 'Hall / Living Room');
+          setWallThickness(data.wallThickness || 'Single Brick (5")');
+          
+          if (data.stairsDim) setStairsDim(data.stairsDim);
+          if (data.passageWidth) setPassageWidth(data.passageWidth);
+          if (data.hall) setHall(data.hall);
+          if (data.kitchen) setKitchen(data.kitchen);
+          if (data.bedrooms) setBedrooms(data.bedrooms);
+          if (data.bathrooms) setBathrooms(data.bathrooms);
+          
+          if (data.aptFlatsCount) setAptFlatsCount(data.aptFlatsCount);
+          if (data.aptLayout) setAptLayout(data.aptLayout);
+          if (data.aptFrontEntrance) setAptFrontEntrance(data.aptFrontEntrance);
+          if (data.aptStairCount) setAptStairCount(data.aptStairCount);
+          if (data.aptStairPlacement) setAptStairPlacement(data.aptStairPlacement);
+          if (data.externalCorridorWidth) setExternalCorridorWidth(data.externalCorridorWidth);
+          if (data.aptFlats) setAptFlats(data.aptFlats);
+          
+          if (data.commChambersCount) setCommChambersCount(data.commChambersCount);
+          if (data.commChambersDim) setCommChambersDim(data.commChambersDim);
+          if (data.commBathType) setCommBathType(data.commBathType);
+          if (data.commSharedBathCount) setCommSharedBathCount(data.commSharedBathCount);
+          if (data.commBathDim) setCommBathDim(data.commBathDim);
+          if (data.commLayout) setCommLayout(data.commLayout);
+          if (data.commStairPlace) setCommStairPlace(data.commStairPlace);
+
+          if (data.canvasRooms) {
+            setCanvasRooms(data.canvasRooms);
+            setIsSaved(true); // Marks it as saved so the download buttons appear immediately
+          }
+
+          localStorage.removeItem('oki_layout_edit'); // Clean cache so it doesn't loop
+        } catch (e) {
+          console.error("Failed to load layout from profile", e);
+        }
+      }
+    }
+  }, []);
+
   useEffect(() => {
     if (typology === 'Private Residence') {
       const newBedrooms: Bedroom[] = [];
@@ -213,7 +265,6 @@ export default function LayoutGenerator() {
       const uniqueCorners: { x: number; y: number }[] = [];
       const SCALE = 10;
       
-      // We must pull the absolute latest rooms directly from the Canvas via the ref!
       const currentRooms = canvasRef.current?.getRooms() || canvasRooms;
 
       currentRooms.forEach((r: CanvasRoom) => {
@@ -240,14 +291,13 @@ export default function LayoutGenerator() {
         canvasRooms: currentRooms
       };
 
-      // 🛑 THE MAGIC FIX: Scrub all 'undefined' values before sending to Firebase!
       const cleanCadData = JSON.parse(JSON.stringify(cadData));
 
       await addDoc(collection(db, "layouts"), {
         userId: auth.currentUser.uid,
         projectName: projectName.trim(),
         typology: typology,
-        layoutData: cleanCadData, // Send the scrubbed data
+        layoutData: cleanCadData, 
         createdAt: serverTimestamp()
       });
 
@@ -265,8 +315,6 @@ export default function LayoutGenerator() {
 
       setAiPreferences(newPrefs);
       localStorage.setItem('oki_ai_prefs', JSON.stringify(newPrefs)); 
-      
-      // Local storage naturally scrubs undefined values on its own!
       localStorage.setItem('oki_cad_bridge', JSON.stringify(cadData)); 
 
       setIsSaved(true);

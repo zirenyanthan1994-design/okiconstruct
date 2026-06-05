@@ -13,25 +13,21 @@ export default function ProfilePage() {
   const [paymentStatus, setPaymentStatus] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'boqs' | 'ledgers' | 'layouts'>('overview');
   
-  // Database States
   const [savedBOQs, setSavedBOQs] = useState<any[]>([]);
   const [savedLayouts, setSavedLayouts] = useState<any[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [selectedBOQ, setSelectedBOQ] = useState<any>(null);
 
-  // Edit Profile States
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [editForm, setEditForm] = useState({ name: '', phone: '', address: '', avatar: '' });
 
-  // Message Center States
   const [isMessageCenterOpen, setIsMessageCenterOpen] = useState(false);
   const mockMessages = [
     { id: 1, sender: "Rahul Sharma", role: "Homeowner", avatar: "👨‍💼", preview: "Hi! I saw your profile and need a quote for a 3BHK construction...", time: "2 hours ago", unread: true },
     { id: 2, sender: "Priya Patel", role: "Architect", avatar: "👩‍💼", preview: "The revised BOQ looks good. Let's proceed with the new cement rates.", time: "Yesterday", unread: false }
   ];
 
-  // Auth & Profile Fetch
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       try {
@@ -50,7 +46,6 @@ export default function ProfilePage() {
               avatar: data.avatar || ''
             });
 
-            // Check for pending UPI verification
             const q = query(collection(db, "transactions"), where("uid", "==", currentUser.uid), where("status", "==", "Pending"));
             const querySnapshot = await getDocs(q);
             if (!querySnapshot.empty) setPaymentStatus("Verification Pending");
@@ -171,9 +166,7 @@ export default function ProfilePage() {
     finally { setIsLoadingData(false); }
   };
 
-  const openLedgers = () => {
-    setActiveTab('ledgers');
-  };
+  const openLedgers = () => setActiveTab('ledgers');
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center font-medium text-gray-500">Loading Profile...</div>;
   if (!user || !userData) return null;
@@ -237,7 +230,6 @@ export default function ProfilePage() {
         {activeTab === 'overview' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 animate-in fade-in duration-300">
             
-            {/* Card 1: Estimate BOQs */}
             <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden flex flex-col">
               <div className="absolute top-0 right-0 w-32 h-32 bg-[#22c55e]/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none transition-all group-hover:bg-[#22c55e]/30"></div>
               <div className="flex items-center justify-between mb-6 relative z-10">
@@ -249,7 +241,6 @@ export default function ProfilePage() {
               <div className="mt-4 pt-4 border-t border-gray-800 text-sm font-medium text-gray-500 relative z-10">Generate and manage comprehensive material estimates.</div>
             </div>
 
-            {/* Card 2: Expense Tracking */}
             <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden flex flex-col">
               <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none transition-all group-hover:bg-blue-500/30"></div>
               <div className="flex items-center justify-between mb-6 relative z-10">
@@ -261,7 +252,6 @@ export default function ProfilePage() {
               <div className="mt-4 pt-4 border-t border-gray-800 text-sm font-medium text-gray-500 relative z-10">Track material purchases and daily site expenditures.</div>
             </div>
 
-            {/* Card 3: 2D Layouts */}
             <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden flex flex-col">
               <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none transition-all group-hover:bg-purple-500/30"></div>
               <div className="flex items-center justify-between mb-6 relative z-10">
@@ -415,6 +405,14 @@ export default function ProfilePage() {
                       <span className="bg-purple-50 text-purple-600 px-3 py-1 rounded-lg text-xs font-bold">{layout.typology}</span>
                     </div>
                     <div className="border-t border-gray-100 pt-4 mt-4 flex gap-2">
+                      <button onClick={() => {
+                          localStorage.setItem('oki_layout_edit', JSON.stringify(layout.layoutData));
+                          window.location.href = '/generate-2d-layout';
+                        }} 
+                        className="flex-1 bg-white border border-gray-200 text-gray-700 text-xs font-bold py-2 rounded-lg hover:bg-gray-50 transition-colors text-center shadow-sm"
+                      >
+                        👁️ View / Edit Layout
+                      </button>
                       <button onClick={() => {
                           localStorage.setItem('oki_cad_bridge', JSON.stringify(layout.layoutData));
                           window.location.href = '/estimate-boq';

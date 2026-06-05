@@ -202,6 +202,81 @@ const CanvasEditor = forwardRef(({
     setRooms([...rooms, newRoom]);
   };
 
+  // 🚀 ON-SCREEN ZOOM CONTROLS
+  const handleZoom = (direction: 'in' | 'out') => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    
+    const scaleBy = 1.2;
+    const oldScale = stage.scaleX();
+    const newScale = direction === 'in' ? oldScale * scaleBy : oldScale / scaleBy;
+    
+    const center = {
+      x: stageSize.width / 2,
+      y: stageSize.height / 2,
+    };
+    
+    const mousePointTo = {
+      x: (center.x - stage.x()) / oldScale,
+      y: (center.y - stage.y()) / oldScale,
+    };
+
+    stage.scale({ x: newScale, y: newScale });
+    stage.position({
+      x: center.x - mousePointTo.x * newScale,
+      y: center.y - mousePointTo.y * newScale,
+    });
+    stage.batchDraw();
+  };
+
+  // 🚀 KEYBOARD MICRO-NUDGING
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!selectedId) return;
+      const isInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+      if (isInput) return;
+
+      let dx = 0;
+      let dy = 0;
+      if (e.key === 'ArrowUp') dy = -1;
+      else if (e.key === 'ArrowDown') dy = 1;
+      else if (e.key === 'ArrowLeft') dx = -1;
+      else if (e.key === 'ArrowRight') dx = 1;
+
+      if (dx !== 0 || dy !== 0) {
+        e.preventDefault();
+        setRooms(prev => {
+          let updated = [...prev];
+          let isElement = false;
+          
+          updated = updated.map(r => {
+             if (r.elements?.some(el => el.id === selectedId)) {
+                isElement = true;
+                return { ...r, elements: r.elements.map(el => el.id === selectedId ? { ...el, x: el.x + dx, y: el.y + dy } : el) };
+             }
+             return r;
+          });
+
+          if (isElement) return updated;
+
+          const room = updated.find(r => r.id === selectedId);
+          if (!room) return updated;
+
+          const attachedCols = room.name.toLowerCase().includes('column') ? [] : getAttachedCols(room.id, updated);
+
+          return updated.map(r => {
+             if (r.id === selectedId) return { ...r, x: r.x + dx, y: r.y + dy };
+             if (attachedCols.includes(r.id)) return { ...r, x: r.x + dx, y: r.y + dy };
+             return r;
+          });
+        });
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedId]);
+
   const gridPattern = useMemo(() => {
     if (typeof document !== 'undefined') {
       const canvas = document.createElement('canvas');
@@ -209,10 +284,8 @@ const CanvasEditor = forwardRef(({
       canvas.height = 10;
       const context = canvas.getContext('2d');
       if (context) {
-        // 🚀 THE MAGIC FIX: We paint the background of the grid pure white so JPG doesn't render it black!
         context.fillStyle = '#ffffff';
         context.fillRect(0, 0, 10, 10);
-
         context.strokeStyle = '#e2e8f0';
         context.lineWidth = 0.5;
         context.beginPath();
@@ -356,12 +429,62 @@ const CanvasEditor = forwardRef(({
     setHistory([]);
     setRedoHistory([]);
     
+    // 🚀 FULL VIEW AUTO-FIT ALGORITHM
+    const layoutWidth = maxX - minX;
+    const layoutHeight = maxY - minY;
+    
+    let initialScale = 1;
+    let posX = 50;
+    let posY = 50;
+
+    if (layoutWidth > 0 && layoutHeight > 0) {
+      const padding = 60;
+      const sw = typeof window !== 'undefined' ? (window.innerWidth > 1200 ? 1200 : window.innerWidth) : 1000;
+      const sh = typeof window !== 'undefined' ? (window.innerHeight > 800 ? 600 : window.innerHeight * 0.65) : 600;
+      
+      const scaleX = (sw - padding * 2) / layoutWidth;
+      const scaleY = (sh - padding * 2) / layoutHeight;
+      initialScale = Math.min(scaleX, scaleY, 1.5);
+
+      const centerX = minX + layoutWidth / 2;
+      const centerY = minY + layoutHeight / 2;
+
+      posX = sw / 2 - centerX * initialScale;
+      posY = sh / 2 - centerY * initialScale;
+    }
+    
     if (stageRef.current) {
-        stageRef.current.position({ x: 50, y: 50 });
-        stageRef.current.scale({ x: 1, y: 1 });
+        stageRef.current.position({ x: posX, y: posY });
+        stageRef.current.scale({ x: initialScale, y: initialScale });
         stageRef.current.batchDraw();
     }
   }, [initialRooms, entranceType]);
+
+  // 🚀 STICKY COLUMNS ATTACHMENT LOGIC
+  const getAttachedCols = (roomId: string, allRooms: CanvasRoom[]) => {
+    const room = allRooms.find(r => r.id === roomId);
+    if (!room || room.name.toLowerCase().includes('column')) return [];
+    
+    const cols = allRooms.filter(r => r.name.toLowerCase().includes('column'));
+    const attachedIds: string[] = [];
+    const w = room.widthFt * SCALE;
+    const h = room.heightFt * SCALE;
+    
+    const corners = [
+      { x: room.x, y: room.y }, 
+      { x: room.x + w, y: room.y },
+      { x: room.x, y: room.y + h }, 
+      { x: room.x + w, y: room.y + h }
+    ];
+    
+    cols.forEach(col => {
+      const cx = col.x + (col.widthFt * SCALE) / 2;
+      const cy = col.y + (col.heightFt * SCALE) / 2;
+      const isNear = corners.some(c => Math.abs(c.x - cx) < 20 && Math.abs(c.y - cy) < 20);
+      if (isNear) attachedIds.push(col.id);
+    });
+    return attachedIds;
+  };
 
   const selectedElement = rooms.flatMap((r) => r.elements || []).find((e) => e.id === selectedId);
   const selectedRoomId = rooms.find((r) => r.elements?.some((e) => e.id === selectedId))?.id;
@@ -437,42 +560,33 @@ const CanvasEditor = forwardRef(({
     const touch2 = e.evt.touches[1];
 
     if (touch1 && touch2) {
+      // 🚀 MOBILE PINCH PROTECTION: Immediately stop dragging if 2 fingers are detected!
       if (stage.isDragging()) stage.stopDrag();
-
-      const p1 = { x: touch1.clientX, y: touch1.clientY };
-      const p2 = { x: touch2.clientX, y: touch2.clientY };
 
       if (!isTransformingRef.current) {
         isTransformingRef.current = true;
-        lastDistRef.current = getDistance(p1, p2);
-        lastAngleRef.current = getAngle(p1, p2) - stage.rotation();
+        lastDistRef.current = getDistance({ x: touch1.clientX, y: touch1.clientY }, { x: touch2.clientX, y: touch2.clientY });
+        lastAngleRef.current = getAngle({ x: touch1.clientX, y: touch1.clientY }, { x: touch2.clientX, y: touch2.clientY }) - stage.rotation();
         return;
       }
 
-      const dist = getDistance(p1, p2);
+      const dist = getDistance({ x: touch1.clientX, y: touch1.clientY }, { x: touch2.clientX, y: touch2.clientY });
       const newScale = stage.scaleX() * (dist / lastDistRef.current);
       const boundedScale = Math.max(0.2, Math.min(newScale, 5));
 
-      const angle = getAngle(p1, p2);
+      const angle = getAngle({ x: touch1.clientX, y: touch1.clientY }, { x: touch2.clientX, y: touch2.clientY });
       const newRotation = angle - lastAngleRef.current;
 
-      const pointer = stage.getPointerPosition() || { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
-      const stageX = stage.x();
-      const stageY = stage.y();
-
+      const pointer = stage.getPointerPosition() || { x: (touch1.clientX + touch2.clientX) / 2, y: (touch1.clientY + touch2.clientY) / 2 };
+      
       const mousePointTo = {
-        x: (pointer.x - stageX) / stage.scaleX(),
-        y: (pointer.y - stageY) / stage.scaleY(),
+        x: (pointer.x - stage.x()) / stage.scaleX(),
+        y: (pointer.y - stage.y()) / stage.scaleY(),
       };
 
       stage.scale({ x: boundedScale, y: boundedScale });
       stage.rotation(newRotation);
-
-      const newPos = {
-        x: pointer.x - mousePointTo.x * boundedScale,
-        y: pointer.y - mousePointTo.y * boundedScale,
-      };
-      stage.position(newPos);
+      stage.position({ x: pointer.x - mousePointTo.x * boundedScale, y: pointer.y - mousePointTo.y * boundedScale });
 
       lastDistRef.current = dist;
       stage.batchDraw();
@@ -494,34 +608,94 @@ const CanvasEditor = forwardRef(({
     selectShape(id);
   };
 
+  // 🚀 LIVE DRAG WITH STICKY COLUMNS
+  const handleDragMove = (e: any, id: string) => {
+    const node = e.target;
+    const room = rooms.find(r => r.id === id);
+    if (!room || room.name.toLowerCase().includes('column')) return;
+
+    const dx = node.x() - room.x;
+    const dy = node.y() - room.y;
+    
+    const attachedCols = getAttachedCols(id, rooms);
+    attachedCols.forEach(colId => {
+       const colNode = stageRef.current?.findOne(`#${colId}`);
+       const originalCol = rooms.find(r => r.id === colId);
+       if (colNode && originalCol) {
+          colNode.position({ x: originalCol.x + dx, y: originalCol.y + dy });
+       }
+    });
+  };
+
+  // 🚀 DRAG END WITH MAGNETIC SNAPPING
   const handleDragEnd = (e: any, id: string, roomId?: string) => {
     e.cancelBubble = true;
     commitHistory(rooms);
     const node = e.target;
 
     if (roomId) {
-      setRooms(
-        rooms.map((r) =>
-          r.id === roomId
-            ? {
-                ...r,
-                elements: r.elements?.map((el) =>
-                  el.id === id ? { ...el, x: node.x(), y: node.y() } : el
-                ),
-              }
-            : r
-        )
-      );
-    } else {
-      const snapX = Math.round(node.x() / SCALE) * SCALE;
-      const snapY = Math.round(node.y() / SCALE) * SCALE;
-      node.position({ x: snapX, y: snapY });
-      setRooms(
-        rooms.map((room) =>
-          room.id === id ? { ...room, x: snapX, y: snapY } : room
-        )
-      );
+      setRooms(prev => prev.map(r => r.id === roomId ? { ...r, elements: r.elements?.map(el => el.id === id ? { ...el, x: node.x(), y: node.y() } : el) } : r));
+      return;
     }
+
+    let newX = Math.round(node.x() / 5) * 5; // 0.5ft strict snap
+    let newY = Math.round(node.y() / 5) * 5;
+    const room = rooms.find(r => r.id === id);
+    if (!room) return;
+
+    if (!room.name.toLowerCase().includes('column')) {
+      let snappedX = false;
+      let snappedY = false;
+      const w = room.widthFt * SCALE;
+      const h = room.heightFt * SCALE;
+
+      for (const other of rooms) {
+        if (other.id === id || other.name.toLowerCase().includes('column')) continue;
+        const ow = other.widthFt * SCALE;
+        const oh = other.heightFt * SCALE;
+
+        const xTargets = [other.x, other.x + ow];
+        const myXEdges = [newX, newX + w];
+
+        if (!snappedX) {
+          for (const t of xTargets) {
+            for (let i = 0; i < myXEdges.length; i++) {
+              if (Math.abs(t - myXEdges[i]) <= 10) { // 10px strong magnetic pull
+                newX = i === 0 ? t : t - w;
+                snappedX = true; break;
+              }
+            }
+            if (snappedX) break;
+          }
+        }
+
+        const yTargets = [other.y, other.y + oh];
+        const myYEdges = [newY, newY + h];
+
+        if (!snappedY) {
+          for (const t of yTargets) {
+            for (let i = 0; i < myYEdges.length; i++) {
+              if (Math.abs(t - myYEdges[i]) <= 10) { // 10px strong magnetic pull
+                newY = i === 0 ? t : t - h;
+                snappedY = true; break;
+              }
+            }
+            if (snappedY) break;
+          }
+        }
+      }
+      node.position({ x: newX, y: newY });
+    }
+
+    const dx = newX - room.x;
+    const dy = newY - room.y;
+    const attachedCols = getAttachedCols(id, rooms);
+
+    setRooms(prev => prev.map(r => {
+      if (r.id === id) return { ...r, x: newX, y: newY };
+      if (attachedCols.includes(r.id)) return { ...r, x: r.x + dx, y: r.y + dy };
+      return r;
+    }));
   };
 
   const handleTransformEnd = (e: any, id: string, roomId?: string) => {
@@ -536,47 +710,16 @@ const CanvasEditor = forwardRef(({
     node.scaleY(1);
 
     if (roomId) {
-      setRooms(
-        rooms.map((r) =>
-          r.id === roomId
-            ? {
-                ...r,
-                elements: r.elements?.map((el) =>
-                  el.id === id
-                    ? {
-                        ...el,
-                        x: node.x(),
-                        y: node.y(),
-                        width: node.width() * scaleX,
-                        height: node.height() * scaleY,
-                        rotation: rotation,
-                      }
-                    : el
-                ),
-              }
-            : r
-        )
-      );
+      setRooms(prev => prev.map(r => r.id === roomId ? {
+        ...r, elements: r.elements?.map(el => el.id === id ? { ...el, x: node.x(), y: node.y(), width: node.width() * scaleX, height: node.height() * scaleY, rotation } : el)
+      } : r));
     } else {
-      const snapX = Math.round(node.x() / SCALE) * SCALE;
-      const snapY = Math.round(node.y() / SCALE) * SCALE;
-      const newWidth = Math.round((node.width() * scaleX) / SCALE) * SCALE;
-      const newHeight = Math.round((node.height() * scaleY) / SCALE) * SCALE;
+      const snapX = Math.round(node.x() / 5) * 5;
+      const snapY = Math.round(node.y() / 5) * 5;
+      const newWidth = Math.max(10, Math.round((node.width() * scaleX) / 5) * 5);
+      const newHeight = Math.max(10, Math.round((node.height() * scaleY) / 5) * 5);
 
-      setRooms(
-        rooms.map((room) =>
-          room.id === id
-            ? {
-                ...room,
-                x: snapX,
-                y: snapY,
-                widthFt: newWidth / SCALE,
-                heightFt: newHeight / SCALE,
-                rotation: rotation,
-              }
-            : room
-        )
-      );
+      setRooms(prev => prev.map(room => room.id === id ? { ...room, x: snapX, y: snapY, widthFt: newWidth / SCALE, heightFt: newHeight / SCALE, rotation } : room));
     }
   };
 
@@ -624,33 +767,6 @@ const CanvasEditor = forwardRef(({
 
   const trueTotalWidthFt = (internalWidthFt + addedWidthFt).toFixed(1);
   const trueTotalHeightFt = (internalHeightFt + addedHeightFt).toFixed(1);
-
-  const uniqueCorners: { x: number; y: number }[] = [];
-  rooms.forEach((r) => {
-    if (!r.name.toLowerCase().includes('bathroom')) {
-      const w = r.widthFt * SCALE;
-      const h = r.heightFt * SCALE;
-      const rad = (r.rotation || 0) * (Math.PI / 180);
-
-      const getRotatedPoint = (px: number, py: number) => ({
-        x: r.x + px * Math.cos(rad) - py * Math.sin(rad),
-        y: r.y + px * Math.sin(rad) + py * Math.cos(rad)
-      });
-
-      const pts = [
-        getRotatedPoint(0, 0),
-        getRotatedPoint(w, 0),
-        getRotatedPoint(0, h),
-        getRotatedPoint(w, h),
-      ];
-
-      pts.forEach((p) => {
-        if (!uniqueCorners.some((uc) => Math.abs(uc.x - p.x) < 5 && Math.abs(uc.y - p.y) < 5)) {
-          uniqueCorners.push(p);
-        }
-      });
-    }
-  });
 
   useEffect(() => {
     if (selectedId && trRef.current && stageRef.current) {
@@ -710,113 +826,40 @@ const CanvasEditor = forwardRef(({
   const renderElement = (el: CADElement) => {
     const stroke = '#334155';
     switch (el.type) {
-      case 'window':
-        return <Rect width={el.width} height={el.height} fill="#e0f2fe" stroke="#0ea5e9" strokeWidth={1.5} perfectDrawEnabled={false} />;
-      case 'door':
-        return (
-          <Group>
-            <Line points={[0, 0, el.width, 0]} stroke={stroke} strokeWidth={2} perfectDrawEnabled={false} />
-            <Arc x={0} y={0} innerRadius={el.width} outerRadius={el.width} angle={90} rotation={0} stroke={stroke} strokeWidth={1} dash={[4, 4]} perfectDrawEnabled={false} />
-          </Group>
-        );
-      case 'main-door':
-        return (
-          <Group>
-            <Line points={[0, 0, 0, -el.width / 1.5]} stroke="#0f172a" strokeWidth={3} perfectDrawEnabled={false} />
-            <Arc x={0} y={0} innerRadius={el.width / 1.5} outerRadius={el.width / 1.5} angle={90} rotation={270} stroke="#0f172a" strokeWidth={2} perfectDrawEnabled={false} />
-            <Line points={[el.width, 0, el.width, -el.width / 1.5]} stroke="#0f172a" strokeWidth={3} perfectDrawEnabled={false} />
-            <Arc x={el.width} y={0} innerRadius={el.width / 1.5} outerRadius={el.width / 1.5} angle={90} rotation={180} stroke="#0f172a" strokeWidth={2} perfectDrawEnabled={false} />
-          </Group>
-        );
-      case 'bed':
-        return (
-          <Group>
-            <Rect width={el.width} height={el.height} stroke={stroke} strokeWidth={1.5} cornerRadius={3} perfectDrawEnabled={false} />
-            <Rect x={5} y={5} width={el.width / 2.5} height={12} stroke={stroke} strokeWidth={1} cornerRadius={2} perfectDrawEnabled={false} />
-            <Rect x={el.width / 2 + 3} y={5} width={el.width / 2.5} height={12} stroke={stroke} strokeWidth={1} cornerRadius={2} perfectDrawEnabled={false} />
-            <Line points={[0, 25, el.width, 25]} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />
-          </Group>
-        );
-      case 'wc':
-        return (
-          <Group>
-            <Rect width={el.width} height={el.height / 3} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />
-            <Circle x={el.width / 2} y={el.height / 1.5} radius={el.width / 2.5} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />
-          </Group>
-        );
-      case 'shower':
-        return (
-          <Group>
-            <Rect width={el.width} height={el.height} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />
-            <Line points={[0, 0, el.width, el.height]} stroke={stroke} strokeWidth={1} opacity={0.3} perfectDrawEnabled={false} />
-            <Line points={[el.width, 0, 0, el.height]} stroke={stroke} strokeWidth={1} opacity={0.3} perfectDrawEnabled={false} />
-          </Group>
-        );
-      case 'sofa':
-        return (
-          <Group>
-            <Rect width={el.width} height={el.height} stroke={stroke} strokeWidth={1.5} cornerRadius={2} perfectDrawEnabled={false} />
-            <Line points={[el.width / 3, 0, el.width / 3, el.height]} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />
-            <Line points={[(el.width / 3) * 2, 0, (el.width / 3) * 2, el.height]} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />
-          </Group>
-        );
-      case 'kitchen':
-        return (
-          <Group>
-            <Rect width={el.width} height={el.height / 3} stroke={stroke} strokeWidth={1} fill="#f8fafc" perfectDrawEnabled={false} />
-            <Rect x={el.width - el.width / 4} y={0} width={el.width / 4} height={el.height} stroke={stroke} strokeWidth={1} fill="#f8fafc" perfectDrawEnabled={false} />
-            <Circle x={el.width / 2} y={el.height / 6} radius={5} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />
-            <Circle x={el.width / 2 + 15} y={el.height / 6} radius={5} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />
-          </Group>
-        );
+      case 'window': return <Rect width={el.width} height={el.height} fill="#e0f2fe" stroke="#0ea5e9" strokeWidth={1.5} perfectDrawEnabled={false} />;
+      case 'door': return <Group><Line points={[0, 0, el.width, 0]} stroke={stroke} strokeWidth={2} perfectDrawEnabled={false} /><Arc x={0} y={0} innerRadius={el.width} outerRadius={el.width} angle={90} rotation={0} stroke={stroke} strokeWidth={1} dash={[4, 4]} perfectDrawEnabled={false} /></Group>;
+      case 'main-door': return <Group><Line points={[0, 0, 0, -el.width / 1.5]} stroke="#0f172a" strokeWidth={3} perfectDrawEnabled={false} /><Arc x={0} y={0} innerRadius={el.width / 1.5} outerRadius={el.width / 1.5} angle={90} rotation={270} stroke="#0f172a" strokeWidth={2} perfectDrawEnabled={false} /><Line points={[el.width, 0, el.width, -el.width / 1.5]} stroke="#0f172a" strokeWidth={3} perfectDrawEnabled={false} /><Arc x={el.width} y={0} innerRadius={el.width / 1.5} outerRadius={el.width / 1.5} angle={90} rotation={180} stroke="#0f172a" strokeWidth={2} perfectDrawEnabled={false} /></Group>;
+      case 'bed': return <Group><Rect width={el.width} height={el.height} stroke={stroke} strokeWidth={1.5} cornerRadius={3} perfectDrawEnabled={false} /><Rect x={5} y={5} width={el.width / 2.5} height={12} stroke={stroke} strokeWidth={1} cornerRadius={2} perfectDrawEnabled={false} /><Rect x={el.width / 2 + 3} y={5} width={el.width / 2.5} height={12} stroke={stroke} strokeWidth={1} cornerRadius={2} perfectDrawEnabled={false} /><Line points={[0, 25, el.width, 25]} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} /></Group>;
+      case 'wc': return <Group><Rect width={el.width} height={el.height / 3} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} /><Circle x={el.width / 2} y={el.height / 1.5} radius={el.width / 2.5} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} /></Group>;
+      case 'shower': return <Group><Rect width={el.width} height={el.height} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} /><Line points={[0, 0, el.width, el.height]} stroke={stroke} strokeWidth={1} opacity={0.3} perfectDrawEnabled={false} /><Line points={[el.width, 0, 0, el.height]} stroke={stroke} strokeWidth={1} opacity={0.3} perfectDrawEnabled={false} /></Group>;
+      case 'sofa': return <Group><Rect width={el.width} height={el.height} stroke={stroke} strokeWidth={1.5} cornerRadius={2} perfectDrawEnabled={false} /><Line points={[el.width / 3, 0, el.width / 3, el.height]} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} /><Line points={[(el.width / 3) * 2, 0, (el.width / 3) * 2, el.height]} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} /></Group>;
+      case 'kitchen': return <Group><Rect width={el.width} height={el.height / 3} stroke={stroke} strokeWidth={1} fill="#f8fafc" perfectDrawEnabled={false} /><Rect x={el.width - el.width / 4} y={0} width={el.width / 4} height={el.height} stroke={stroke} strokeWidth={1} fill="#f8fafc" perfectDrawEnabled={false} /><Circle x={el.width / 2} y={el.height / 6} radius={5} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} /><Circle x={el.width / 2 + 15} y={el.height / 6} radius={5} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} /></Group>;
       case 'stairs':
         const isHorizontal = el.width > el.height;
         const stepLines = [];
-        const stepCount = Math.floor((isHorizontal ? el.width : el.height) / 10);
-        
-        for (let i = 0; i <= stepCount; i++) {
-          if (isHorizontal) {
-            stepLines.push(<Line key={i} points={[i * 10, 0, i * 10, el.height]} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />);
-          } else {
-            stepLines.push(<Line key={i} points={[0, i * 10, el.width, i * 10]} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />);
-          }
+        for (let i = 0; i <= Math.floor((isHorizontal ? el.width : el.height) / 10); i++) {
+          if (isHorizontal) stepLines.push(<Line key={i} points={[i * 10, 0, i * 10, el.height]} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />);
+          else stepLines.push(<Line key={i} points={[0, i * 10, el.width, i * 10]} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />);
         }
-        const arrowY = el.height / 2;
-        const arrowX = el.width / 2;
-        
+        const arrowY = el.height / 2; const arrowX = el.width / 2;
         return (
           <Group>
             <Rect width={el.width} height={el.height} stroke={stroke} strokeWidth={1} perfectDrawEnabled={false} />
             {stepLines}
-            {isHorizontal ? (
-              <Group>
-                <Line points={[10, arrowY, el.width - 10, arrowY]} stroke="#000" strokeWidth={2} perfectDrawEnabled={false} />
-                <Path data={`M ${el.width - 15} ${arrowY - 5} L ${el.width - 5} ${arrowY} L ${el.width - 15} ${arrowY + 5}`} fill="#000" perfectDrawEnabled={false} />
-              </Group>
-            ) : (
-              <Group>
-                <Line points={[arrowX, el.height - 10, arrowX, 10]} stroke="#000" strokeWidth={2} perfectDrawEnabled={false} />
-                <Path data={`M ${arrowX - 5} 15 L ${arrowX} 5 L ${arrowX + 5} 15`} fill="#000" perfectDrawEnabled={false} />
-              </Group>
-            )}
+            {isHorizontal ? <Group><Line points={[10, arrowY, el.width - 10, arrowY]} stroke="#000" strokeWidth={2} perfectDrawEnabled={false} /><Path data={`M ${el.width - 15} ${arrowY - 5} L ${el.width - 5} ${arrowY} L ${el.width - 15} ${arrowY + 5}`} fill="#000" perfectDrawEnabled={false} /></Group> : <Group><Line points={[arrowX, el.height - 10, arrowX, 10]} stroke="#000" strokeWidth={2} perfectDrawEnabled={false} /><Path data={`M ${arrowX - 5} 15 L ${arrowX} 5 L ${arrowX + 5} 15`} fill="#000" perfectDrawEnabled={false} /></Group>}
           </Group>
         );
-      default:
-        return null;
+      default: return null;
     }
   };
 
   return (
     <div className="relative w-full border-2 border-gray-300 rounded-lg overflow-hidden bg-white shadow-sm">
       
-      {/* 🚀 NEW ADVANCED TOOLBAR: Undo, Redo, Add Menu, Delete */}
-      <div className="absolute top-4 left-4 z-20 flex items-center gap-2 bg-white p-1.5 rounded-xl shadow-md border border-gray-200">
-        <button onClick={handleUndo} disabled={history.length === 0} className={`px-3 py-1.5 font-bold text-sm rounded-lg transition-all ${history.length > 0 ? 'text-gray-700 hover:bg-gray-100' : 'text-gray-300 cursor-not-allowed'}`}>
-          ↩ Undo
-        </button>
-        <button onClick={handleRedo} disabled={redoHistory.length === 0} className={`px-3 py-1.5 font-bold text-sm rounded-lg transition-all ${redoHistory.length > 0 ? 'text-gray-700 hover:bg-gray-100' : 'text-gray-300 cursor-not-allowed'}`}>
-          ↪ Redo
-        </button>
+      {/* 🚀 ADVANCED TOOLBAR WITH ZOOM BUTTONS */}
+      <div className="absolute top-4 left-4 z-20 flex flex-wrap items-center gap-2 bg-white p-1.5 rounded-xl shadow-md border border-gray-200">
+        <button onClick={handleUndo} disabled={history.length === 0} className={`px-3 py-1.5 font-bold text-sm rounded-lg transition-all ${history.length > 0 ? 'text-gray-700 hover:bg-gray-100' : 'text-gray-300 cursor-not-allowed'}`}>↩ Undo</button>
+        <button onClick={handleRedo} disabled={redoHistory.length === 0} className={`px-3 py-1.5 font-bold text-sm rounded-lg transition-all ${redoHistory.length > 0 ? 'text-gray-700 hover:bg-gray-100' : 'text-gray-300 cursor-not-allowed'}`}>↪ Redo</button>
         
         <div className="w-px h-6 bg-gray-200 mx-1"></div>
         
@@ -836,20 +879,25 @@ const CanvasEditor = forwardRef(({
 
         <div className="w-px h-6 bg-gray-200 mx-1"></div>
 
-        <button 
-          onClick={handleDeleteSelection} 
-          disabled={!selectedId} 
-          className={`px-3 py-1.5 font-bold text-sm rounded-lg transition-all ${selectedId ? 'text-red-600 hover:bg-red-50' : 'text-gray-300 cursor-not-allowed'}`}
-        >
+        <button onClick={handleDeleteSelection} disabled={!selectedId} className={`px-3 py-1.5 font-bold text-sm rounded-lg transition-all ${selectedId ? 'text-red-600 hover:bg-red-50' : 'text-gray-300 cursor-not-allowed'}`}>
           🗑️ Delete
         </button>
+
+        <div className="w-px h-6 bg-gray-200 mx-1"></div>
+        
+        <button onClick={() => handleZoom('in')} className="px-2 py-1 font-bold text-lg rounded-lg transition-all text-gray-600 hover:bg-gray-100">➕</button>
+        <button onClick={() => handleZoom('out')} className="px-2 py-1 font-bold text-lg rounded-lg transition-all text-gray-600 hover:bg-gray-100">➖</button>
+
       </div>
 
-      <div 
-        tabIndex={0} 
-        className="w-full relative overflow-hidden cursor-crosshair focus:outline-none bg-gray-50"
-        style={{ height: stageSize.height }}
-      >
+      {selectedElement && (
+        <div style={toolbarStyle} className="absolute z-20 bg-white border border-gray-200 shadow-xl rounded-lg p-1.5 flex items-center space-x-1">
+          <span className="text-[10px] font-bold text-gray-500 py-1 px-2 border-r border-gray-200 uppercase tracking-wide">{selectedElement.type}</span>
+          <button onClick={handleDuplicate} className="text-[10px] font-bold bg-blue-50 text-blue-600 px-2 py-1 rounded hover:bg-blue-100 transition-colors">📋 Copy</button>
+        </div>
+      )}
+
+      <div tabIndex={0} className="w-full relative overflow-hidden cursor-crosshair focus:outline-none bg-gray-50" style={{ height: stageSize.height }}>
         <Stage
           width={stageSize.width}
           height={stageSize.height}
@@ -905,10 +953,11 @@ const CanvasEditor = forwardRef(({
                   width={w}
                   height={h}
                   rotation={room.rotation || 0}
-                  draggable
-                  dragBoundFunc={(pos) => ({ x: Math.round(pos.x / SCALE) * SCALE, y: Math.round(pos.y / SCALE) * SCALE })}
+                  draggable={isSelected && !isTransformingRef.current}
+                  dragBoundFunc={(pos) => ({ x: Math.round(pos.x / 5) * 5, y: Math.round(pos.y / 5) * 5 })}
                   onMouseDown={(e) => handleSelect(e, room.id)}
                   onTouchStart={(e) => handleSelect(e, room.id)}
+                  onDragMove={(e) => handleDragMove(e, room.id)}
                   onDragEnd={(e) => handleDragEnd(e, room.id)}
                   onTransformEnd={(e) => handleTransformEnd(e, room.id)}
                 >
@@ -954,13 +1003,11 @@ const CanvasEditor = forwardRef(({
 
             {renderMergedWall()}
 
-            {uniqueCorners.map((c, i) => (
-              <Rect key={`col-${i}`} x={c.x - 6} y={c.y - 6} width={12} height={12} fill="#0f172a" perfectDrawEnabled={false} />
-            ))}
-
             {rooms.map((room) => (
               <Group key={room.id + '-elements'} x={room.x} y={room.y} rotation={room.rotation || 0}>
-                {room.elements?.map((el) => (
+                {room.elements?.map((el) => {
+                  const isElSelected = selectedId === el.id;
+                  return (
                   <Group
                     key={el.id}
                     id={el.id}
@@ -969,7 +1016,7 @@ const CanvasEditor = forwardRef(({
                     width={el.width}
                     height={el.height}
                     rotation={el.rotation || 0}
-                    draggable
+                    draggable={isElSelected && !isTransformingRef.current}
                     onMouseDown={(e) => handleSelect(e, el.id)}
                     onTouchStart={(e) => handleSelect(e, el.id)}
                     onDragEnd={(e) => handleDragEnd(e, el.id, room.id)}
@@ -978,7 +1025,8 @@ const CanvasEditor = forwardRef(({
                     {renderHitbox(el)}
                     {renderElement(el)}
                   </Group>
-                ))}
+                  );
+                })}
               </Group>
             ))}
 
