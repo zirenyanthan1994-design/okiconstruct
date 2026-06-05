@@ -2,6 +2,8 @@
 import { useState, useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
+import { auth, db } from '../lib/firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore'; 
 
 const CanvasEditor = dynamic(() => import('./CanvasEditor'), { 
   ssr: false, 
@@ -76,7 +78,7 @@ const SingleDimensionInput = ({ label, value, unit, onChange }: { label: string,
 );
 
 export default function LayoutGenerator() {
-  const canvasRef = useRef<any>(null); // To trigger downloads from outside
+  const canvasRef = useRef<any>(null);
 
   const [isPremium] = useState(false); 
   const [generationCount, setGenerationCount] = useState(0);
@@ -133,7 +135,6 @@ export default function LayoutGenerator() {
   const [canvasRooms, setCanvasRooms] = useState<CanvasRoom[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  
   const [isNavigating, setIsNavigating] = useState(false);
 
   useEffect(() => {
@@ -177,7 +178,7 @@ export default function LayoutGenerator() {
       }
       setAptFlats(newFlats);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aptFlatsCount, typology]);
 
   const updateFlatBhk = (flatId: number, newBhk: number) => {
@@ -192,35 +193,85 @@ export default function LayoutGenerator() {
   const addBathroom = () => setBathrooms([...bathrooms, { id: bathrooms.length + 1, type: 'common', attachedTo: '', placement: 'outside', length: '6', breadth: '4' }]);
   const removeBathroom = (id: number) => setBathrooms(bathrooms.filter(b => b.id !== id));
 
-  const handleSaveLayout = () => {
+  const handleSaveLayout = async () => {
     if (!projectName.trim()) {
         setErrorMessage('Please enter a Project Name before saving.');
         window.scrollTo({ top: 0, behavior: 'smooth' }); return;
     }
     
+    if (!auth.currentUser) {
+        setErrorMessage('Please log in to save your layout to the cloud.');
+        window.scrollTo({ top: 0, behavior: 'smooth' }); return;
+    }
+
     if (!isPremium && savedProjectsDb.length >= 1 && !savedProjectsDb.includes(projectName.trim().toLowerCase())) {
         setLimitError('PROJECT');
         window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); return;
     }
     
-    if (!savedProjectsDb.includes(projectName.trim().toLowerCase())) {
-        setSavedProjectsDb([...savedProjectsDb, projectName.trim().toLowerCase()]);
-    }
-
-    const newPrefs = { ...aiPreferences };
-    if (aptStairPlacement === 'Edge' || commStairPlace === 'Edge') {
-        newPrefs.centralCirculation = Math.max(0.1, newPrefs.centralCirculation - 0.1); 
-    } else {
-        newPrefs.centralCirculation = Math.min(0.9, newPrefs.centralCirculation + 0.1); 
-    }
-    newPrefs.rearPrivacyBathrooms = Math.min(0.95, newPrefs.rearPrivacyBathrooms + 0.05);
-
-    setAiPreferences(newPrefs);
-    localStorage.setItem('oki_ai_prefs', JSON.stringify(newPrefs)); 
+    setIsProcessing(true);
     
-    setIsSaved(true);
-    setErrorMessage('');
-    setLimitError(null);
+    try {
+      const uniqueCorners: { x: number; y: number }[] = [];
+      const SCALE = 10;
+      canvasRooms.forEach((r) => {
+        if (!r.name.toLowerCase().includes('bathroom')) {
+          const w = r.widthFt * SCALE;
+          const h = r.heightFt * SCALE;
+          const rad = (r.rotation || 0) * (Math.PI / 180);
+          const getRotatedPoint = (px: number, py: number) => ({ x: r.x + px * Math.cos(rad) - py * Math.sin(rad), y: r.y + px * Math.sin(rad) + py * Math.cos(rad) });
+          const pts = [ getRotatedPoint(0, 0), getRotatedPoint(w, 0), getRotatedPoint(0, h), getRotatedPoint(w, h) ];
+          pts.forEach((p) => {
+            if (!uniqueCorners.some((uc) => Math.abs(uc.x - p.x) < 5 && Math.abs(uc.y - p.y) < 5)) uniqueCorners.push(p);
+          });
+        }
+      });
+      const exactColumnsCount = uniqueCorners.length;
+
+      const cadData = {
+        isFromCAD: true,
+        projectName, typology, floors, bhk, globalUnit, staircase, entranceType, wallThickness,
+        stairsDim, passageWidth, hall, kitchen, bedrooms, bathrooms,
+        aptFlatsCount, aptLayout, aptFrontEntrance, aptStairCount, aptStairPlacement, externalCorridorWidth, aptFlats,
+        commChambersCount, commChambersDim, commBathType, commSharedBathCount, commBathDim, commLayout, commStairPlace,
+        columnsCount: exactColumnsCount, footingsCount: exactColumnsCount,
+        canvasRooms
+      };
+
+      await addDoc(collection(db, "layouts"), {
+        userId: auth.currentUser.uid,
+        projectName: projectName.trim(),
+        typology: typology,
+        layoutData: cadData,
+        createdAt: serverTimestamp()
+      });
+
+      if (!savedProjectsDb.includes(projectName.trim().toLowerCase())) {
+          setSavedProjectsDb([...savedProjectsDb, projectName.trim().toLowerCase()]);
+      }
+
+      const newPrefs = { ...aiPreferences };
+      if (aptStairPlacement === 'Edge' || commStairPlace === 'Edge') {
+          newPrefs.centralCirculation = Math.max(0.1, newPrefs.centralCirculation - 0.1); 
+      } else {
+          newPrefs.centralCirculation = Math.min(0.9, newPrefs.centralCirculation + 0.1); 
+      }
+      newPrefs.rearPrivacyBathrooms = Math.min(0.95, newPrefs.rearPrivacyBathrooms + 0.05);
+
+      setAiPreferences(newPrefs);
+      localStorage.setItem('oki_ai_prefs', JSON.stringify(newPrefs)); 
+      localStorage.setItem('oki_cad_bridge', JSON.stringify(cadData));
+
+      setIsSaved(true);
+      setErrorMessage('');
+      setLimitError(null);
+
+    } catch (error) {
+      console.error("Error saving layout to cloud:", error);
+      setErrorMessage("Failed to save layout to the cloud. Please try again.");
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleGenerateCAD = async () => {
@@ -746,7 +797,6 @@ export default function LayoutGenerator() {
 
         {errorMessage && <div className="p-4 rounded-xl border border-red-200 bg-red-50 text-red-600 font-bold text-sm text-center">{errorMessage}</div>}
 
-        {/* 🛑 PAY-AS-YOU-GO WALLS UI */}
         {limitError === 'PROJECT' && (
           <div className="bg-purple-50 border border-purple-200 rounded-2xl p-6 text-center mb-6 shadow-sm animate-in fade-in slide-in-from-bottom-4">
             <div className="text-3xl mb-2">🏢</div>
@@ -765,7 +815,6 @@ export default function LayoutGenerator() {
           </div>
         )}
 
-        {/* Hides the generate button if a limit is hit */}
         {!limitError && (
           <button 
             onClick={handleGenerateCAD} 
@@ -779,87 +828,45 @@ export default function LayoutGenerator() {
         {canvasRooms.length > 0 && (
           <div className="mt-8 space-y-6">
             <div className={`bg-white rounded-2xl shadow-sm border border-gray-200 p-8 ${isLocked ? 'pointer-events-none opacity-90' : ''}`}>
-              
-              {/* THE NEW EXTERNAL EXPORT BUTTONS (ONLY VISIBLE IF SAVED) */}
-              <div className="flex flex-col sm:flex-row justify-between items-center border-b border-gray-100 pb-4 mb-6">
-                 <h2 className="text-xl font-bold text-gray-900 text-center sm:text-left w-full sm:w-auto mb-4 sm:mb-0">Calculated Structural Layout</h2>
-                 {isSaved && (
-                   <div className="flex gap-2 w-full sm:w-auto">
-                     <button onClick={() => canvasRef.current?.downloadImage()} className="flex-1 bg-white border border-gray-200 text-gray-700 text-xs font-bold py-2 px-3 rounded shadow-sm hover:bg-gray-50 transition-all flex items-center justify-center">
-                       🖼️ JPG
-                     </button>
-                     <button onClick={() => canvasRef.current?.downloadCAD()} className="flex-1 bg-[#22c55e] text-white text-xs font-bold py-2 px-3 rounded shadow-sm hover:bg-[#1ea950] transition-all flex items-center justify-center">
-                       📐 CAD
-                     </button>
-                   </div>
-                 )}
-              </div>
-              
-              <CanvasEditor ref={canvasRef} initialRooms={canvasRooms} entranceType={entranceType} wallThickness={wallThickness} />
+               <h2 className="text-xl font-bold text-gray-900 text-center border-b border-gray-100 pb-4 mb-6">Calculated Structural Layout</h2>
+               <CanvasEditor ref={canvasRef} initialRooms={canvasRooms} entranceType={entranceType} wallThickness={wallThickness} />
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-4 w-full bg-white p-4 border border-gray-200 rounded-xl shadow-sm">
+            <div className="flex flex-col gap-4 w-full bg-white p-6 border border-gray-200 rounded-xl shadow-sm">
               {!isSaved ? (
                 <button
                   onClick={handleSaveLayout}
-                  className="w-full bg-blue-600 text-white text-sm font-bold py-4 px-8 rounded-lg shadow hover:bg-blue-700 transition-all uppercase tracking-wide"
+                  disabled={isProcessing}
+                  className={`w-full text-white text-sm font-bold py-4 px-8 rounded-xl shadow transition-all uppercase tracking-wide ${isProcessing ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
                 >
-                  💾 Save Layout & Export
+                  {isProcessing ? "Saving to Cloud..." : "💾 Save Layout to Profile"}
                 </button>
               ) : (
-                <>
+                <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 flex flex-col gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                     <button onClick={() => canvasRef.current?.downloadImage()} className="bg-white border-2 border-gray-200 text-gray-700 font-bold py-3 rounded-xl shadow-sm hover:bg-gray-50 hover:border-gray-300 transition-all flex items-center justify-center gap-2">
+                       🖼️ Download JPG
+                     </button>
+                     <button onClick={() => canvasRef.current?.downloadPDF()} className="bg-white border-2 border-red-200 text-red-600 font-bold py-3 rounded-xl shadow-sm hover:bg-red-50 transition-all flex items-center justify-center gap-2">
+                       📄 Download PDF
+                     </button>
+                     <button onClick={() => canvasRef.current?.downloadCAD()} className="bg-[#22c55e] border-2 border-[#1ea950] text-white font-bold py-3 rounded-xl shadow-sm hover:bg-[#1ea950] transition-all flex items-center justify-center gap-2">
+                       📐 Download CAD (.DXF)
+                     </button>
+                  </div>
+
                   <button 
                     onClick={() => {
                       setIsNavigating(true);
-
-                      // --- MAGIC FIX: WE CALCULATE THE COLUMNS EXACTLY HOW THE CANVAS DOES ---
-                      const uniqueCorners: { x: number; y: number }[] = [];
-                      const SCALE = 10;
-                      canvasRooms.forEach((r) => {
-                        if (!r.name.toLowerCase().includes('bathroom')) {
-                          const w = r.widthFt * SCALE;
-                          const h = r.heightFt * SCALE;
-                          const rad = (r.rotation || 0) * (Math.PI / 180);
-                          const getRotatedPoint = (px: number, py: number) => ({
-                            x: r.x + px * Math.cos(rad) - py * Math.sin(rad),
-                            y: r.y + px * Math.sin(rad) + py * Math.cos(rad)
-                          });
-                          const pts = [ getRotatedPoint(0, 0), getRotatedPoint(w, 0), getRotatedPoint(0, h), getRotatedPoint(w, h) ];
-                          pts.forEach((p) => {
-                            if (!uniqueCorners.some((uc) => Math.abs(uc.x - p.x) < 5 && Math.abs(uc.y - p.y) < 5)) {
-                              uniqueCorners.push(p);
-                            }
-                          });
-                        }
-                      });
-                      
-                      const exactColumnsCount = uniqueCorners.length;
-                      // -----------------------------------------------------------------------
-
-                      const cadData = {
-                        isFromCAD: true,
-                        projectName, typology, floors, bhk, globalUnit, staircase, entranceType, wallThickness,
-                        stairsDim, passageWidth, hall, kitchen, bedrooms, bathrooms,
-                        aptFlatsCount, aptLayout, aptFrontEntrance, aptStairCount, aptStairPlacement, externalCorridorWidth, aptFlats,
-                        commChambersCount, commChambersDim, commBathType, commSharedBathCount, commBathDim, commLayout, commStairPlace,
-                        // NEW FIX: PASSING THE COLUMNS TO THE BOQ PAGE SO IT DOESN'T CRASH!
-                        columnsCount: exactColumnsCount,
-                        footingsCount: exactColumnsCount 
-                      };
-                      
-                      localStorage.setItem('oki_cad_bridge', JSON.stringify(cadData));
-                      
-                      setTimeout(() => {
-                        window.location.href = '/estimate-boq';
-                      }, 800);
+                      setTimeout(() => { window.location.href = '/estimate-boq'; }, 800);
                     }} 
                     disabled={isNavigating}
-                    className={`flex-1 sm:flex-[2] text-white text-sm font-bold py-4 px-8 rounded-lg shadow transition-all flex items-center justify-center ${isNavigating ? 'bg-gray-600 cursor-not-allowed' : 'bg-[#0f172a] hover:bg-black'}`}
+                    className={`w-full text-white text-lg font-bold py-4 rounded-xl shadow-md transition-all flex items-center justify-center ${isNavigating ? 'bg-gray-600 cursor-not-allowed' : 'bg-[#0f172a] hover:bg-black'}`}
                   >
                     <span className="mr-2">{isNavigating ? '⏳' : '📊'}</span> 
-                    {isNavigating ? 'Loading...' : 'Proceed To Estimate BOQ'}
+                    {isNavigating ? 'Loading Estimator...' : 'Proceed To Estimate BOQ ➔'}
                   </button>
-                </>
+                </div>
               )}
             </div>
           </div>

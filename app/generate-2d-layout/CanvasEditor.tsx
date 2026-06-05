@@ -56,7 +56,7 @@ const CanvasEditor = forwardRef(({
   const lastDistRef = useRef<number>(0);
   const lastAngleRef = useRef<number>(0);
   const isTransformingRef = useRef<boolean>(false);
-
+// EXPOSE DOWNLOAD METHODS TO PARENT UI
   useImperativeHandle(ref, () => ({
     downloadImage: () => {
       selectShape(null); 
@@ -64,11 +64,37 @@ const CanvasEditor = forwardRef(({
         if (!stageRef.current) return;
         const uri = stageRef.current.toDataURL({ pixelRatio: 4, mimeType: 'image/jpeg', quality: 1 });
         const link = document.createElement('a');
-        link.download = 'OkiConstruct_Blueprint_HighRes.jpg';
+        link.download = `${initialRooms[0]?.name || 'OkiConstruct'}_Blueprint.jpg`;
         link.href = uri;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+      }, 150);
+    },
+    downloadPDF: () => {
+      selectShape(null);
+      setTimeout(() => {
+        if (!stageRef.current) return;
+        const uri = stageRef.current.toDataURL({ pixelRatio: 4, mimeType: 'image/jpeg', quality: 1 });
+        const printWindow = window.open('', '_blank');
+        if (printWindow) {
+          printWindow.document.write(`
+            <html>
+              <head>
+                <title>OkiConstruct Blueprint PDF</title>
+                <style>
+                  body { margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: #fff; }
+                  img { max-width: 100%; max-height: 100vh; object-fit: contain; }
+                  @media print { @page { size: landscape; margin: 0; } }
+                </style>
+              </head>
+              <body>
+                <img src="${uri}" onload="window.print(); window.close();" />
+              </body>
+            </html>
+          `);
+          printWindow.document.close();
+        }
       }, 150);
     },
     downloadCAD: () => {
@@ -90,7 +116,7 @@ const CanvasEditor = forwardRef(({
       const blob = new Blob([dxf], { type: 'application/dxf' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.download = 'OkiConstruct_CAD_Layout.dxf';
+      link.download = `${initialRooms[0]?.name || 'OkiConstruct'}_CAD.dxf`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
