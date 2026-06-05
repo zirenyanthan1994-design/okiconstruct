@@ -136,6 +136,9 @@ export default function LayoutGenerator() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [isNavigating, setIsNavigating] = useState(false);
+  
+  // 🚀 NEW: Timer State for Backend Generation
+  const [timer, setTimer] = useState(0);
 
   useEffect(() => {
     const savedPrefs = localStorage.getItem('oki_ai_prefs');
@@ -185,16 +188,29 @@ export default function LayoutGenerator() {
 
           if (data.canvasRooms) {
             setCanvasRooms(data.canvasRooms);
-            setIsSaved(true); // Marks it as saved so the download buttons appear immediately
+            setIsSaved(true); 
           }
 
-          localStorage.removeItem('oki_layout_edit'); // Clean cache so it doesn't loop
+          localStorage.removeItem('oki_layout_edit'); 
         } catch (e) {
           console.error("Failed to load layout from profile", e);
         }
       }
     }
   }, []);
+
+  // 🚀 NEW: Live Generation Timer Logic
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isProcessing) {
+      interval = setInterval(() => {
+        setTimer(prev => prev + 1);
+      }, 1000);
+    } else {
+      setTimer(0);
+    }
+    return () => clearInterval(interval);
+  }, [isProcessing]);
 
   useEffect(() => {
     if (typology === 'Private Residence') {
@@ -876,7 +892,11 @@ export default function LayoutGenerator() {
             disabled={isProcessing || isLocked} 
             className={`w-full font-bold py-4 rounded-xl transition-all shadow-md text-lg ${(isProcessing || isLocked) ? 'bg-gray-400 text-white cursor-not-allowed' : 'bg-[#0f172a] hover:bg-black text-white hover:shadow-lg'}`}
           >
-            {isProcessing ? "Generating AI powered 2D layout..." : "Calculate & Render Blueprint"}
+            {isProcessing 
+              ? timer > 30 
+                ? `Waking up CAD Engine... (${timer}s)` 
+                : `Generating AI powered 2D layout... (${timer}s)` 
+              : "Calculate & Render Blueprint"}
           </button>
         )}
 
