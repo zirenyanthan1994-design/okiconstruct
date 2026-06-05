@@ -26,37 +26,45 @@ export default function UpgradePage() {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        // Fetch Admin Pricing
-        try {
-          const billingDoc = await getDoc(doc(db, "platform", "billing"));
-          if (billingDoc.exists() && billingDoc.data().payAsYouGo) {
-            setPayAsYouGo(billingDoc.data().payAsYouGo);
-          }
-        } catch (error) {
-          console.error("Error fetching billing:", error);
-        }
-
-        // Fetch User's Free Projects (To populate the Unlock Dropdown)
-        try {
-          const q = query(collection(db, "boq_projects"), where("userId", "==", currentUser.uid));
-          const querySnapshot = await getDocs(q);
-          const projects: any[] = [];
-          querySnapshot.forEach((doc) => {
-            const data = doc.data();
-            // Only list projects that haven't been unlocked yet
-            if (!data.isPremiumLayout) {
-              projects.push({ id: doc.id, name: data.projectName || "Unnamed Project" });
+      try {
+        if (currentUser) {
+          setUser(currentUser);
+          
+          // 1. Safely Fetch Admin Pricing
+          try {
+            const billingDoc = await getDoc(doc(db, "platform", "billing"));
+            if (billingDoc.exists() && billingDoc.data().payAsYouGo) {
+              setPayAsYouGo(billingDoc.data().payAsYouGo);
             }
-          });
-          setUserProjects(projects);
-          if (projects.length > 0) setSelectedProjectId(projects[0].id);
-        } catch (error) {
-          console.error("Error fetching projects:", error);
+          } catch (error) {
+            console.error("Billing doc not found, using default prices.", error);
+          }
+
+          // 2. Safely Fetch User's Free Projects
+          try {
+            const q = query(collection(db, "boq_projects"), where("userId", "==", currentUser.uid));
+            const querySnapshot = await getDocs(q);
+            const projects: any[] = [];
+            querySnapshot.forEach((docSnap) => {
+              const data = docSnap.data();
+              if (!data.isPremiumLayout) {
+                projects.push({ id: docSnap.id, name: data.projectName || "Unnamed Project" });
+              }
+            });
+            setUserProjects(projects);
+            if (projects.length > 0) setSelectedProjectId(projects[0].id);
+          } catch (error) {
+            console.error("Error fetching projects.", error);
+          }
+        } else {
+          setUser(null);
         }
+      } catch (error) {
+        console.error("Global auth fetch error:", error);
+      } finally {
+        // ✅ THE MAGIC FIX: This guarantees the loading screen turns off NO MATTER WHAT!
+        setIsLoading(false);
       }
-      setIsLoading(false);
     });
 
     return () => unsubscribe();

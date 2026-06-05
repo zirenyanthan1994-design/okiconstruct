@@ -1,127 +1,98 @@
 "use client";
-import { useState, useEffect } from 'react';
-import { auth, db } from '../lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
-import { onAuthStateChanged, User } from 'firebase/auth';
-import { useRouter } from 'next/navigation';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import Navbar from '../components/Navbar';
-import PaymentModal from '../components/PaymentModal';
+import { auth } from '../lib/firebase';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { useRouter } from 'next/navigation';
 
-export default function Upgrade() {
+export default function Navbar() {
+  const [user, setUser] = useState<any>(null);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const router = useRouter();
-  
-  const [user, setUser] = useState<User | null>(null);
-  const [userData, setUserData] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      if (currentUser) {
-        setUser(currentUser);
-        const docRef = doc(db, "users", currentUser.uid);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setUserData(docSnap.data());
-          if (docSnap.data().tier === "premium") {
-            router.push('/dashboard');
-          }
-        }
-      } else {
-        router.push('/dashboard');
-      }
-      setIsLoading(false);
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
     });
     return () => unsubscribe();
-  }, [router]);
+  }, []);
 
-  const handlePaymentSuccess = () => {
-    setShowPaymentModal(false);
-    alert("Transaction submitted! Our team is verifying your payment and will activate your Premium account shortly.");
-    router.push('/dashboard');
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      router.push('/');
+    } catch (error) {
+      console.error("Logout Error:", error);
+    }
   };
 
-  if (isLoading) return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="text-[#22c55e] font-bold text-xl flex items-center gap-3">
-        Loading Secure Checkout...
-      </div>
-    </div>
-  );
-
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col font-sans pb-20">
-      
-      {/* ERROR FIX: Removed problematic props from Navbar */}
-      <Navbar />
-
-      <main className="max-w-[1200px] mx-auto p-4 md:p-6 mt-10 w-full flex-grow">
+    <header className="bg-white border-b border-gray-100 sticky top-0 z-50 print:hidden">
+      <div className="max-w-[1400px] mx-auto px-4 md:px-6 h-20 flex justify-between items-center bg-white relative z-50">
         
-        <div className="text-center mb-16 pt-8">
-          <div className="w-16 h-16 bg-green-50 text-[#22c55e] rounded-2xl flex items-center justify-center mx-auto mb-6 text-3xl shadow-sm border border-green-100">🚀</div>
-          <h1 className="text-4xl md:text-5xl font-black tracking-tight text-gray-900 mb-4">Upgrade Your Workflow</h1>
-          <p className="text-lg font-medium text-gray-500 max-w-2xl mx-auto leading-relaxed">Stop leaving money on the table. Unlock custom material rates, precise engineering overrides, and global directory visibility.</p>
+        {/* LOGO */}
+        <Link href="/" className="flex items-center gap-3">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" className="w-8 h-8 md:w-10 md:h-10">
+            <path d="M 50 15 A 35 35 0 1 0 85 50" fill="none" stroke="currentColor" strokeWidth="12" strokeLinecap="round" className="text-gray-900" />
+            <path d="M 50 15 L 85 15 L 85 50" fill="none" stroke="#22c55e" strokeWidth="12" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span className="font-extrabold text-xl md:text-2xl tracking-tight text-gray-900">
+            OKI<span className="text-[#22c55e]">CONSTRUCT</span>
+          </span>
+        </Link>
+
+        {/* DESKTOP LINKS */}
+        <nav className="hidden lg:flex items-center gap-6">
+          <Link href="/generate-2d-layout" className="text-sm font-bold text-gray-600 hover:text-[#22c55e] transition-colors">Layout Generator</Link>
+          <Link href="/estimate-boq" className="text-sm font-bold text-gray-600 hover:text-[#22c55e] transition-colors">Estimate BOQ</Link>
+          <Link href="/track-expenditure" className="text-sm font-bold text-gray-600 hover:text-[#22c55e] transition-colors">Track Expenses</Link>
+          <Link href="/upgrade" className="text-sm font-bold text-purple-600 bg-purple-50 px-3 py-1.5 rounded-lg hover:bg-purple-100 transition-colors">🚀 Upgrade</Link>
+        </nav>
+
+        {/* PROFILE / AUTH BUTTONS */}
+        <div className="hidden lg:flex items-center gap-4">
+          {user ? (
+            <div className="flex items-center gap-3">
+              <Link href="/profile" className="text-sm font-bold bg-gray-100 text-gray-700 px-4 py-2 rounded-xl hover:bg-gray-200 transition-colors">My Profile</Link>
+              <button onClick={handleLogout} className="text-sm font-bold bg-gray-900 text-white px-4 py-2 rounded-xl hover:bg-red-500 transition-colors">Logout</button>
+            </div>
+          ) : (
+            <Link href="/" className="text-sm font-bold bg-[#22c55e] text-white px-6 py-2.5 rounded-xl hover:bg-[#1ea950] transition-colors shadow-sm">Login / Register</Link>
+          )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-          
-          <div className="bg-white border border-gray-100 rounded-3xl p-8 md:p-10 shadow-sm flex flex-col">
-            <h2 className="text-xl font-black uppercase text-gray-900 tracking-wider mb-2">Standard Tier</h2>
-            <p className="text-4xl font-black text-gray-900 mb-8 border-b border-gray-100 pb-6">₹0 <span className="text-base text-gray-400 font-medium normal-case">/ forever</span></p>
-            
-            <ul className="space-y-4 font-semibold text-gray-600 mb-12 flex-grow">
-              <li className="flex items-center gap-3"><span className="text-[#22c55e] text-lg">✓</span> Basic BOQ Estimation</li>
-              <li className="flex items-center gap-3"><span className="text-[#22c55e] text-lg">✓</span> Personal Expenditure Ledger</li>
-              <li className="flex items-center gap-3"><span className="text-[#22c55e] text-lg">✓</span> Access to Expert Directory</li>
-            </ul>
+        {/* MOBILE MENU TOGGLE */}
+        <button 
+          className="flex lg:hidden items-center gap-2 text-gray-900 hover:text-[#22c55e] transition-colors"
+          onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+        >
+          <span className="text-sm font-semibold uppercase tracking-wider hidden md:inline-block">Menu</span>
+          <span className="text-2xl leading-none">{isMobileMenuOpen ? "✕" : "☰"}</span>
+        </button>
+      </div>
 
-            <button disabled className="w-full bg-gray-50 border border-gray-200 py-4 font-bold text-gray-400 rounded-xl cursor-not-allowed">
-              Your Current Plan
-            </button>
-          </div>
-
-          <div className="bg-gray-900 text-white rounded-3xl p-8 md:p-10 shadow-xl flex flex-col relative overflow-hidden transform hover:-translate-y-1 transition-transform">
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#22c55e] to-green-300"></div>
-            <div className="absolute top-6 right-6 bg-[#22c55e]/20 text-[#22c55e] font-bold px-3 py-1 uppercase tracking-widest text-[10px] rounded-full border border-[#22c55e]/30">
-              Pro Choice
-            </div>
+      {/* MOBILE MENU DROPDOWN */}
+      {isMobileMenuOpen && (
+        <nav className="absolute top-full left-0 w-full bg-white border-b border-gray-100 flex flex-col p-6 gap-2 shadow-lg z-40 rounded-b-2xl lg:hidden">
+          <div className="max-w-[1400px] mx-auto w-full flex flex-col gap-2">
+            <Link href="/generate-2d-layout" onClick={() => setIsMobileMenuOpen(false)} className="font-bold text-gray-700 hover:text-[#22c55e] hover:bg-gray-50 p-3 rounded-lg transition-colors">Generate 2D Layout</Link>
+            <Link href="/estimate-boq" onClick={() => setIsMobileMenuOpen(false)} className="font-bold text-gray-700 hover:text-[#22c55e] hover:bg-gray-50 p-3 rounded-lg transition-colors">Estimate BOQ</Link>
+            <Link href="/track-expenditure" onClick={() => setIsMobileMenuOpen(false)} className="font-bold text-gray-700 hover:text-[#22c55e] hover:bg-gray-50 p-3 rounded-lg transition-colors">Track Expenditure</Link>
+            <Link href="/upgrade" onClick={() => setIsMobileMenuOpen(false)} className="font-bold text-purple-600 hover:bg-purple-50 p-3 rounded-lg transition-colors">🚀 Upgrade / Add-Ons</Link>
             
-            <h2 className="text-xl font-black uppercase tracking-wider mb-2 text-[#22c55e]">Premium VIP</h2>
-            <p className="text-4xl font-black mb-8 border-b border-gray-800 pb-6">₹999 <span className="text-base text-gray-500 font-medium normal-case">/ month</span></p>
+            <hr className="my-2 border-gray-100" />
             
-            <ul className="space-y-4 font-semibold text-gray-300 mb-12 flex-grow">
-              <li className="flex items-center gap-3 text-white"><span className="text-[#22c55e] text-lg">★</span> Everything in Standard, plus:</li>
-              <li className="flex items-center gap-3"><span className="text-[#22c55e] text-lg">✓</span> Override Master BOQ Formulas</li>
-              <li className="flex items-center gap-3"><span className="text-[#22c55e] text-lg">✓</span> Multi-Story Apartment Engine</li>
-              <li className="flex items-center gap-3"><span className="text-[#22c55e] text-lg">✓</span> Custom Material Rates & Buffers</li>
-            </ul>
-
             {user ? (
-              <button 
-                onClick={() => setShowPaymentModal(true)} 
-                className="w-full bg-[#22c55e] text-white font-bold text-lg py-4 rounded-xl hover:bg-[#1ea950] transition-colors shadow-lg"
-              >
-                Upgrade Now ➔
-              </button>
+              <>
+                <Link href="/profile" onClick={() => setIsMobileMenuOpen(false)} className="font-bold text-gray-700 hover:text-[#22c55e] hover:bg-gray-50 p-3 rounded-lg transition-colors">My Profile</Link>
+                <button onClick={() => { handleLogout(); setIsMobileMenuOpen(false); }} className="font-bold text-white bg-gray-900 rounded-xl px-4 py-3 mt-2 hover:bg-red-500 transition-colors w-fit">Logout</button>
+              </>
             ) : (
-              <button disabled className="w-full bg-gray-800 text-gray-500 font-bold py-4 rounded-xl cursor-not-allowed">
-                Loading Account...
-              </button>
+              <Link href="/" onClick={() => setIsMobileMenuOpen(false)} className="font-bold text-white bg-[#22c55e] rounded-xl px-4 py-3 mt-2 hover:bg-[#1ea950] transition-colors w-fit text-center shadow-sm">Login / Register</Link>
             )}
           </div>
-        </div>
-      </main>
-
-      {showPaymentModal && (
-        <PaymentModal 
-          paymentType="Premium Subscription" 
-          amount={999} 
-          onClose={() => setShowPaymentModal(false)} 
-          onSuccess={handlePaymentSuccess} 
-        />
+        </nav>
       )}
-    </div>
+    </header>
   );
 }

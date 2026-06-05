@@ -57,13 +57,11 @@ const CanvasEditor = forwardRef(({
   const lastAngleRef = useRef<number>(0);
   const isTransformingRef = useRef<boolean>(false);
 
-  // EXPOSE DOWNLOAD METHODS TO PARENT UI
   useImperativeHandle(ref, () => ({
     downloadImage: () => {
       selectShape(null); 
       setTimeout(() => {
         if (!stageRef.current) return;
-        // HIGH RES EXPORT (pixelRatio 4 creates a 5MB+ image)
         const uri = stageRef.current.toDataURL({ pixelRatio: 4, mimeType: 'image/jpeg', quality: 1 });
         const link = document.createElement('a');
         link.download = 'OkiConstruct_Blueprint_HighRes.jpg';
@@ -522,10 +520,6 @@ const CanvasEditor = forwardRef(({
     }
   };
 
-  // ------------------------------------------------------------------
-  // 📏 ADVANCED WALL THICKNESS CALCULATION ALGORITHM
-  // Scans layout to count vertical and horizontal walls accurately.
-  // ------------------------------------------------------------------
   let currentMinX = Infinity;
   let currentMinY = Infinity;
   let currentMaxX = -Infinity;
@@ -540,7 +534,6 @@ const CanvasEditor = forwardRef(({
     const w = r.widthFt * SCALE;
     const h = r.heightFt * SCALE;
     
-    // Track unique wall coordinates (rounded to handle floating point tolerance)
     uniqueX.add(Math.round(r.x / 5) * 5);
     uniqueX.add(Math.round((r.x + w) / 5) * 5);
     uniqueY.add(Math.round(r.y / 5) * 5);
@@ -565,7 +558,6 @@ const CanvasEditor = forwardRef(({
   const internalWidthFt = (currentMaxX - currentMinX) / SCALE;
   const internalHeightFt = (currentMaxY - currentMinY) / SCALE;
 
-  // Multiply wall count by thickness (5" or 9")
   const wallThickInches = wallThickness.includes('Double') ? 9 : 5;
   const addedWidthFt = (uniqueX.size * wallThickInches) / 12;
   const addedHeightFt = (uniqueY.size * wallThickInches) / 12;
@@ -756,6 +748,8 @@ const CanvasEditor = forwardRef(({
 
   return (
     <div className="relative w-full border-2 border-gray-300 rounded-lg overflow-hidden bg-white shadow-sm">
+      
+      {/* LEFT TOOLBAR */}
       <button
         onClick={handleUndo}
         disabled={history.length === 0}
@@ -766,6 +760,7 @@ const CanvasEditor = forwardRef(({
         ↩ Undo
       </button>
 
+      {/* FLOATING ACTION MENU */}
       {selectedElement && (
         <div
           style={toolbarStyle}
@@ -779,6 +774,7 @@ const CanvasEditor = forwardRef(({
         </div>
       )}
 
+      {/* CANVAS WORKSPACE (Restored Resizing Capabilities!) */}
       <div 
         tabIndex={0} 
         className="w-full relative overflow-hidden cursor-crosshair focus:outline-none bg-gray-50"
@@ -796,6 +792,7 @@ const CanvasEditor = forwardRef(({
           ref={stageRef}
         >
           <Layer>
+            {/* GRID BACKGROUND */}
             <Rect id="grid-bg" x={-2000} y={-2000} width={8000} height={8000} fillPatternImage={gridPattern} listening={false} perfectDrawEnabled={false} />
 
             {/* OVERALL EXTERIOR DIMENSIONS ON ALL 4 SIDES */}
@@ -844,6 +841,8 @@ const CanvasEditor = forwardRef(({
                   id={room.id}
                   x={room.x}
                   y={room.y}
+                  width={w}  // <-- THE MAGIC FIX
+                  height={h} // <-- THE MAGIC FIX
                   rotation={room.rotation || 0}
                   draggable
                   dragBoundFunc={(pos) => ({ x: Math.round(pos.x / SCALE) * SCALE, y: Math.round(pos.y / SCALE) * SCALE })}
@@ -892,6 +891,7 @@ const CanvasEditor = forwardRef(({
               <Rect key={`col-${i}`} x={c.x - 6} y={c.y - 6} width={12} height={12} fill="#0f172a" perfectDrawEnabled={false} />
             ))}
 
+            {/* INTERACTIVE ELEMENTS */}
             {rooms.map((room) => (
               <Group key={room.id + '-elements'} x={room.x} y={room.y} rotation={room.rotation || 0}>
                 {room.elements?.map((el) => (
