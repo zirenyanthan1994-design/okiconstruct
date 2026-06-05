@@ -46,6 +46,7 @@ const CanvasEditor = forwardRef(({
 }: CanvasEditorProps, ref) => {
   const [rooms, setRooms] = useState<CanvasRoom[]>([]);
   const [history, setHistory] = useState<CanvasRoom[][]>([]);
+  const [redoHistory, setRedoHistory] = useState<CanvasRoom[][]>([]); // NEW: Redo State
   const [selectedId, selectShape] = useState<string | null>(null);
   
   const [stageSize, setStageSize] = useState({ width: 1000, height: 600 });
@@ -56,8 +57,9 @@ const CanvasEditor = forwardRef(({
   const lastDistRef = useRef<number>(0);
   const lastAngleRef = useRef<number>(0);
   const isTransformingRef = useRef<boolean>(false);
-// EXPOSE DOWNLOAD METHODS TO PARENT UI
+
   useImperativeHandle(ref, () => ({
+    getRooms: () => rooms, // NEW: Exposes final rooms to the parent for BOQ syncing
     downloadImage: () => {
       selectShape(null); 
       setTimeout(() => {
@@ -134,15 +136,73 @@ const CanvasEditor = forwardRef(({
 
   const commitHistory = (currentRooms: CanvasRoom[]) => {
     setHistory((prev) => [...prev, currentRooms]);
+    setRedoHistory([]); // Clear redo history when a new action is taken
   };
 
   const handleUndo = () => {
     if (history.length > 0) {
       const prev = history[history.length - 1];
+      setRedoHistory([rooms, ...redoHistory]);
       setRooms(prev);
       setHistory(history.slice(0, -1));
       selectShape(null);
     }
+  };
+
+  const handleRedo = () => {
+    if (redoHistory.length > 0) {
+      const next = redoHistory[0];
+      setHistory((prev) => [...prev, rooms]);
+      setRooms(next);
+      setRedoHistory(redoHistory.slice(1));
+      selectShape(null);
+    }
+  };
+
+  // NEW: Master Delete (Handles both entire rooms and small elements)
+  const handleDeleteSelection = () => {
+    if (!selectedId) return;
+    commitHistory(rooms);
+    
+    const isRoom = rooms.some(r => r.id === selectedId);
+    if (isRoom) {
+      setRooms(rooms.filter(r => r.id !== selectedId));
+    } else {
+      setRooms(rooms.map((room) => ({
+        ...room,
+        elements: room.elements?.filter((el) => el.id !== selectedId),
+      })));
+    }
+    selectShape(null);
+  };
+
+  // NEW: Spawns new rooms or columns in the center of the viewport
+  const handleAddShape = (type: string) => {
+    commitHistory(rooms);
+    const stage = stageRef.current;
+    let x = 50, y = 50;
+    
+    if (stage) {
+      const scale = stage.scaleX();
+      x = (-stage.x() + stage.width() / 2) / scale;
+      y = (-stage.y() + stage.height() / 2) / scale;
+    }
+    
+    x = Math.round(x / SCALE) * SCALE;
+    y = Math.round(y / SCALE) * SCALE;
+
+    const newRoom: CanvasRoom = {
+      id: `manual_${type}_${Date.now()}`,
+      name: type === 'bed' ? 'Extra Bedroom' : type === 'bath' ? 'Extra Bath' : type === 'kit' ? 'Extra Kitchen' : type === 'passage' ? 'Passage' : type === 'stair' ? 'Staircase' : type === 'chamber' ? 'Extra Chamber' : 'Column',
+      widthFt: type === 'passage' ? 4 : type === 'col' ? 1.5 : 10,
+      heightFt: type === 'passage' ? 10 : type === 'col' ? 1.5 : 10,
+      x: x,
+      y: y,
+      rotation: 0,
+      elements: []
+    };
+    
+    setRooms([...rooms, newRoom]);
   };
 
   const gridPattern = useMemo(() => {
@@ -200,7 +260,7 @@ const CanvasEditor = forwardRef(({
       if (Math.abs(room.x - minX) < TOL) extWalls.push('left');
       if (Math.abs(room.x + w - maxX) < TOL) extWalls.push('right');
 
-      if (!name.includes('passage') && !name.includes('corridor') && !name.includes('stair') && !name.includes('bathroom')) {
+      if (!name.includes('passage') && !name.includes('corridor') && !name.includes('stair') && !name.includes('bathroom') && !name.includes('column')) {
         if (name.includes('hall')) {
           let placed = 0;
           if (extWalls.includes('top') && placed < 2) { elements.push({ id: room.id + '-win-t', type: 'window', x: w / 2 - 20, y: -4, width: 40, height: 8, rotation: 0 }); placed++; }
@@ -263,7 +323,7 @@ const CanvasEditor = forwardRef(({
           }
       } 
       else {
-        const isValidDoorTarget = (!name.includes('passage') && !name.includes('corridor') && !name.includes('stair')) || isFlatSpine;
+        const isValidDoorTarget = (!name.includes('passage') && !name.includes('corridor') && !name.includes('stair') && !name.includes('column')) || isFlatSpine;
 
         if (isValidDoorTarget && activeSpine && activeSpine.id !== room.id) {
           if (!(entranceType === 'Hall / Living Room' && name === 'hall / living')) {
@@ -285,30 +345,21 @@ const CanvasEditor = forwardRef(({
         }
       }
 
-      if (name.includes('bedroom')) {
-        elements.push({ id: room.id + '-bed', type: 'bed', x: 10, y: 10, width: 60, height: 65, rotation: 0 });
-      }
-      if (name.includes('kitchen')) {
-        elements.push({ id: room.id + '-kit', type: 'kitchen', x: 5, y: 5, width: 80, height: 60, rotation: 0 });
-      }
+      if (name.includes('bedroom')) elements.push({ id: room.id + '-bed', type: 'bed', x: 10, y: 10, width: 60, height: 65, rotation: 0 });
+      if (name.includes('kitchen')) elements.push({ id: room.id + '-kit', type: 'kitchen', x: 5, y: 5, width: 80, height: 60, rotation: 0 });
       if (name.includes('bathroom')) {
         elements.push({ id: room.id + '-wc', type: 'wc', x: w - 25, y: 5, width: 20, height: 30, rotation: 0 });
-        if (w > 50 && h > 50) {
-          elements.push({ id: room.id + '-shw', type: 'shower', x: 5, y: 5, width: 30, height: 30, rotation: 0 });
-        }
+        if (w > 50 && h > 50) elements.push({ id: room.id + '-shw', type: 'shower', x: 5, y: 5, width: 30, height: 30, rotation: 0 });
       }
-      if (name.includes('hall') && !name.includes('flat')) {
-        elements.push({ id: room.id + '-sofa', type: 'sofa', x: 10, y: h - 40, width: 60, height: 30, rotation: 0 });
-      }
-      if (name.includes('stair')) {
-        elements.push({ id: room.id + '-stairs', type: 'stairs', x: 5, y: 5, width: w - 10, height: h - 10, rotation: 0 });
-      }
+      if (name.includes('hall') && !name.includes('flat')) elements.push({ id: room.id + '-sofa', type: 'sofa', x: 10, y: h - 40, width: 60, height: 30, rotation: 0 });
+      if (name.includes('stair')) elements.push({ id: room.id + '-stairs', type: 'stairs', x: 5, y: 5, width: w - 10, height: h - 10, rotation: 0 });
 
       return { ...room, rotation: 0, elements };
     });
 
     setRooms(populatedRooms);
     setHistory([]);
+    setRedoHistory([]);
     
     if (stageRef.current) {
         stageRef.current.position({ x: 50, y: 50 });
@@ -357,18 +408,6 @@ const CanvasEditor = forwardRef(({
           : r
       )
     );
-  };
-
-  const handleDeleteElement = () => {
-    if (!selectedId) return;
-    commitHistory(rooms);
-    setRooms(
-      rooms.map((room) => ({
-        ...room,
-        elements: room.elements?.filter((el) => el.id !== selectedId),
-      }))
-    );
-    selectShape(null);
   };
 
   const handleWheel = (e: any) => {
@@ -775,18 +814,42 @@ const CanvasEditor = forwardRef(({
   return (
     <div className="relative w-full border-2 border-gray-300 rounded-lg overflow-hidden bg-white shadow-sm">
       
-      {/* LEFT TOOLBAR */}
-      <button
-        onClick={handleUndo}
-        disabled={history.length === 0}
-        className={`absolute top-4 left-4 z-20 px-4 py-2 font-bold text-sm rounded shadow transition-all ${
-          history.length > 0 ? 'bg-white text-gray-800 hover:bg-gray-100' : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-        }`}
-      >
-        ↩ Undo
-      </button>
+      {/* 🚀 NEW ADVANCED TOOLBAR: Undo, Redo, Add Menu, Delete */}
+      <div className="absolute top-4 left-4 z-20 flex items-center gap-2 bg-white p-1.5 rounded-xl shadow-md border border-gray-200">
+        <button onClick={handleUndo} disabled={history.length === 0} className={`px-3 py-1.5 font-bold text-sm rounded-lg transition-all ${history.length > 0 ? 'text-gray-700 hover:bg-gray-100' : 'text-gray-300 cursor-not-allowed'}`}>
+          ↩ Undo
+        </button>
+        <button onClick={handleRedo} disabled={redoHistory.length === 0} className={`px-3 py-1.5 font-bold text-sm rounded-lg transition-all ${redoHistory.length > 0 ? 'text-gray-700 hover:bg-gray-100' : 'text-gray-300 cursor-not-allowed'}`}>
+          ↪ Redo
+        </button>
+        
+        <div className="w-px h-6 bg-gray-200 mx-1"></div>
+        
+        <select 
+          onChange={(e) => { if(e.target.value) { handleAddShape(e.target.value); e.target.value=''; } }} 
+          className="px-2 py-1.5 font-bold text-sm hover:bg-gray-100 rounded-lg text-[#22c55e] outline-none cursor-pointer appearance-none bg-transparent"
+        >
+          <option value="">+ Add Object</option>
+          <option value="bed">🛏️ Extra Bedroom</option>
+          <option value="bath">🛁 Extra Bathroom</option>
+          <option value="kit">🍳 Extra Kitchen</option>
+          <option value="passage">🛤️ Passage</option>
+          <option value="stair">🪜 Staircase</option>
+          <option value="chamber">🏢 Chamber/Shop</option>
+          <option value="col">🏗️ Column</option>
+        </select>
 
-      {/* FLOATING ACTION MENU */}
+        <div className="w-px h-6 bg-gray-200 mx-1"></div>
+
+        <button 
+          onClick={handleDeleteSelection} 
+          disabled={!selectedId} 
+          className={`px-3 py-1.5 font-bold text-sm rounded-lg transition-all ${selectedId ? 'text-red-600 hover:bg-red-50' : 'text-gray-300 cursor-not-allowed'}`}
+        >
+          🗑️ Delete
+        </button>
+      </div>
+
       {selectedElement && (
         <div
           style={toolbarStyle}
@@ -796,11 +859,9 @@ const CanvasEditor = forwardRef(({
             {selectedElement.type}
           </span>
           <button onClick={handleDuplicate} className="text-[10px] font-bold bg-blue-50 text-blue-600 px-2 py-1 rounded hover:bg-blue-100 transition-colors">📋 Copy</button>
-          <button onClick={handleDeleteElement} className="text-[10px] font-bold bg-red-50 text-red-600 px-2 py-1 rounded hover:bg-red-100 transition-colors">🗑 Delete</button>
         </div>
       )}
 
-      {/* CANVAS WORKSPACE (Restored Resizing Capabilities!) */}
       <div 
         tabIndex={0} 
         className="w-full relative overflow-hidden cursor-crosshair focus:outline-none bg-gray-50"
@@ -818,31 +879,21 @@ const CanvasEditor = forwardRef(({
           ref={stageRef}
         >
           <Layer>
-            {/* GRID BACKGROUND */}
             <Rect id="grid-bg" x={-2000} y={-2000} width={8000} height={8000} fillPatternImage={gridPattern} listening={false} perfectDrawEnabled={false} />
 
-            {/* OVERALL EXTERIOR DIMENSIONS ON ALL 4 SIDES */}
             {rooms.length > 0 && currentMinX !== Infinity && (
               <Group listening={false}>
-                {/* TOP */}
                 <Line points={[currentMinX, currentMinY - 20, currentMaxX, currentMinY - 20]} stroke="#dc2626" strokeWidth={1.5} perfectDrawEnabled={false} />
                 <Text text={`TOTAL WIDTH: ${trueTotalWidthFt}'`} x={currentMinX + (currentMaxX - currentMinX) / 2 - 45} y={currentMinY - 35} fontSize={12} fontStyle="bold" fill="#dc2626" />
-                
-                {/* BOTTOM */}
                 <Line points={[currentMinX, currentMaxY + 20, currentMaxX, currentMaxY + 20]} stroke="#dc2626" strokeWidth={1.5} perfectDrawEnabled={false} />
                 <Text text={`TOTAL WIDTH: ${trueTotalWidthFt}'`} x={currentMinX + (currentMaxX - currentMinX) / 2 - 45} y={currentMaxY + 25} fontSize={12} fontStyle="bold" fill="#dc2626" />
-                
-                {/* LEFT */}
                 <Line points={[currentMinX - 20, currentMinY, currentMinX - 20, currentMaxY]} stroke="#dc2626" strokeWidth={1.5} perfectDrawEnabled={false} />
                 <Text text={`TOTAL LENGTH: ${trueTotalHeightFt}'`} x={currentMinX - 35} y={currentMinY + (currentMaxY - currentMinY) / 2 + 45} rotation={270} fontSize={12} fontStyle="bold" fill="#dc2626" />
-                
-                {/* RIGHT */}
                 <Line points={[currentMaxX + 20, currentMinY, currentMaxX + 20, currentMaxY]} stroke="#dc2626" strokeWidth={1.5} perfectDrawEnabled={false} />
                 <Text text={`TOTAL LENGTH: ${trueTotalHeightFt}'`} x={currentMaxX + 35} y={currentMinY + (currentMaxY - currentMinY) / 2 - 45} rotation={90} fontSize={12} fontStyle="bold" fill="#dc2626" />
               </Group>
             )}
 
-            {/* ROOM BACKGROUNDS & WALLS */}
             {rooms.map((room) => {
               const w = room.widthFt * SCALE;
               const h = room.heightFt * SCALE;
@@ -856,8 +907,9 @@ const CanvasEditor = forwardRef(({
 
               const dimColor = '#2563eb';
               const isPassage = room.name.toLowerCase().includes('passage') || room.name.toLowerCase().includes('corridor');
-              const isBathroom = room.name.toLowerCase().includes('bathroom');
-              const labelFontSize = isBathroom ? 7 : 11;
+              const isBathroom = room.name.toLowerCase().includes('bathroom') || room.name.toLowerCase().includes('bath');
+              const isColumn = room.name.toLowerCase().includes('column');
+              const labelFontSize = isColumn ? 5 : isBathroom ? 7 : 11;
 
               const isSelected = selectedId === room.id;
 
@@ -867,8 +919,8 @@ const CanvasEditor = forwardRef(({
                   id={room.id}
                   x={room.x}
                   y={room.y}
-                  width={w}  // <-- THE MAGIC FIX
-                  height={h} // <-- THE MAGIC FIX
+                  width={w}
+                  height={h}
                   rotation={room.rotation || 0}
                   draggable
                   dragBoundFunc={(pos) => ({ x: Math.round(pos.x / SCALE) * SCALE, y: Math.round(pos.y / SCALE) * SCALE })}
@@ -877,35 +929,41 @@ const CanvasEditor = forwardRef(({
                   onDragEnd={(e) => handleDragEnd(e, room.id)}
                   onTransformEnd={(e) => handleTransformEnd(e, room.id)}
                 >
-                  <Rect width={w} height={h} fill={isSelected ? '#e0f2fe' : '#ffffff'} opacity={0.95} perfectDrawEnabled={false} />
+                  <Rect width={w} height={h} fill={isColumn ? '#0f172a' : isSelected ? '#e0f2fe' : '#ffffff'} opacity={isColumn ? 1 : 0.95} perfectDrawEnabled={false} />
                   {isSelected && <Rect width={w} height={h} stroke="#0ea5e9" strokeWidth={4} listening={false} perfectDrawEnabled={false} />}
 
-                  <Line points={[0, 0, w, 0]} stroke="#0f172a" strokeWidth={isMinY ? extThick : intThick} perfectDrawEnabled={false} />
-                  <Line points={[0, h, w, h]} stroke="#0f172a" strokeWidth={isMaxY ? extThick : intThick} perfectDrawEnabled={false} />
-                  <Line points={[0, 0, 0, h]} stroke="#0f172a" strokeWidth={isMinX ? extThick : intThick} perfectDrawEnabled={false} />
-                  <Line points={[w, 0, w, h]} stroke="#0f172a" strokeWidth={isMaxX ? extThick : intThick} perfectDrawEnabled={false} />
+                  {!isColumn && (
+                    <>
+                      <Line points={[0, 0, w, 0]} stroke="#0f172a" strokeWidth={isMinY ? extThick : intThick} perfectDrawEnabled={false} />
+                      <Line points={[0, h, w, h]} stroke="#0f172a" strokeWidth={isMaxY ? extThick : intThick} perfectDrawEnabled={false} />
+                      <Line points={[0, 0, 0, h]} stroke="#0f172a" strokeWidth={isMinX ? extThick : intThick} perfectDrawEnabled={false} />
+                      <Line points={[w, 0, w, h]} stroke="#0f172a" strokeWidth={isMaxX ? extThick : intThick} perfectDrawEnabled={false} />
+                    </>
+                  )}
 
-                  <Group opacity={0.9} listening={false}>
-                    <Line points={[15, 15, w - 15, 15]} stroke={dimColor} strokeWidth={0.5} perfectDrawEnabled={false} />
-                    <Text text={`${Math.round(room.widthFt)}'`} x={0} y={17} width={w} align="center" fontSize={9} fontStyle="bold" fill={dimColor} />
-                    <Line points={[15, h - 15, w - 15, h - 15]} stroke={dimColor} strokeWidth={0.5} perfectDrawEnabled={false} />
-                    <Text text={`${Math.round(room.widthFt)}'`} x={0} y={h - 26} width={w} align="center" fontSize={9} fontStyle="bold" fill={dimColor} />
-                    <Line points={[15, 15, 15, h - 15]} stroke={dimColor} strokeWidth={0.5} perfectDrawEnabled={false} />
-                    <Text text={`${Math.round(room.heightFt)}'`} x={26} y={h} width={h} align="center" fontSize={9} fontStyle="bold" fill={dimColor} rotation={270} />
-                    <Line points={[w - 15, 15, w - 15, h - 15]} stroke={dimColor} strokeWidth={0.5} perfectDrawEnabled={false} />
-                    <Text text={`${Math.round(room.heightFt)}'`} x={w - 17} y={h} width={h} align="center" fontSize={9} fontStyle="bold" fill={dimColor} rotation={270} />
-                  </Group>
+                  {!isColumn && (
+                    <Group opacity={0.9} listening={false}>
+                      <Line points={[15, 15, w - 15, 15]} stroke={dimColor} strokeWidth={0.5} perfectDrawEnabled={false} />
+                      <Text text={`${Math.round(room.widthFt)}'`} x={0} y={17} width={w} align="center" fontSize={9} fontStyle="bold" fill={dimColor} />
+                      <Line points={[15, h - 15, w - 15, h - 15]} stroke={dimColor} strokeWidth={0.5} perfectDrawEnabled={false} />
+                      <Text text={`${Math.round(room.widthFt)}'`} x={0} y={h - 26} width={w} align="center" fontSize={9} fontStyle="bold" fill={dimColor} />
+                      <Line points={[15, 15, 15, h - 15]} stroke={dimColor} strokeWidth={0.5} perfectDrawEnabled={false} />
+                      <Text text={`${Math.round(room.heightFt)}'`} x={26} y={h} width={h} align="center" fontSize={9} fontStyle="bold" fill={dimColor} rotation={270} />
+                      <Line points={[w - 15, 15, w - 15, h - 15]} stroke={dimColor} strokeWidth={0.5} perfectDrawEnabled={false} />
+                      <Text text={`${Math.round(room.heightFt)}'`} x={w - 17} y={h} width={h} align="center" fontSize={9} fontStyle="bold" fill={dimColor} rotation={270} />
+                    </Group>
+                  )}
 
                   <Group
                     x={isPassage ? w / 2 : 0}
-                    y={isPassage ? h / 2 : h / 2 - 15}
+                    y={isPassage ? h / 2 : isColumn ? h / 2 - 2 : h / 2 - 15}
                     rotation={isPassage ? 90 : 0}
                     offsetX={isPassage ? h / 2 : 0}
                     offsetY={isPassage ? 15 : 0}
                     listening={false}
                   >
-                    <Text text={room.name.toUpperCase()} width={isPassage ? h : w} align="center" fontSize={labelFontSize} fontStyle="bold" fill="#0f172a" opacity={0.8} />
-                    <Text text={`${Math.round(room.widthFt)}' x ${Math.round(room.heightFt)}'`} width={isPassage ? h : w} y={12} align="center" fontSize={isBathroom ? 6 : 9} fill="#16a34a" fontStyle="bold" />
+                    <Text text={room.name.toUpperCase()} width={isPassage ? h : w} align="center" fontSize={labelFontSize} fontStyle="bold" fill={isColumn ? '#ffffff' : '#0f172a'} opacity={0.8} />
+                    {!isColumn && <Text text={`${Math.round(room.widthFt)}' x ${Math.round(room.heightFt)}'`} width={isPassage ? h : w} y={12} align="center" fontSize={isBathroom ? 6 : 9} fill="#16a34a" fontStyle="bold" />}
                   </Group>
                 </Group>
               );
@@ -917,7 +975,6 @@ const CanvasEditor = forwardRef(({
               <Rect key={`col-${i}`} x={c.x - 6} y={c.y - 6} width={12} height={12} fill="#0f172a" perfectDrawEnabled={false} />
             ))}
 
-            {/* INTERACTIVE ELEMENTS */}
             {rooms.map((room) => (
               <Group key={room.id + '-elements'} x={room.x} y={room.y} rotation={room.rotation || 0}>
                 {room.elements?.map((el) => (

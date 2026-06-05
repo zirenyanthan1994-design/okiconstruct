@@ -24,10 +24,8 @@ export default function Estimator() {
   const [userData, setUserData] = useState<any>(null);
   const [existingProjectId, setExistingProjectId] = useState<string | null>(null);
 
-  // Tracks if data was bridged from the CAD Engine
   const [isFromCAD, setIsFromCAD] = useState(false);
 
-  // Scope & Granular Unit States (Defaults to feet)
   const [boqScope, setBoqScope] = useState<'full' | 'civil_only'>('full');
   const [units, setUnits] = useState({
     footing: 'feet', columnHeight: 'feet', columnDim: 'inches', 
@@ -58,7 +56,6 @@ export default function Estimator() {
   const [isSaved, setIsSaved] = useState(false);
   const router = useRouter();
 
-  // Advanced TMT States (Main, Extra, and Rings)
   const [structure, setStructure] = useState<any>({
     footing: { count: '', breadth: '', width: '', depth: '' },
     column: { height: '10', breadth: '', width: '', mainTmtSize: '', mainTmtCount: '', extraTmtSize: '', extraTmtCount: '', ringSize: '' },
@@ -111,7 +108,6 @@ export default function Estimator() {
 
   const isPremium = userData?.tier === 'premium' || userData?.planStatus === 'premium' || auth?.currentUser?.email?.toLowerCase() === 'okiconstruct2026@gmail.com';
 
-  // 🟢 AGGRESSIVE BRIDGE INTERCEPTOR: Forces UI auto-fill perfectly
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const bridgeData = localStorage.getItem('oki_cad_bridge');
@@ -158,7 +154,6 @@ export default function Estimator() {
           }
         }
 
-        // 🟢 AUTO-FILL THE COLUMNS AND FOOTINGS TO PREVENT 'NaN' CRASHES!
         if (cad.columnsCount || cad.footingsCount) {
             setStructure((prev: any) => ({
                 ...prev,
@@ -256,13 +251,34 @@ export default function Estimator() {
     };
   };
 
-  // 🟢 AUTO-FILL THE ACTUAL LAYOUT INPUTS FOR THE USER TO VERIFY
+  // 🚀 THE CORE FIX: Catching Manual Canvas Additions
   const handleSetupComplete = () => {
     if (!projectName.trim()) return setErrorMsg("Please provide a Project Name to begin.");
     if (!existingProjectId || floorsData.length !== totalFloorsCount) {
         const initialFloors = [];
         const initialOpenings = [];
         const bridgeData = isFromCAD ? JSON.parse(localStorage.getItem('oki_cad_bridge') || '{}') : null;
+
+        // Catch Manual Extra Rooms from Canvas
+        let extraBeds: any[] = [];
+        let extraBaths: any[] = [];
+        let extraShops: any[] = [];
+
+        if (bridgeData?.canvasRooms) {
+            const manualRooms = bridgeData.canvasRooms.filter((r: any) => r.id.startsWith('manual_'));
+            
+            extraBeds = manualRooms
+              .filter((r: any) => !r.id.includes('_bath_') && !r.id.includes('_chamber_') && !r.id.includes('_col_'))
+              .map((b: any, idx: number) => ({ id: Date.now() + 500 + idx, length: String(b.widthFt), breadth: String(b.heightFt) }));
+            
+            extraBaths = manualRooms
+              .filter((r: any) => r.id.includes('_bath_'))
+              .map((b: any, idx: number) => ({ id: Date.now() + 600 + idx, length: String(b.widthFt), breadth: String(b.heightFt), isAttached: false, layoutType: 'outside', attachedTo: '' }));
+            
+            extraShops = manualRooms
+              .filter((r: any) => r.id.includes('_chamber_'))
+              .map((b: any, idx: number) => ({ id: Date.now() + 700 + idx, length: String(b.widthFt), breadth: String(b.heightFt) }));
+        }
 
         for (let i = 0; i < totalFloorsCount; i++) {
             const floorName = i === 0 ? "Ground Floor" : i === 1 ? "1st Floor" : i === 2 ? "2nd Floor" : i === 3 ? "3rd Floor" : `${i}th Floor`;
@@ -281,6 +297,7 @@ export default function Estimator() {
                 if (bridgeData?.bedrooms?.length > 0) {
                     mappedBedrooms = bridgeData.bedrooms.map((b: any, idx: number) => ({ id: Date.now() + idx, length: b.length, breadth: b.breadth }));
                 }
+                mappedBedrooms = [...mappedBedrooms, ...extraBeds];
 
                 let mappedBathrooms = Array.from({length: bhkCount === 1 ? 1 : bhkCount}).map((_, j) => ({ id: Date.now() + 100 + j, length: '', breadth: '', isAttached: false, layoutType: 'outside', attachedTo: '' }));
                 if (bridgeData?.bathrooms?.length > 0) {
@@ -293,6 +310,7 @@ export default function Estimator() {
                         attachedTo: b.attachedTo || ''
                     }));
                 }
+                mappedBathrooms = [...mappedBathrooms, ...extraBaths];
 
                 initialFloors.push({
                     floorName, isCommercial: false, 
@@ -315,6 +333,7 @@ export default function Estimator() {
                         const wCount = bridgeData.commBathType === 'Shared Floor Bathrooms' ? bridgeData.commSharedBathCount : bridgeData.commChambersCount;
                         washrooms = { count: String(wCount || ''), length: bridgeData.commBathDim?.length || '', breadth: bridgeData.commBathDim?.breadth || '' };
                     }
+                    shops = [...shops, ...extraShops];
 
                     initialFloors.push({ floorName, isCommercial: true, shops, washrooms });
                 } else {
@@ -327,15 +346,21 @@ export default function Estimator() {
                             hall: { length: flat.hall?.length || '', breadth: flat.hall?.breadth || '' },
                             kitchen: { length: flat.kitchen?.length || '', breadth: flat.kitchen?.breadth || '' },
                             passageWidth: flat.passageWidth || '4',
-                            bedrooms: flat.bedrooms?.map((b: any, idx: number) => ({ id: Date.now() + idx, length: b.length, breadth: b.breadth })) || [],
-                            bathrooms: flat.bathrooms?.map((b: any, idx: number) => ({
-                                id: Date.now() + 100 + idx,
-                                length: b.length,
-                                breadth: b.breadth,
-                                isAttached: b.type === 'attached',
-                                layoutType: b.placement || 'outside',
-                                attachedTo: b.attachedTo || ''
-                            })) || []
+                            bedrooms: [
+                              ...(flat.bedrooms?.map((b: any, idx: number) => ({ id: Date.now() + idx, length: b.length, breadth: b.breadth })) || []),
+                              ...(flat.id === 1 ? extraBeds : []) 
+                            ],
+                            bathrooms: [
+                              ...(flat.bathrooms?.map((b: any, idx: number) => ({
+                                  id: Date.now() + 100 + idx,
+                                  length: b.length,
+                                  breadth: b.breadth,
+                                  isAttached: b.type === 'attached',
+                                  layoutType: b.placement || 'outside',
+                                  attachedTo: b.attachedTo || ''
+                              })) || []),
+                              ...(flat.id === 1 ? extraBaths : [])
+                            ]
                         }));
                     }
                     initialFloors.push({ floorName, isCommercial: false, flats: flatsToUse });
@@ -568,7 +593,6 @@ export default function Estimator() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans relative">
-      {/* <Navbar /> */}
       <main className="max-w-5xl mx-auto w-full p-4 md:p-8 mt-4 pb-24 print:p-0 print:mt-0 print:max-w-none relative z-10">
 
         {currentStep < 9 && (
@@ -1323,7 +1347,6 @@ export default function Estimator() {
                                         <button type="button" onClick={() => updateFlatData(fIdx, 'bathrooms', bIdx, 'isAttached', true)} className={`flex-1 p-2 text-sm rounded-lg font-bold transition-all border ${bath.isAttached ? 'bg-gray-900 border-gray-900 text-white shadow-md' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>Attached</button>
                                     </div>
 
-                                    {/* Advanced Flat Bathroom Settings */}
                                     {bath.isAttached && (
                                       <div className="mt-4 p-4 border border-gray-200 bg-gray-50 rounded-xl md:ml-28 space-y-4">
                                         <div>
@@ -1699,7 +1722,6 @@ export default function Estimator() {
 
               <ErrorDisplay />
 
-              {/* NEXT FLOOR COPY / FORWARDING LOGIC INTEGRATED HERE */}
               <div className="pt-8 mt-8 border-t border-gray-200">
                 {activeFloor < totalFloorsCount - 1 ? (
                   activeFloor === 0 && commercialGroundFloor && buildingType === 'apartment' ? (
@@ -1807,7 +1829,6 @@ export default function Estimator() {
                 </div>
               </div>
 
-              {/* Only show Doors/Windows pricing if it's a Full Build */}
               {boqScope === 'full' && (
                 <div className="border border-gray-100 p-6 rounded-3xl bg-white shadow-sm">
                   <h2 className="font-bold text-lg text-gray-900 mb-6">3. Windows & Doors</h2>
@@ -1867,7 +1888,6 @@ export default function Estimator() {
                 </div>
               )}
 
-              {/* CIVIL ONLY: Show Mason Labor here and skip the rest */}
               {boqScope === 'civil_only' && (
                 <div className="border border-gray-100 p-6 rounded-3xl bg-white shadow-sm mt-6">
                   <h2 className="font-bold text-lg text-gray-900 mb-6">3. Labor Rate</h2>
