@@ -155,6 +155,7 @@ export default function Estimator() {
           }
         }
 
+        // 🟢 AUTO-FILL THE COLUMNS AND FOOTINGS TO PREVENT 'NaN' CRASHES!
         if (cad.columnsCount || cad.footingsCount) {
             setStructure((prev: any) => ({
                 ...prev,
@@ -1315,7 +1316,7 @@ export default function Estimator() {
                                 <button onClick={() => addFlatBathroom(fIdx)} className="text-sm font-semibold text-[#22c55e] bg-green-50 px-3 py-1.5 rounded-lg hover:bg-green-100 transition-colors">+ Add Bath</button>
                               </div>
                               {flat.bathrooms.map((bath: any, bIdx: number) => (
-                                  <div key={bath.id} className="p-4 border border-gray-100 bg-white rounded-xl space-y-4">
+                                  <div key={bath.id} className="p-4 border border-gray-100 bg-white rounded-xl space-y-4 relative">
                                     <div className="flex flex-col md:flex-row gap-4 items-center">
                                         <span className="text-sm font-bold text-gray-500 w-full md:w-20">Bath {bIdx + 1}</span>
                                         <div className="flex gap-4 w-full items-center">
@@ -1668,7 +1669,7 @@ export default function Estimator() {
                 </div>
                 {isPremium && (
                   <select className="text-xs font-bold border border-gray-200 rounded-xl p-2 outline-none text-[#22c55e] bg-green-50 shadow-sm" value={units.openings} onChange={(e) => setUnits({...units, openings: e.target.value})}>
-                    <option value="feet">Openings in Feet (ft)</option><option value="meters">Openings in Meters (m)</option><option value="inches">Openings in Inches (in)</option><option value="cm">Openings in cm</option><option value="mm">Openings in mm</option>
+                    <option value="feet">Openings in Feet (ft)</option><option value="meters">Openings in Meters (m)</option><option value="inches">Inches</option><option value="cm">Openings in cm</option><option value="mm">Openings in mm</option>
                   </select>
                 )}
               </div>
@@ -1727,6 +1728,7 @@ export default function Estimator() {
 
               <ErrorDisplay />
 
+              {/* NEXT FLOOR COPY / FORWARDING LOGIC INTEGRATED HERE */}
               <div className="pt-8 mt-8 border-t border-gray-200">
                 {activeFloor < totalFloorsCount - 1 ? (
                   activeFloor === 0 && commercialGroundFloor && buildingType === 'apartment' ? (
@@ -1834,6 +1836,7 @@ export default function Estimator() {
                 </div>
               </div>
 
+              {/* Only show Doors/Windows pricing if it's a Full Build */}
               {boqScope === 'full' && (
                 <div className="border border-gray-100 p-6 rounded-3xl bg-white shadow-sm">
                   <h2 className="font-bold text-lg text-gray-900 mb-6">3. Windows & Doors</h2>
@@ -1893,6 +1896,7 @@ export default function Estimator() {
                 </div>
               )}
 
+              {/* CIVIL ONLY: Show Mason Labor here and skip the rest */}
               {boqScope === 'civil_only' && (
                 <div className="border border-gray-100 p-6 rounded-3xl bg-white shadow-sm mt-6">
                   <h2 className="font-bold text-lg text-gray-900 mb-6">3. Labor Rate</h2>
@@ -2151,32 +2155,32 @@ export default function Estimator() {
                         </div>
 
                         {!isHidden && (
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-left border-collapse min-w-[600px] print:min-w-full print:text-sm">
+                          <div className="w-full">
+                            <table className="w-full text-left border-collapse print:text-sm">
                               <thead>
                                 <tr className="border-b border-gray-100 print:border-gray-300">
-                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider print:p-2">Material/Service</th>
-                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-center print:p-2">Unit</th>
-                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-center print:p-2">Qty</th>
-                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Rate</th>
-                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Amount</th>
+                                  <th className="p-2 md:p-4 font-semibold text-[10px] md:text-xs text-gray-500 uppercase tracking-wider print:p-2">Material/Service</th>
+                                  <th className="p-2 md:p-4 font-semibold text-[10px] md:text-xs text-gray-500 uppercase tracking-wider text-center print:p-2">Unit</th>
+                                  <th className="p-2 md:p-4 font-semibold text-[10px] md:text-xs text-gray-500 uppercase tracking-wider text-center print:p-2">Qty</th>
+                                  <th className="p-2 md:p-4 font-semibold text-[10px] md:text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Rate</th>
+                                  <th className="p-2 md:p-4 font-semibold text-[10px] md:text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Amount</th>
                                 </tr>
                               </thead>
                               <tbody>
                                 {section.items?.map((item: any, i: number) => (
                                   <tr key={i} className="border-b border-gray-50 hover:bg-gray-50 transition-colors print:border-gray-200">
-                                    <td className="p-4 font-semibold text-sm text-gray-900 print:p-2">{item?.name}</td>
-                                    <td className="p-4 text-center font-medium text-sm text-gray-500 print:p-2">{item?.unit}</td>
-                                    <td className="p-4 text-center font-bold text-sm text-[#22c55e] print:p-2 print:text-black">{item?.qty || 0}</td>
-                                    <td className="p-4 text-right font-medium text-sm text-gray-600 print:p-2">₹{item?.rate || 0}</td>
-                                    <td className="p-4 text-right font-bold text-sm text-gray-900 print:p-2">₹{Math.ceil((item?.qty || 0) * (item?.rate || 0)).toLocaleString()}</td>
+                                    <td className="p-2 md:p-4 font-semibold text-xs md:text-sm text-gray-900 print:p-2">{item?.name}</td>
+                                    <td className="p-2 md:p-4 text-center font-medium text-xs md:text-sm text-gray-500 print:p-2">{item?.unit}</td>
+                                    <td className="p-2 md:p-4 text-center font-bold text-xs md:text-sm text-[#22c55e] print:p-2 print:text-black">{item?.qty || 0}</td>
+                                    <td className="p-2 md:p-4 text-right font-medium text-xs md:text-sm text-gray-600 print:p-2">₹{item?.rate || 0}</td>
+                                    <td className="p-2 md:p-4 text-right font-bold text-xs md:text-sm text-gray-900 print:p-2">₹{Math.ceil((item?.qty || 0) * (item?.rate || 0)).toLocaleString()}</td>
                                   </tr>
                                 ))}
                               </tbody>
                               <tfoot>
                                 <tr className="bg-gray-50/50 print:bg-transparent">
-                                  <td colSpan={4} className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Section Subtotal:</td>
-                                  <td className="p-4 font-bold text-base text-gray-900 text-right print:p-2">₹{(section?.sectionTotal || 0).toLocaleString()}</td>
+                                  <td colSpan={4} className="p-2 md:p-4 font-semibold text-[10px] md:text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Section Subtotal:</td>
+                                  <td className="p-2 md:p-4 font-bold text-sm md:text-base text-gray-900 text-right print:p-2">₹{(section?.sectionTotal || 0).toLocaleString()}</td>
                                 </tr>
                               </tfoot>
                             </table>

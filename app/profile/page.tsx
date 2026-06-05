@@ -336,36 +336,39 @@ export default function ProfilePage() {
                       {floor.sections?.map((section: any, idx: number) => (
                         <div key={idx} className="border border-gray-100 rounded-2xl overflow-hidden bg-white shadow-sm print:border-b print:rounded-none print:shadow-none print:mb-4">
                           <div className="bg-gray-50 p-4 border-b border-gray-100 print:bg-gray-100 print:p-2"><h3 className="font-bold text-gray-800 text-sm uppercase tracking-wider">{section.title}</h3></div>
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-left border-collapse min-w-[600px] print:min-w-full print:text-sm">
+                          
+                          {/* 🟢 FULLY RESPONSIVE MOBILE TABLE */}
+                          <div className="w-full">
+                            <table className="w-full text-left border-collapse print:text-sm">
                               <thead>
                                 <tr className="border-b border-gray-100 print:border-gray-300">
-                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider print:p-2">Material/Service</th>
-                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-center print:p-2">Unit</th>
-                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-center print:p-2">Qty</th>
-                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Rate</th>
-                                  <th className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Amount</th>
+                                  <th className="p-2 md:p-4 font-semibold text-[10px] md:text-xs text-gray-500 uppercase tracking-wider print:p-2">Material/Service</th>
+                                  <th className="p-2 md:p-4 font-semibold text-[10px] md:text-xs text-gray-500 uppercase tracking-wider text-center print:p-2">Unit</th>
+                                  <th className="p-2 md:p-4 font-semibold text-[10px] md:text-xs text-gray-500 uppercase tracking-wider text-center print:p-2">Qty</th>
+                                  <th className="p-2 md:p-4 font-semibold text-[10px] md:text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Rate</th>
+                                  <th className="p-2 md:p-4 font-semibold text-[10px] md:text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Amount</th>
                                 </tr>
                               </thead>
                               <tbody>
                                 {section.items?.map((item: any, i: number) => (
                                   <tr key={i} className="border-b border-gray-50 hover:bg-gray-50 transition-colors print:border-gray-200">
-                                    <td className="p-4 font-semibold text-sm text-gray-900 print:p-2">{item.name}</td>
-                                    <td className="p-4 text-center font-medium text-sm text-gray-500 print:p-2">{item.unit}</td>
-                                    <td className="p-4 text-center font-bold text-sm text-[#22c55e] print:p-2 print:text-black">{item.qty || 0}</td>
-                                    <td className="p-4 text-right font-medium text-sm text-gray-600 print:p-2">₹{item.rate || 0}</td>
-                                    <td className="p-4 text-right font-bold text-sm text-gray-900 print:p-2">₹{Math.ceil((item.qty || 0) * (item.rate || 0)).toLocaleString()}</td>
+                                    <td className="p-2 md:p-4 font-semibold text-xs md:text-sm text-gray-900 print:p-2">{item.name}</td>
+                                    <td className="p-2 md:p-4 text-center font-medium text-xs md:text-sm text-gray-500 print:p-2">{item.unit}</td>
+                                    <td className="p-2 md:p-4 text-center font-bold text-xs md:text-sm text-[#22c55e] print:p-2 print:text-black">{item.qty || 0}</td>
+                                    <td className="p-2 md:p-4 text-right font-medium text-xs md:text-sm text-gray-600 print:p-2">₹{item.rate || 0}</td>
+                                    <td className="p-2 md:p-4 text-right font-bold text-xs md:text-sm text-gray-900 print:p-2">₹{Math.ceil((item.qty || 0) * (item.rate || 0)).toLocaleString()}</td>
                                   </tr>
                                 ))}
                               </tbody>
                               <tfoot>
                                 <tr className="bg-gray-50/50 print:bg-transparent">
-                                  <td colSpan={4} className="p-4 font-semibold text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Section Subtotal:</td>
-                                  <td className="p-4 font-bold text-base text-gray-900 text-right print:p-2">₹{section.sectionTotal.toLocaleString()}</td>
+                                  <td colSpan={4} className="p-2 md:p-4 font-semibold text-[10px] md:text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Section Subtotal:</td>
+                                  <td className="p-2 md:p-4 font-bold text-sm md:text-base text-gray-900 text-right print:p-2">₹{section.sectionTotal.toLocaleString()}</td>
                                 </tr>
                               </tfoot>
                             </table>
                           </div>
+
                         </div>
                       ))}
                     </div>
