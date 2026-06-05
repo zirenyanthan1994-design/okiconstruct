@@ -157,7 +157,6 @@ export default function LayoutGenerator() {
       }
       setBedrooms(newBedrooms);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bhk, typology]);
 
   useEffect(() => {
@@ -178,7 +177,6 @@ export default function LayoutGenerator() {
       }
       setAptFlats(newFlats);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aptFlatsCount, typology]);
 
   const updateFlatBhk = (flatId: number, newBhk: number) => {
@@ -214,7 +212,11 @@ export default function LayoutGenerator() {
     try {
       const uniqueCorners: { x: number; y: number }[] = [];
       const SCALE = 10;
-      canvasRooms.forEach((r) => {
+      
+      // We must pull the absolute latest rooms directly from the Canvas via the ref!
+      const currentRooms = canvasRef.current?.getRooms() || canvasRooms;
+
+      currentRooms.forEach((r: CanvasRoom) => {
         if (!r.name.toLowerCase().includes('bathroom')) {
           const w = r.widthFt * SCALE;
           const h = r.heightFt * SCALE;
@@ -235,14 +237,17 @@ export default function LayoutGenerator() {
         aptFlatsCount, aptLayout, aptFrontEntrance, aptStairCount, aptStairPlacement, externalCorridorWidth, aptFlats,
         commChambersCount, commChambersDim, commBathType, commSharedBathCount, commBathDim, commLayout, commStairPlace,
         columnsCount: exactColumnsCount, footingsCount: exactColumnsCount,
-        canvasRooms
+        canvasRooms: currentRooms
       };
+
+      // 🛑 THE MAGIC FIX: Scrub all 'undefined' values before sending to Firebase!
+      const cleanCadData = JSON.parse(JSON.stringify(cadData));
 
       await addDoc(collection(db, "layouts"), {
         userId: auth.currentUser.uid,
         projectName: projectName.trim(),
         typology: typology,
-        layoutData: cadData,
+        layoutData: cleanCadData, // Send the scrubbed data
         createdAt: serverTimestamp()
       });
 
@@ -260,15 +265,17 @@ export default function LayoutGenerator() {
 
       setAiPreferences(newPrefs);
       localStorage.setItem('oki_ai_prefs', JSON.stringify(newPrefs)); 
-      localStorage.setItem('oki_cad_bridge', JSON.stringify(cadData));
+      
+      // Local storage naturally scrubs undefined values on its own!
+      localStorage.setItem('oki_cad_bridge', JSON.stringify(cadData)); 
 
       setIsSaved(true);
       setErrorMessage('');
       setLimitError(null);
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error saving layout to cloud:", error);
-      setErrorMessage("Failed to save layout to the cloud. Please try again.");
+      setErrorMessage(`Failed to save layout to the cloud: ${error.message}`);
     } finally {
       setIsProcessing(false);
     }
