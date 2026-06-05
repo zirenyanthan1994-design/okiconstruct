@@ -46,7 +46,7 @@ const CanvasEditor = forwardRef(({
 }: CanvasEditorProps, ref) => {
   const [rooms, setRooms] = useState<CanvasRoom[]>([]);
   const [history, setHistory] = useState<CanvasRoom[][]>([]);
-  const [redoHistory, setRedoHistory] = useState<CanvasRoom[][]>([]); // NEW: Redo State
+  const [redoHistory, setRedoHistory] = useState<CanvasRoom[][]>([]);
   const [selectedId, selectShape] = useState<string | null>(null);
   
   const [stageSize, setStageSize] = useState({ width: 1000, height: 600 });
@@ -59,7 +59,7 @@ const CanvasEditor = forwardRef(({
   const isTransformingRef = useRef<boolean>(false);
 
   useImperativeHandle(ref, () => ({
-    getRooms: () => rooms, // NEW: Exposes final rooms to the parent for BOQ syncing
+    getRooms: () => rooms,
     downloadImage: () => {
       selectShape(null); 
       setTimeout(() => {
@@ -136,7 +136,7 @@ const CanvasEditor = forwardRef(({
 
   const commitHistory = (currentRooms: CanvasRoom[]) => {
     setHistory((prev) => [...prev, currentRooms]);
-    setRedoHistory([]); // Clear redo history when a new action is taken
+    setRedoHistory([]); 
   };
 
   const handleUndo = () => {
@@ -159,11 +159,9 @@ const CanvasEditor = forwardRef(({
     }
   };
 
-  // NEW: Master Delete (Handles both entire rooms and small elements)
   const handleDeleteSelection = () => {
     if (!selectedId) return;
     commitHistory(rooms);
-    
     const isRoom = rooms.some(r => r.id === selectedId);
     if (isRoom) {
       setRooms(rooms.filter(r => r.id !== selectedId));
@@ -176,7 +174,6 @@ const CanvasEditor = forwardRef(({
     selectShape(null);
   };
 
-  // NEW: Spawns new rooms or columns in the center of the viewport
   const handleAddShape = (type: string) => {
     commitHistory(rooms);
     const stage = stageRef.current;
@@ -212,6 +209,10 @@ const CanvasEditor = forwardRef(({
       canvas.height = 10;
       const context = canvas.getContext('2d');
       if (context) {
+        // 🚀 THE MAGIC FIX: We paint the background of the grid pure white so JPG doesn't render it black!
+        context.fillStyle = '#ffffff';
+        context.fillRect(0, 0, 10, 10);
+
         context.strokeStyle = '#e2e8f0';
         context.lineWidth = 0.5;
         context.beginPath();
@@ -267,7 +268,6 @@ const CanvasEditor = forwardRef(({
           if (extWalls.includes('bot') && placed < 2) { elements.push({ id: room.id + '-win-b', type: 'window', x: w / 2 - 20, y: h - 4, width: 40, height: 8, rotation: 0 }); placed++; }
           if (extWalls.includes('left') && placed < 2) { elements.push({ id: room.id + '-win-l', type: 'window', x: -4, y: h / 2 - 20, width: 8, height: 40, rotation: 0 }); placed++; }
           if (extWalls.includes('right') && placed < 2) { elements.push({ id: room.id + '-win-r', type: 'window', x: w - 4, y: h / 2 - 20, width: 8, height: 40, rotation: 0 }); placed++; }
-
         } else {
           if (extWalls.length > 0) {
             extWalls.forEach((wall) => {
@@ -283,11 +283,7 @@ const CanvasEditor = forwardRef(({
       if (!isApartment && !mainDoorPlaced) {
         const isHallEntrance = entranceType === 'Hall / Living Room';
         const isPassageEntrance = entranceType === 'Separate Passage';
-
-        const isTarget = 
-          (isHallEntrance && (name === 'hall / living' || (name.includes('passage') && !name.includes('flat')))) ||
-          (isPassageEntrance && name.includes('passage') && !name.includes('flat'));
-
+        const isTarget = (isHallEntrance && (name === 'hall / living' || (name.includes('passage') && !name.includes('flat')))) || (isPassageEntrance && name.includes('passage') && !name.includes('flat'));
         if (isTarget) {
           if (Math.abs(room.y + h - maxY) < TOL) {
             elements.push({ id: room.id + '-main', type: 'main-door', x: w / 2 - 20, y: h - 4, width: 40, height: 40, rotation: 0 });
@@ -321,8 +317,7 @@ const CanvasEditor = forwardRef(({
           } else if (extWalls.includes('top')) {
               elements.push({ id: room.id + '-front-door', type: 'door', x: w / 2 - 15, y: 0, width: 30, height: 30, rotation: 90 });
           }
-      } 
-      else {
+      } else {
         const isValidDoorTarget = (!name.includes('passage') && !name.includes('corridor') && !name.includes('stair') && !name.includes('column')) || isFlatSpine;
 
         if (isValidDoorTarget && activeSpine && activeSpine.id !== room.id) {
@@ -850,18 +845,6 @@ const CanvasEditor = forwardRef(({
         </button>
       </div>
 
-      {selectedElement && (
-        <div
-          style={toolbarStyle}
-          className="absolute z-20 bg-white border border-gray-200 shadow-xl rounded-lg p-1.5 flex items-center space-x-1"
-        >
-          <span className="text-[10px] font-bold text-gray-500 py-1 px-2 border-r border-gray-200 uppercase tracking-wide">
-            {selectedElement.type}
-          </span>
-          <button onClick={handleDuplicate} className="text-[10px] font-bold bg-blue-50 text-blue-600 px-2 py-1 rounded hover:bg-blue-100 transition-colors">📋 Copy</button>
-        </div>
-      )}
-
       <div 
         tabIndex={0} 
         className="w-full relative overflow-hidden cursor-crosshair focus:outline-none bg-gray-50"
@@ -879,7 +862,7 @@ const CanvasEditor = forwardRef(({
           ref={stageRef}
         >
           <Layer>
-            <Rect id="grid-bg" x={-2000} y={-2000} width={8000} height={8000} fillPatternImage={gridPattern} listening={false} perfectDrawEnabled={false} />
+            <Rect id="grid-bg" x={-5000} y={-5000} width={10000} height={10000} fillPatternImage={gridPattern} listening={false} perfectDrawEnabled={false} />
 
             {rooms.length > 0 && currentMinX !== Infinity && (
               <Group listening={false}>
