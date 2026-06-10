@@ -11,7 +11,8 @@ import {
   signInWithPopup,
   User
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+// <-- ADDED: Imported 'collection' here for the affiliate doc generation
+import { doc, setDoc, getDoc, serverTimestamp, collection } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
@@ -42,7 +43,10 @@ export default function Dashboard() {
   const [authError, setAuthError] = useState("");
   
   const [isOnboarding, setIsOnboarding] = useState(false);
-  const [referralCode, setReferralCode] = useState(""); // <-- ADDED: Affiliate state
+  const [referralCode, setReferralCode] = useState("");
+  
+  // <-- ADDED: State to track if they came from the partner portal
+  const [isAffiliateIntent, setIsAffiliateIntent] = useState(false); 
   
   const [profileForm, setProfileForm] = useState({
     role: ROLES[0],
@@ -52,15 +56,21 @@ export default function Dashboard() {
     avatar: PRESET_AVATARS[0]
   });
 
-  // UX State for the Welcome Greeting
   const [showWelcome, setShowWelcome] = useState(true);
 
-  // <-- ADDED: Scans the URL for the affiliate code instantly when they load the page
+  // <-- ADDED: Check for intent=affiliate along with the standard ref code
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
+      
       const ref = urlParams.get('ref');
       if (ref) setReferralCode(ref.toUpperCase());
+
+      const intent = urlParams.get('intent');
+      if (intent === 'affiliate') {
+        setIsRegistering(true); // Automatically show the signup form
+        setIsAffiliateIntent(true); // Flag this signup for auto-categorization
+      }
     }
   }, []);
 
@@ -75,6 +85,16 @@ export default function Dashboard() {
           const docSnap = await getDoc(docRef);
           
           if (docSnap.exists()) {
+            
+            // <-- ADDED: If an existing partner logs in via the intent link, send them straight back to dashboard
+            if (typeof window !== 'undefined') {
+              const urlParams = new URLSearchParams(window.location.search);
+              if (urlParams.get('intent') === 'affiliate') {
+                router.push('/affiliate-dashboard');
+                return; // Stop here so it doesn't flash the standard home UI
+              }
+            }
+
             setUserData(docSnap.data());
             setIsOnboarding(false);
           } else {
@@ -98,9 +118,8 @@ export default function Dashboard() {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [router]);
 
-  // Timer to hide the "Welcome" portion of the greeting after 4 seconds
   useEffect(() => {
     if (userData) {
       const timer = setTimeout(() => {
@@ -189,7 +208,7 @@ export default function Dashboard() {
         role: profileForm.role,
         gender: profileForm.gender,
         avatar: profileForm.avatar,
-        referredBy: referralCode.trim().toUpperCase(), // <-- ADDED: Saves the affiliate code
+        referredBy: referralCode.trim().toUpperCase(),
         tier: "standard", 
         isFeatured: false,
         popularityScore: 0,
@@ -197,14 +216,37 @@ export default function Dashboard() {
       };
       
       await setDoc(doc(db, "users", user.uid), newUserData);
+
+      // <-- ADDED: Auto-categorize as affiliate if they have the intent parameter
+      if (isAffiliateIntent) {
+        const autoCode = `PARTNER-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+        const newAffiliateRef = doc(collection(db, "affiliates"));
+        
+        await setDoc(newAffiliateRef, {
+          uid: user.uid,
+          email: user.email,
+          name: profileForm.name.trim(),
+          affiliateCode: autoCode,
+          commissionRate: 20, // Default 20%
+          totalRevenueGenerated: 0,
+          totalEarned: 0,
+          balanceRemaining: 0,
+          createdAt: serverTimestamp()
+        });
+
+        // Immediately route to the affiliate dashboard, completely bypassing the standard workspace
+        router.push('/affiliate-dashboard');
+        return; 
+      }
+
       setUserData(newUserData);
       setIsOnboarding(false); 
+      setIsLoading(false);
     } catch (error: any) {
       console.error("Onboarding Error:", error);
       setAuthError("Failed to save profile. Please try again.");
-    } finally {
       setIsLoading(false);
-    }
+    } 
   };
 
   const handleLogout = async () => {
@@ -233,9 +275,11 @@ export default function Dashboard() {
               <path d="M 50 15 L 85 15 L 85 50" fill="none" stroke="#22c55e" strokeWidth="12" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
             <h1 className="text-2xl font-bold text-gray-900 mb-2">
-              Welcome To OkiConstruct
+              {isAffiliateIntent ? "Partner Registration" : "Welcome To OkiConstruct"}
             </h1>
-            <p className="text-gray-500 text-sm uppercase tracking-wider font-semibold">Generate BOQ & Track Expense</p>
+            <p className="text-gray-500 text-sm uppercase tracking-wider font-semibold">
+              {isAffiliateIntent ? "Join & Earn 20% Commission" : "Generate BOQ & Track Expense"}
+            </p>
           </div>
 
           {authError && <div className="bg-red-50 text-red-600 p-3 rounded-lg mb-6 text-sm font-medium">{authError}</div>}
@@ -265,7 +309,7 @@ export default function Dashboard() {
               <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">{isRegistering ? "Set Password" : "Password"}</label>
               <input type="password" required className="w-full border border-gray-200 rounded-lg p-3 mt-1 text-gray-900 focus:ring-2 focus:ring-[#22c55e]/20 outline-none" value={password} onChange={e => setPassword(e.target.value)} />
             </div>
-            <button type="submit" className="w-full bg-[#22c55e] text-white rounded-xl p-3.5 font-semibold text-base hover:bg-[#1ea950] transition-colors shadow-md mt-4">
+            <button type="submit" className={`w-full text-white rounded-xl p-3.5 font-semibold text-base transition-colors shadow-md mt-4 ${isAffiliateIntent ? 'bg-purple-600 hover:bg-purple-700' : 'bg-[#22c55e] hover:bg-[#1ea950]'}`}>
               {isRegistering ? "Create Account" : "Sign In"}
             </button>
           </form>
@@ -351,7 +395,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* <-- ADDED: Referral code input box during onboarding --> */}
             <div className="mt-6 bg-purple-50/50 p-5 rounded-xl border border-purple-100">
               <label className="text-xs font-semibold text-purple-600 uppercase tracking-wider block mb-2">Referral Code (Optional)</label>
               <input 
@@ -476,7 +519,6 @@ export default function Dashboard() {
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           
-          {/* Active: Generate 2D Layout */}
           <Link href="/generate-2d-layout" className="bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden flex flex-col">
             <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none transition-all group-hover:bg-purple-500/30"></div>
             <div className="w-14 h-14 bg-purple-500/20 text-purple-400 rounded-xl flex items-center justify-center mb-6 relative z-10">
@@ -488,7 +530,6 @@ export default function Dashboard() {
             </p>
           </Link>
           
-          {/* Estimate BOQ */}
           <Link href="/estimate-boq" className="bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden flex flex-col">
             <div className="absolute top-0 right-0 w-32 h-32 bg-[#22c55e]/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none transition-all group-hover:bg-[#22c55e]/30"></div>
             <div className="w-14 h-14 bg-[#22c55e]/20 text-[#22c55e] rounded-xl flex items-center justify-center mb-6 relative z-10">
@@ -500,7 +541,6 @@ export default function Dashboard() {
             </p>
           </Link>
 
-          {/* Track Expenditure */}
           <Link href="/track-expenditure" className="bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden flex flex-col">
             <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none transition-all group-hover:bg-blue-500/30"></div>
             <div className="w-14 h-14 bg-blue-500/20 text-blue-400 rounded-xl flex items-center justify-center mb-6 relative z-10">
@@ -512,7 +552,6 @@ export default function Dashboard() {
             </p>
           </Link>
 
-          {/* Contact Experts */}
           <Link href="/contact-experts" className="bg-gray-900 border border-gray-800 rounded-3xl p-8 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden flex flex-col">
             <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/20 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none transition-all group-hover:bg-orange-500/30"></div>
             <div className="w-14 h-14 bg-orange-500/20 text-orange-400 rounded-xl flex items-center justify-center mb-6 relative z-10">

@@ -11,12 +11,12 @@ const spaceGrotesk = Space_Grotesk({ subsets: ["latin"] });
 
 // --- UPDATED SEO METADATA ---
 export const metadata: Metadata = {
-  title: 'OkiConstruct | Construction Estimation & BOQ Software',
-  description: 'The modern cloud platform for accurate construction estimation, intelligent BOQ generation, and real-time expense tracking.',
+  title: 'OkiConstruct | Generate 2D Floor Plans, BOQ & Track Expenses',
+  description: 'The modern cloud platform for accurate 2D floor layout plans, construction estimation, intelligent BOQ generation, and real-time expense tracking.',
   keywords: ['OkiConstruct', 'BOQ software', 'construction estimation tool', 'expense tracking for builders', 'civil engineering software'],
   openGraph: {
     title: 'OkiConstruct',
-    description: 'Smart BOQ and Construction Management',
+    description: 'Smart 2D Floor Plans, BOQ and Construction Management',
     url: 'https://okiconstruct.com',
     siteName: 'OkiConstruct',
     images: [

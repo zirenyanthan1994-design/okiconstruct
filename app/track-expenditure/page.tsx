@@ -63,10 +63,15 @@ export default function TrackExpenditure() {
 
   const fetchProjects = async (uid: string) => {
     try {
-      const q = query(collection(db, "boq_projects"), where("uid", "==", uid));
+      // CHANGED: Query using 'userId' instead of 'uid' to properly fetch BOQ generated projects
+      const q = query(collection(db, "boq_projects"), where("userId", "==", uid));
       const querySnapshot = await getDocs(q);
       const fetchedProjects: any[] = [];
       querySnapshot.forEach((d) => fetchedProjects.push({ id: d.id, ...d.data() }));
+      
+      // ADDED: Sort so the most recently generated BOQ is at the top of the dropdown
+      fetchedProjects.sort((a: any, b: any) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+      
       setProjects(fetchedProjects);
     } catch (error) {
       console.error("Error fetching projects:", error);
@@ -123,7 +128,7 @@ export default function TrackExpenditure() {
       // 2. NEW LOGIC: Prevent duplicate project names to keep BOQ synchronized
       const checkQuery = query(
         collection(db, "boq_projects"), 
-        where("uid", "==", user.uid),
+        where("userId", "==", user.uid), // CHANGED: matched query parameter to userId
         where("projectName", "==", cleanName)
       );
       const duplicateCheck = await getDocs(checkQuery);
@@ -134,7 +139,7 @@ export default function TrackExpenditure() {
       }
 
       const payload = { 
-        uid: user.uid,
+        userId: user.uid, // CHANGED: Used userId instead of uid to match Firestore Security rules
         projectName: cleanName, 
         grandTotal: Number(newProjectBudget) || 0, 
         isManualTracker: true, 
@@ -144,7 +149,7 @@ export default function TrackExpenditure() {
       const docRef = await addDoc(collection(db, "boq_projects"), payload);
       const newProj = { id: docRef.id, ...payload };
       
-      setProjects(prev => [...prev, newProj]);
+      setProjects(prev => [newProj, ...prev]);
       setSelectedProject(newProj);
       setNewProjectName("");
       setNewProjectBudget("");
