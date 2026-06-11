@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from 'react';
 import { auth, db } from '../lib/firebase';
-import { collection, addDoc, updateDoc, serverTimestamp, doc, getDoc, query, where, getDocs } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import { onAuthStateChanged } from 'firebase/auth';
 import { generateProjectBOQ } from '../lib/processBOQ';
@@ -33,10 +33,16 @@ export default function Estimator() {
   });
 
   const [siteDetails, setSiteDetails] = useState({ roadFacing: 'East', stairType: 'Internal', bhkType: '2BHK' });
-  const [buildingType, setBuildingType] = useState<'residence' | 'apartment'>('residence');
+  const [buildingType, setBuildingType] = useState<'residence' | 'apartment' | 'commercial'>('residence');
   const [commercialGroundFloor, setCommercialGroundFloor] = useState(false);
   const [flatsCount, setFlatsCount] = useState("1");
   const [apartmentFlats, setApartmentFlats] = useState<any[]>([{ id: 1, type: '2BHK' }]);
+
+  // Commercial Specific Configurations
+  const [commChambersCount, setCommChambersCount] = useState(4);
+  const [commBathType, setCommBathType] = useState('Shared Floor Bathrooms');
+  const [commSharedBathCount, setCommSharedBathCount] = useState(2);
+  const [commLayout, setCommLayout] = useState('Single Line');
 
   const [apartmentData, setApartmentData] = useState({
     corridor: { hasCorridor: false, length: '', width: '' },
@@ -152,8 +158,12 @@ export default function Estimator() {
             setBuildingType('apartment');
             setCommercialGroundFloor(false);
         } else if (cad.typology === 'Commercial') {
-            setBuildingType('apartment');
+            setBuildingType('commercial');
             setCommercialGroundFloor(true);
+            if (cad.commChambersCount) setCommChambersCount(cad.commChambersCount);
+            if (cad.commBathType) setCommBathType(cad.commBathType);
+            if (cad.commSharedBathCount) setCommSharedBathCount(cad.commSharedBathCount);
+            if (cad.commercial_layout) setCommLayout(cad.commercial_layout);
         }
 
         if (cad.floors === 'Ground Floor Only') setTotalFloorsCount(1);
@@ -238,6 +248,12 @@ export default function Estimator() {
                setHasStairs(data.inputs.hasStairs);
                setStairsDim(data.inputs.stairsDim);
                setSlabOverhang(data.inputs.slabOverhang || "2");
+               
+               if (data.inputs.commChambersCount) setCommChambersCount(data.inputs.commChambersCount);
+               if (data.inputs.commBathType) setCommBathType(data.inputs.commBathType);
+               if (data.inputs.commSharedBathCount) setCommSharedBathCount(data.inputs.commSharedBathCount);
+               if (data.inputs.commLayout) setCommLayout(data.inputs.commLayout);
+
                if (data.inputs.premiumData) setPremiumData(data.inputs.premiumData);
                if (data.inputs.hiddenSections) setHiddenSections(data.inputs.hiddenSections);
                if (data.inputs.customServices) setCustomServices(data.inputs.customServices);
@@ -317,7 +333,7 @@ export default function Estimator() {
 
         for (let i = 0; i < totalFloorsCount; i++) {
             const floorName = i === 0 ? "Ground Floor" : i === 1 ? "1st Floor" : i === 2 ? "2nd Floor" : i === 3 ? "3rd Floor" : `${i}th Floor`;
-            const isComm = (i === 0 && buildingType === 'apartment' && commercialGroundFloor);
+            const isComm = buildingType === 'commercial' || (i === 0 && buildingType === 'apartment' && commercialGroundFloor);
 
             initialOpenings.push({
                 mainDoor: { count: '1', height: '', width: '' }, roomDoors: [{ id: Date.now(), count: '', height: '', width: '' }],
@@ -358,55 +374,60 @@ export default function Estimator() {
                     bedrooms: mappedBedrooms,
                     bathrooms: mappedBathrooms
                 });
-            } else {
-                if (isComm) {
-                    let shops = [{ id: Date.now(), length: '', breadth: '' }];
-                    let washrooms = { count: '', length: '', breadth: '' };
+            } else if (buildingType === 'commercial' || isComm) {
+                let shops = [];
+                let washrooms = { count: String(commSharedBathCount || 2), length: '', breadth: '' };
+                let passage = { length: '', breadth: '' };
 
-                    if (bridgeData?.typology === 'Commercial') {
-                        shops = [];
-                        for (let c = 0; c < Number(bridgeData.commChambersCount || 1); c++) {
-                            shops.push({ id: Date.now() + c, length: bridgeData.commChambersDim?.length || '0', breadth: bridgeData.commChambersDim?.breadth || '0' });
-                        }
-                        const wCount = bridgeData.commBathType === 'Shared Floor Bathrooms' ? bridgeData.commSharedBathCount : bridgeData.commChambersCount;
-                        washrooms = { count: String(wCount || '0'), length: bridgeData.commBathDim?.length || '0', breadth: bridgeData.commBathDim?.breadth || '0' };
+                if (bridgeData?.typology === 'Commercial') {
+                    for (let c = 0; c < Number(bridgeData.commChambersCount || 1); c++) {
+                        shops.push({ id: Date.now() + c, length: bridgeData.commChambersDim?.length || '0', breadth: bridgeData.commChambersDim?.breadth || '0' });
                     }
-                    shops = [...shops, ...extraShops];
-
-                    initialFloors.push({ floorName, isCommercial: true, shops, washrooms });
+                    const wCount = bridgeData.commBathType === 'Shared Floor Bathrooms' ? bridgeData.commSharedBathCount : bridgeData.commChambersCount;
+                    washrooms = { count: String(wCount || '0'), length: bridgeData.commBathDim?.length || '0', breadth: bridgeData.commBathDim?.breadth || '0' };
+                    if (bridgeData.commercial_layout === 'Clustered') {
+                        passage = { length: bridgeData.passageWidth || '0', breadth: '10' }; // default representation
+                    }
                 } else {
-                    let flatsToUse = apartmentFlats.map(f => generateEmptyFlat(f.id, f.type));
-                    
-                    if (bridgeData?.aptFlats?.length > 0) {
-                        flatsToUse = bridgeData.aptFlats.map((flat: any) => ({
-                            id: flat.id,
-                            type: `${flat.bhk}BHK`,
-                            hall: { length: flat.hall?.length || '0', breadth: flat.hall?.breadth || '0' },
-                            kitchen: { length: flat.kitchen?.length || '0', breadth: flat.kitchen?.breadth || '0' },
-                            foyer: { length: '', breadth: '' },
-                            balcony: { length: '', breadth: '' },
-                            passage: { length: '', breadth: '' },
-                            porch: { length: '', breadth: '' },
-                            passageWidth: flat.passageWidth || '4',
-                            bedrooms: [
-                              ...(flat.bedrooms?.map((b: any, idx: number) => ({ id: Date.now() + idx, length: b.length || '0', breadth: b.breadth || '0' })) || []),
-                              ...(flat.id === 1 ? extraBeds : []) 
-                            ],
-                            bathrooms: [
-                              ...(flat.bathrooms?.map((b: any, idx: number) => ({
-                                  id: Date.now() + 100 + idx,
-                                  length: b.length || '0',
-                                  breadth: b.breadth || '0',
-                                  isAttached: b.type === 'attached',
-                                  layoutType: b.placement || 'outside',
-                                  attachedTo: b.attachedTo || ''
-                              })) || []),
-                              ...(flat.id === 1 ? extraBaths : [])
-                            ]
-                        }));
+                    for (let c = 0; c < commChambersCount; c++) {
+                        shops.push({ id: Date.now() + c, length: '', breadth: '' });
                     }
-                    initialFloors.push({ floorName, isCommercial: false, flats: flatsToUse });
                 }
+                shops = [...shops, ...extraShops];
+                initialFloors.push({ floorName, isCommercial: true, shops, washrooms, passage });
+            } else {
+                // Apartment flats
+                let flatsToUse = apartmentFlats.map(f => generateEmptyFlat(f.id, f.type));
+                
+                if (bridgeData?.aptFlats?.length > 0) {
+                    flatsToUse = bridgeData.aptFlats.map((flat: any) => ({
+                        id: flat.id,
+                        type: `${flat.bhk}BHK`,
+                        hall: { length: flat.hall?.length || '0', breadth: flat.hall?.breadth || '0' },
+                        kitchen: { length: flat.kitchen?.length || '0', breadth: flat.kitchen?.breadth || '0' },
+                        foyer: { length: '', breadth: '' },
+                        balcony: { length: '', breadth: '' },
+                        passage: { length: '', breadth: '' },
+                        porch: { length: '', breadth: '' },
+                        passageWidth: flat.passageWidth || '4',
+                        bedrooms: [
+                          ...(flat.bedrooms?.map((b: any, idx: number) => ({ id: Date.now() + idx, length: b.length || '0', breadth: b.breadth || '0' })) || []),
+                          ...(flat.id === 1 ? extraBeds : []) 
+                        ],
+                        bathrooms: [
+                          ...(flat.bathrooms?.map((b: any, idx: number) => ({
+                              id: Date.now() + 100 + idx,
+                              length: b.length || '0',
+                              breadth: b.breadth || '0',
+                              isAttached: b.type === 'attached',
+                              layoutType: b.placement || 'outside',
+                              attachedTo: b.attachedTo || ''
+                          })) || []),
+                          ...(flat.id === 1 ? extraBaths : [])
+                        ]
+                    }));
+                }
+                initialFloors.push({ floorName, isCommercial: false, flats: flatsToUse });
             }
         }
         setFloorsData(initialFloors);
@@ -440,6 +461,7 @@ export default function Estimator() {
       if (f.isCommercial) {
         (f.shops || []).forEach((s: any) => area += getRoomArea(s));
         area += (Number(f.washrooms?.count || 0) * getRoomArea(f.washrooms));
+        if (f.passage) area += getRoomArea(f.passage);
       } else {
         (f.flats || []).forEach((flat: any) => {
           area += getRoomArea(flat.hall) + getRoomArea(flat.kitchen);
@@ -451,6 +473,11 @@ export default function Estimator() {
       if (apartmentData.corridor.hasCorridor) area += getRoomArea(apartmentData.corridor);
       if (hasStairs) area += getRoomArea(stairsDim);
       if (apartmentData.lift.hasLift) area += (Number(apartmentData.lift.count) * getRoomArea(apartmentData.lift));
+    } else if (buildingType === 'commercial') {
+      (f.shops || []).forEach((s: any) => area += getRoomArea(s));
+      area += (Number(f.washrooms?.count || 0) * getRoomArea(f.washrooms));
+      if (f.passage) area += getRoomArea(f.passage);
+      if (hasStairs) area += getRoomArea(stairsDim);
     } else {
       area += getRoomArea(f.hall) + getRoomArea(f.kitchenDining) + getRoomArea(f.foyer) + getRoomArea(f.balcony) + getRoomArea(f.passage) + getRoomArea(f.porch);
       (f.bedrooms || []).forEach((b: any) => area += getRoomArea(b));
@@ -463,7 +490,7 @@ export default function Estimator() {
   const calculateAdjustedSlabArea = (index: number) => {
     const grossArea = calculateFloorArea(index);
     let baseSlab = Math.pow(Math.sqrt(grossArea) + toFeetUI(slabOverhang, units?.layout), 2);
-    if (buildingType === 'apartment' && index < totalFloorsCount - 1) {
+    if ((buildingType === 'apartment' || buildingType === 'commercial') && index < totalFloorsCount - 1) {
       let voidArea = 0;
       if (hasStairs) voidArea += getRoomArea(stairsDim);
       if (apartmentData.lift.hasLift) voidArea += (Number(apartmentData.lift.count) * getRoomArea(apartmentData.lift));
@@ -508,16 +535,19 @@ export default function Estimator() {
     const finalSnaps = floorsData.map((f, i) => {
         const layoutWithAreas = JSON.parse(JSON.stringify(f));
 
-        if (buildingType === 'apartment') {
+        if (buildingType === 'apartment' || buildingType === 'commercial') {
             let flattenedBedrooms: any[] = [];
             let flattenedBathrooms: any[] = [];
             let mainHall = { length: '0', breadth: '0' };
             let mainKitchen = { length: '0', breadth: '0' };
 
-            if (f.isCommercial) {
-                f.shops?.forEach((s: any) => flattenedBedrooms.push({ length: s.length, breadth: s.breadth }));
+            if (f.isCommercial || buildingType === 'commercial') {
+                f.shops?.forEach((s: any) => flattenedBedrooms.push({ length: s.length, breadth: s.breadth, name: 'Chamber' }));
                 for (let w = 0; w < Number(f.washrooms?.count || 0); w++) {
                     flattenedBathrooms.push({ length: f.washrooms.length, breadth: f.washrooms.breadth, isAttached: false, layoutType: 'outside' });
+                }
+                if (f.passage && f.passage.length) {
+                    flattenedBedrooms.push({ length: f.passage.length, breadth: f.passage.breadth, name: 'Passage' });
                 }
             } else {
                 f.flats?.forEach((flat: any, fIndex: number) => {
@@ -525,24 +555,24 @@ export default function Estimator() {
                         mainHall = { length: flat.hall.length, breadth: flat.hall.breadth };
                         mainKitchen = { length: flat.kitchen.length, breadth: flat.kitchen.breadth };
                     } else {
-                        flattenedBedrooms.push({ length: flat.hall.length, breadth: flat.hall.breadth });
-                        flattenedBedrooms.push({ length: flat.kitchen.length, breadth: flat.kitchen.breadth });
+                        flattenedBedrooms.push({ length: flat.hall.length, breadth: flat.hall.breadth, name: 'Hall' });
+                        flattenedBedrooms.push({ length: flat.kitchen.length, breadth: flat.kitchen.breadth, name: 'Kitchen' });
                     }
-                    if(flat.foyer) flattenedBedrooms.push({ length: flat.foyer.length, breadth: flat.foyer.breadth });
-                    if(flat.balcony) flattenedBedrooms.push({ length: flat.balcony.length, breadth: flat.balcony.breadth });
-                    if(flat.passage) flattenedBedrooms.push({ length: flat.passage.length, breadth: flat.passage.breadth });
-                    if(flat.porch) flattenedBedrooms.push({ length: flat.porch.length, breadth: flat.porch.breadth });
+                    if(flat.foyer) flattenedBedrooms.push({ length: flat.foyer.length, breadth: flat.foyer.breadth, name: 'Foyer' });
+                    if(flat.balcony) flattenedBedrooms.push({ length: flat.balcony.length, breadth: flat.balcony.breadth, name: 'Balcony' });
+                    if(flat.passage) flattenedBedrooms.push({ length: flat.passage.length, breadth: flat.passage.breadth, name: 'Passage' });
+                    if(flat.porch) flattenedBedrooms.push({ length: flat.porch.length, breadth: flat.porch.breadth, name: 'Porch' });
 
-                    flat.bedrooms?.forEach((b: any) => flattenedBedrooms.push({ length: b.length, breadth: b.breadth }));
+                    flat.bedrooms?.forEach((b: any) => flattenedBedrooms.push({ length: b.length, breadth: b.breadth, name: 'Bedroom' }));
                     flat.bathrooms?.forEach((b: any) => flattenedBathrooms.push({ ...b }));
                 });
             }
 
-            if (apartmentData.corridor.hasCorridor) flattenedBedrooms.push({ length: apartmentData.corridor.length, breadth: apartmentData.corridor.width });
-            if (hasStairs) flattenedBedrooms.push({ length: stairsDim.length, breadth: stairsDim.width });
+            if (apartmentData.corridor.hasCorridor) flattenedBedrooms.push({ length: apartmentData.corridor.length, breadth: apartmentData.corridor.width, name: 'Corridor' });
+            if (hasStairs) flattenedBedrooms.push({ length: stairsDim.length, breadth: stairsDim.width, name: 'Stairs' });
             if (apartmentData.lift.hasLift) {
                 for (let l = 0; l < Number(apartmentData.lift.count || 1); l++) {
-                    flattenedBedrooms.push({ length: apartmentData.lift.length, breadth: apartmentData.lift.width });
+                    flattenedBedrooms.push({ length: apartmentData.lift.length, breadth: apartmentData.lift.width, name: 'Lift' });
                 }
             }
             layoutWithAreas.hall = mainHall;
@@ -559,7 +589,9 @@ export default function Estimator() {
         }
 
         const processedOpenings = JSON.parse(JSON.stringify(openingsData[i]));
-        if (buildingType === 'apartment' && f.isCommercial) processedOpenings.roomDoors = processedOpenings.shutters;
+        if ((buildingType === 'apartment' && f.isCommercial) || buildingType === 'commercial') {
+            processedOpenings.roomDoors = processedOpenings.shutters;
+        }
 
         return {
             floorName: f.floorName, layout: layoutWithAreas, buildingType, apartmentData: apartmentData,
@@ -618,6 +650,7 @@ export default function Estimator() {
           units, boqScope, structure, floorsData, openingsData, rates, tiles, paintData, laborRates,
           apartmentData, apartmentFlats, flatsCount, commercialGroundFloor, hasStairs, stairsDim, slabOverhang,
           premiumData, hiddenSections,
+          commChambersCount, commBathType, commSharedBathCount, commLayout,
           customServices: isPremium ? customServices : [], 
           customTerms: isPremium ? customTerms : "", 
           letterheadImg: isPremium ? letterheadImg : null
@@ -722,15 +755,23 @@ export default function Estimator() {
                   </div>
 
                   <label className="text-sm font-bold text-gray-900 mb-4 block">Building Typology</label>
-                  <div className="flex gap-4 mb-6">
-                    <button type="button" onClick={() => setBuildingType('residence')} className={`flex-1 p-4 rounded-xl font-bold transition-all border ${buildingType === 'residence' ? 'bg-white border-[#22c55e] text-[#22c55e] shadow-sm ring-2 ring-[#22c55e]/20' : 'bg-transparent border-gray-200 text-gray-500 hover:bg-white'}`}>🏠 Private Residence</button>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+                    <button type="button" onClick={() => setBuildingType('residence')} className={`p-4 rounded-xl font-bold transition-all border ${buildingType === 'residence' ? 'bg-white border-[#22c55e] text-[#22c55e] shadow-sm ring-2 ring-[#22c55e]/20' : 'bg-transparent border-gray-200 text-gray-500 hover:bg-white'}`}>🏠 Private Residence</button>
                     <button type="button" onClick={() => { 
                         if(!isPremium) return alert("Apartment multi-unit generation is a Premium feature. Please upgrade your account from the Dashboard to unlock this capability.");
                         setBuildingType('apartment'); 
                       }} 
-                      className={`flex-1 p-4 rounded-xl font-bold transition-all border ${buildingType === 'apartment' ? 'bg-white border-[#22c55e] text-[#22c55e] shadow-sm ring-2 ring-[#22c55e]/20' : 'bg-transparent border-gray-200 text-gray-500 hover:bg-white'} ${!isPremium ? 'opacity-70' : ''}`}
+                      className={`p-4 rounded-xl font-bold transition-all border ${buildingType === 'apartment' ? 'bg-white border-[#22c55e] text-[#22c55e] shadow-sm ring-2 ring-[#22c55e]/20' : 'bg-transparent border-gray-200 text-gray-500 hover:bg-white'} ${!isPremium ? 'opacity-70' : ''}`}
                     >
                       🏢 Apartment {(!isPremium) && <span className="text-red-500 ml-1">🔒</span>}
+                    </button>
+                    <button type="button" onClick={() => { 
+                        if(!isPremium) return alert("Commercial structure calculation is a Premium feature. Please upgrade your account from the Dashboard to unlock this capability.");
+                        setBuildingType('commercial'); 
+                      }} 
+                      className={`p-4 rounded-xl font-bold transition-all border ${buildingType === 'commercial' ? 'bg-white border-[#22c55e] text-[#22c55e] shadow-sm ring-2 ring-[#22c55e]/20' : 'bg-transparent border-gray-200 text-gray-500 hover:bg-white'} ${!isPremium ? 'opacity-70' : ''}`}
+                    >
+                      🏬 Commercial {(!isPremium) && <span className="text-red-500 ml-1">🔒</span>}
                     </button>
                   </div>
 
@@ -766,6 +807,7 @@ export default function Estimator() {
                     )}
                   </div>
                   
+                  {/* APARTMENT SETTINGS */}
                   {buildingType === 'apartment' && (
                     <div className="mt-6 p-5 bg-blue-50 border border-blue-100 rounded-2xl">
                       <label className="text-sm font-bold text-blue-900 mb-4 block">Floor Planning Configuration</label>
@@ -799,6 +841,44 @@ export default function Estimator() {
                       )}
                     </div>
                   )}
+
+                  {/* COMMERCIAL SETTINGS */}
+                  {buildingType === 'commercial' && (
+                    <div className="mt-6 p-5 bg-orange-50 border border-orange-100 rounded-2xl">
+                      <label className="text-sm font-bold text-orange-900 mb-4 block">Commercial Configuration</label>
+                      <div className="bg-white p-5 rounded-xl border border-orange-100 space-y-6">
+                        <div>
+                          <label className={labelStyle}>Chambers / Shops Per Floor</label>
+                          <input type="number" min="1" className={inputStyle} value={commChambersCount} onChange={(e) => setCommChambersCount(parseInt(e.target.value) || 1)} />
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className={labelStyle}>Layout Style</label>
+                            <select className={selectStyle} value={commLayout} onChange={(e) => setCommLayout(e.target.value)}>
+                              <option value="Single Line">Single Line</option>
+                              <option value="Clustered">Clustered</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className={labelStyle}>Bathroom Configuration</label>
+                            <select className={selectStyle} value={commBathType} onChange={(e) => setCommBathType(e.target.value)}>
+                              <option value="Shared Floor Bathrooms">Shared Floor Bathrooms</option>
+                              <option value="Bathroom Per Chamber">Bathroom Per Chamber</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {commBathType === 'Shared Floor Bathrooms' && (
+                          <div>
+                            <label className={labelStyle}>Number of Shared Baths Per Floor</label>
+                            <input type="number" min="1" className={inputStyle} value={commSharedBathCount} onChange={(e) => setCommSharedBathCount(parseInt(e.target.value) || 1)} />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                 </div>
 
                 <div className="p-5 border border-blue-100 bg-blue-50/50 rounded-2xl">
@@ -1225,9 +1305,9 @@ export default function Estimator() {
                 </div>
               </div>
               
-              {buildingType === 'apartment' ? (
+              {buildingType === 'apartment' || buildingType === 'commercial' ? (
                 <div className="space-y-6">
-                  {floorsData[activeFloor].isCommercial ? (
+                  {floorsData[activeFloor].isCommercial || buildingType === 'commercial' ? (
                     <div className="p-6 border-2 border-orange-200 bg-orange-50 rounded-3xl">
                       <h3 className="text-xl font-black text-orange-900 mb-6 border-b border-orange-200 pb-4">Commercial Space Configuration</h3>
                       
@@ -1270,7 +1350,7 @@ export default function Estimator() {
                       </div>
 
                       <h4 className="font-bold text-orange-800 mb-3">Common Washrooms</h4>
-                      <div className="bg-white p-4 rounded-xl border border-orange-100 grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="bg-white p-4 rounded-xl border border-orange-100 grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
                         <div><label className={labelStyle}>Count</label><input type="number" className={inputStyle} value={floorsData[activeFloor].washrooms.count} onChange={(e) => updateFloorData('washrooms', null, 'count', e.target.value)} /></div>
                         <div>
                           <div className="flex justify-between items-end mb-2">
@@ -1295,6 +1375,36 @@ export default function Estimator() {
                           <input type="number" className={inputStyle} value={floorsData[activeFloor].washrooms.breadth} onChange={(e) => updateFloorData('washrooms', null, 'breadth', e.target.value)} />
                         </div>
                       </div>
+
+                      {floorsData[activeFloor].passage && (
+                        <div className="bg-white p-4 rounded-xl border border-orange-100">
+                          <h4 className="font-bold text-orange-800 mb-3">Main Corridor</h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <div className="flex justify-between items-end mb-2">
+                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Total Length</label>
+                                {isPremium ? (
+                                  <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                    <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                  </select>
+                                ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                              </div>
+                              <input type="number" className={inputStyle} value={floorsData[activeFloor].passage.length} onChange={(e) => updateFloorData('passage', null, 'length', e.target.value)} />
+                            </div>
+                            <div>
+                              <div className="flex justify-between items-end mb-2">
+                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
+                                {isPremium ? (
+                                  <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                    <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                  </select>
+                                ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                              </div>
+                              <input type="number" className={inputStyle} value={floorsData[activeFloor].passage.breadth} onChange={(e) => updateFloorData('passage', null, 'breadth', e.target.value)} />
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="space-y-8">
@@ -1515,104 +1625,106 @@ export default function Estimator() {
                     </div>
                   )}
 
-                  <div className="p-6 border border-blue-100 bg-blue-50/50 rounded-2xl mt-8">
-                    <h3 className="font-bold text-blue-900 mb-4">Vertical Circulation & Corridors</h3>
-                    {hasStairs && (
+                  {buildingType !== 'commercial' && (
+                    <div className="p-6 border border-blue-100 bg-blue-50/50 rounded-2xl mt-8">
+                      <h3 className="font-bold text-blue-900 mb-4">Vertical Circulation & Corridors</h3>
+                      {hasStairs && (
+                        <div className="mb-4 bg-white p-4 rounded-xl border border-blue-100">
+                          <label className={labelStyle}>Staircase Area (Deducted from Slab Void)</label>
+                          <div className="flex gap-4 items-center">
+                            <div className="w-full">
+                              <div className="flex justify-between items-end mb-1">
+                                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Length</label>
+                                 {isPremium ? (
+                                   <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                     <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                   </select>
+                                 ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                              </div>
+                              <input type="number" placeholder="Length" className={inputStyle} value={stairsDim.length} onChange={(e) => setStairsDim({ ...stairsDim, length: e.target.value })} />
+                            </div>
+                            <span className="font-bold text-gray-400 mt-4">×</span>
+                            <div className="w-full">
+                              <div className="flex justify-between items-end mb-1">
+                                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
+                                 {isPremium ? (
+                                   <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                     <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                   </select>
+                                 ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                              </div>
+                              <input type="number" placeholder="Width" className={inputStyle} value={stairsDim.width} onChange={(e) => setStairsDim({ ...stairsDim, width: e.target.value })} />
+                            </div>
+                          </div>
+                        </div>
+                      )}
                       <div className="mb-4 bg-white p-4 rounded-xl border border-blue-100">
-                        <label className={labelStyle}>Staircase Area (Deducted from Slab Void)</label>
-                        <div className="flex gap-4 items-center">
-                          <div className="w-full">
-                            <div className="flex justify-between items-end mb-1">
-                               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Length</label>
-                               {isPremium ? (
-                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
-                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
-                                 </select>
-                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                        <label className="flex items-center gap-3 cursor-pointer mb-3">
+                          <input type="checkbox" checked={apartmentData.lift.hasLift} onChange={(e) => setApartmentData({...apartmentData, lift: {...apartmentData.lift, hasLift: e.target.checked}})} className="w-5 h-5 text-blue-600 rounded" />
+                          <span className="font-bold text-gray-700">Include Elevator Shaft (Void)</span>
+                        </label>
+                        {apartmentData.lift.hasLift && (
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div><label className={labelStyle}>Count</label><input type="number" className={inputStyle} value={apartmentData.lift.count} onChange={(e) => setApartmentData({...apartmentData, lift: {...apartmentData.lift, count: e.target.value}})} /></div>
+                            <div>
+                              <div className="flex justify-between items-end mb-2">
+                                 <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Length</label>
+                                 {isPremium ? (
+                                   <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                     <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                   </select>
+                                 ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                              </div>
+                              <input type="number" className={inputStyle} value={apartmentData.lift.length} onChange={(e) => setApartmentData({...apartmentData, lift: {...apartmentData.lift, length: e.target.value}})} />
                             </div>
-                            <input type="number" placeholder="Length" className={inputStyle} value={stairsDim.length} onChange={(e) => setStairsDim({ ...stairsDim, length: e.target.value })} />
-                          </div>
-                          <span className="font-bold text-gray-400 mt-4">×</span>
-                          <div className="w-full">
-                            <div className="flex justify-between items-end mb-1">
-                               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
-                               {isPremium ? (
-                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
-                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
-                                 </select>
-                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                            <div>
+                              <div className="flex justify-between items-end mb-2">
+                                 <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
+                                 {isPremium ? (
+                                   <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                     <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                   </select>
+                                 ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                              </div>
+                              <input type="number" className={inputStyle} value={apartmentData.lift.width} onChange={(e) => setApartmentData({...apartmentData, lift: {...apartmentData.lift, width: e.target.value}})} />
                             </div>
-                            <input type="number" placeholder="Width" className={inputStyle} value={stairsDim.width} onChange={(e) => setStairsDim({ ...stairsDim, width: e.target.value })} />
                           </div>
-                        </div>
+                        )}
                       </div>
-                    )}
-                    <div className="mb-4 bg-white p-4 rounded-xl border border-blue-100">
-                      <label className="flex items-center gap-3 cursor-pointer mb-3">
-                        <input type="checkbox" checked={apartmentData.lift.hasLift} onChange={(e) => setApartmentData({...apartmentData, lift: {...apartmentData.lift, hasLift: e.target.checked}})} className="w-5 h-5 text-blue-600 rounded" />
-                        <span className="font-bold text-gray-700">Include Elevator Shaft (Void)</span>
-                      </label>
-                      {apartmentData.lift.hasLift && (
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <div><label className={labelStyle}>Count</label><input type="number" className={inputStyle} value={apartmentData.lift.count} onChange={(e) => setApartmentData({...apartmentData, lift: {...apartmentData.lift, count: e.target.value}})} /></div>
-                          <div>
-                            <div className="flex justify-between items-end mb-2">
-                               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Length</label>
-                               {isPremium ? (
-                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
-                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
-                                 </select>
-                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                      <div className="bg-white p-4 rounded-xl border border-blue-100">
+                        <label className="flex items-center gap-3 cursor-pointer mb-3">
+                          <input type="checkbox" checked={apartmentData.corridor.hasCorridor} onChange={(e) => setApartmentData({...apartmentData, corridor: {...apartmentData.corridor, hasCorridor: e.target.checked}})} className="w-5 h-5 text-blue-600 rounded" />
+                          <span className="font-bold text-gray-700">Include Common Corridor</span>
+                        </label>
+                        {apartmentData.corridor.hasCorridor && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <div className="flex justify-between items-end mb-2">
+                                 <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Total Length</label>
+                                 {isPremium ? (
+                                   <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                     <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                   </select>
+                                 ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                              </div>
+                              <input type="number" className={inputStyle} value={apartmentData.corridor.length} onChange={(e) => setApartmentData({...apartmentData, corridor: {...apartmentData.corridor, length: e.target.value}})} />
                             </div>
-                            <input type="number" className={inputStyle} value={apartmentData.lift.length} onChange={(e) => setApartmentData({...apartmentData, lift: {...apartmentData.lift, length: e.target.value}})} />
-                          </div>
-                          <div>
-                            <div className="flex justify-between items-end mb-2">
-                               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
-                               {isPremium ? (
-                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
-                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
-                                 </select>
-                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                            <div>
+                              <div className="flex justify-between items-end mb-2">
+                                 <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
+                                 {isPremium ? (
+                                   <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                     <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                   </select>
+                                 ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                              </div>
+                              <input type="number" className={inputStyle} value={apartmentData.corridor.width} onChange={(e) => setApartmentData({...apartmentData, corridor: {...apartmentData.corridor, width: e.target.value}})} />
                             </div>
-                            <input type="number" className={inputStyle} value={apartmentData.lift.width} onChange={(e) => setApartmentData({...apartmentData, lift: {...apartmentData.lift, width: e.target.value}})} />
                           </div>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
-                    <div className="bg-white p-4 rounded-xl border border-blue-100">
-                      <label className="flex items-center gap-3 cursor-pointer mb-3">
-                        <input type="checkbox" checked={apartmentData.corridor.hasCorridor} onChange={(e) => setApartmentData({...apartmentData, corridor: {...apartmentData.corridor, hasCorridor: e.target.checked}})} className="w-5 h-5 text-blue-600 rounded" />
-                        <span className="font-bold text-gray-700">Include Common Corridor</span>
-                      </label>
-                      {apartmentData.corridor.hasCorridor && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <div className="flex justify-between items-end mb-2">
-                               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Total Length</label>
-                               {isPremium ? (
-                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
-                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
-                                 </select>
-                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
-                            </div>
-                            <input type="number" className={inputStyle} value={apartmentData.corridor.length} onChange={(e) => setApartmentData({...apartmentData, corridor: {...apartmentData.corridor, length: e.target.value}})} />
-                          </div>
-                          <div>
-                            <div className="flex justify-between items-end mb-2">
-                               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
-                               {isPremium ? (
-                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
-                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
-                                 </select>
-                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
-                            </div>
-                            <input type="number" className={inputStyle} value={apartmentData.corridor.width} onChange={(e) => setApartmentData({...apartmentData, corridor: {...apartmentData.corridor, width: e.target.value}})} />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-8">
@@ -1904,7 +2016,7 @@ export default function Estimator() {
               </div>
 
               {(() => {
-                const isCommercialFloor = buildingType === 'apartment' && floorsData[activeFloor]?.isCommercial;
+                const isCommercialFloor = buildingType === 'commercial' || (buildingType === 'apartment' && floorsData[activeFloor]?.isCommercial);
 
                 const sections = isCommercialFloor ? [
                   { title: '1. Rolling Shutters (Shops)', data: openingsData[activeFloor]?.shutters || [], key: 'shutters', isArray: true },
@@ -2170,6 +2282,10 @@ export default function Estimator() {
                       { label: 'Passages', key: 'passage' }, { label: 'Porch / Parking', key: 'porch' },
                       { label: 'All Bedrooms', key: 'bedroom_0' }, { label: 'All Bathrooms', key: 'bathroom_0' }
                     ];
+                } else if (buildingType === 'commercial') {
+                    tileRooms.push({ label: 'Shop Chambers', key: 'commercialShops' });
+                    tileRooms.push({ label: 'Commercial Washrooms', key: 'commercialWashrooms' });
+                    if (commLayout === 'Clustered') tileRooms.push({ label: 'Main Corridor / Passage', key: 'passage' });
                 } else {
                     if (commercialGroundFloor) {
                         tileRooms.push({ label: 'Shop Chambers', key: 'commercialShops' });
