@@ -29,11 +29,12 @@ export default function Estimator() {
   const [boqScope, setBoqScope] = useState<'full' | 'civil_only'>('full');
   const [units, setUnits] = useState({
     footing: 'feet', columnHeight: 'feet', columnDim: 'inches', 
-    plinthBeam: 'inches', roofBeam: 'inches', layout: 'feet', openings: 'feet'
+    plinthBeam: 'inches', roofBeam: 'inches', layout: 'feet', openings: 'feet',
+    boundaryLayout: 'feet'
   });
 
   const [siteDetails, setSiteDetails] = useState({ roadFacing: 'East', stairType: 'Internal', bhkType: '2BHK' });
-  const [buildingType, setBuildingType] = useState<'residence' | 'apartment' | 'commercial'>('residence');
+  const [buildingType, setBuildingType] = useState<'residence' | 'apartment' | 'commercial' | 'boundary'>('residence');
   const [commercialGroundFloor, setCommercialGroundFloor] = useState(false);
   const [flatsCount, setFlatsCount] = useState("1");
   const [apartmentFlats, setApartmentFlats] = useState<any[]>([{ id: 1, type: '2BHK' }]);
@@ -43,6 +44,13 @@ export default function Estimator() {
   const [commBathType, setCommBathType] = useState('Shared Floor Bathrooms');
   const [commSharedBathCount, setCommSharedBathCount] = useState(2);
   const [commLayout, setCommLayout] = useState('Single Line');
+
+  // Boundary Wall Specific Configurations
+  const [boundaryData, setBoundaryData] = useState({
+    northLength: '', southLength: '', eastLength: '', westLength: '',
+    columnSpacing: '10', height: '6',
+    wallType: 'Single Brick (5 Inch)', finish: 'Plaster Both Sides', topping: 'None'
+  });
 
   const [apartmentData, setApartmentData] = useState({
     corridor: { hasCorridor: false, length: '', width: '' },
@@ -80,7 +88,8 @@ export default function Estimator() {
     tmt: { "8mm": '', "10mm": '', "12mm": '', "16mm": '', "20mm": '', "25mm": '' },
     cement: '', sand: '', gravel: '', boulder: '', bricks: '',
     windowMaterial: 'Aluminum Profile', windowRate: '',
-    mainDoorPrice: '', roomDoorPrice: '', bathroomDoorPrice: '', doorFramePrice: '' 
+    mainDoorPrice: '', roomDoorPrice: '', bathroomDoorPrice: '', doorFramePrice: '',
+    toppingRate: '' 
   });
 
   const [tiles, setTiles] = useState<Record<string, any>>({});
@@ -254,6 +263,8 @@ export default function Estimator() {
                if (data.inputs.commSharedBathCount) setCommSharedBathCount(data.inputs.commSharedBathCount);
                if (data.inputs.commLayout) setCommLayout(data.inputs.commLayout);
 
+               if (data.inputs.boundaryData) setBoundaryData(data.inputs.boundaryData);
+
                if (data.inputs.premiumData) setPremiumData(data.inputs.premiumData);
                if (data.inputs.hiddenSections) setHiddenSections(data.inputs.hiddenSections);
                if (data.inputs.customServices) setCustomServices(data.inputs.customServices);
@@ -306,6 +317,30 @@ export default function Estimator() {
 
   const handleSetupComplete = () => {
     if (!projectName.trim()) return setErrorMsg("Please provide a Project Name to begin.");
+
+    if (buildingType === 'boundary') {
+        const n = toFeetUI(boundaryData.northLength, units.boundaryLayout);
+        const s = toFeetUI(boundaryData.southLength, units.boundaryLayout);
+        const e = toFeetUI(boundaryData.eastLength, units.boundaryLayout);
+        const w = toFeetUI(boundaryData.westLength, units.boundaryLayout);
+        const totalPerimeter = n + s + e + w;
+        
+        if (totalPerimeter <= 0) {
+            return setErrorMsg("Please enter valid boundary lengths.");
+        }
+
+        const spacing = toFeetUI(boundaryData.columnSpacing, units.boundaryLayout);
+        const autoColCount = spacing > 0 ? Math.ceil(totalPerimeter / spacing) + 1 : 4; 
+
+        setStructure((prev: any) => ({
+            ...prev,
+            footing: { ...prev.footing, count: String(autoColCount) }
+        }));
+        
+        setErrorMsg(""); setCurrentStep(2); window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+    }
+
     if (!existingProjectId || floorsData.length !== totalFloorsCount) {
         const initialFloors = [];
         const initialOpenings = [];
@@ -527,6 +562,130 @@ export default function Estimator() {
     window.scrollTo(0,0);
   };
 
+  // 🟢 NEW: BOUNDARY VIRTUAL FLOOR TRICK ENGINE
+  const handleBoundaryGenerateBOQ = () => {
+    setErrorMsg("");
+    if (!Number(laborRates.mason)) return setErrorMsg("Please enter Mason Labor Rate.");
+
+    const n = toFeetUI(boundaryData.northLength, units.boundaryLayout);
+    const s = toFeetUI(boundaryData.southLength, units.boundaryLayout);
+    const e = toFeetUI(boundaryData.eastLength, units.boundaryLayout);
+    const w = toFeetUI(boundaryData.westLength, units.boundaryLayout);
+    const totalPerimeter = n + s + e + w;
+    const wallHeight = toFeetUI(boundaryData.height, units.boundaryLayout);
+
+    if (totalPerimeter <= 0) return setErrorMsg("Boundary perimeter cannot be zero.");
+
+    // TRICK: Create a single massive virtual room with 0 area but the exact correct perimeter
+    const virtualLength = totalPerimeter / 2;
+    
+    const virtualLayout = {
+        hall: { length: '0', breadth: '0' },
+        kitchenDining: { length: '0', breadth: '0' },
+        foyer: { length: String(virtualLength), breadth: '0' }, // Perimeter = 2*(L+W) = totalPerimeter
+        balcony: { length: '0', breadth: '0' },
+        passage: { length: '0', breadth: '0' },
+        porch: { length: '0', breadth: '0' },
+        bedrooms: [],
+        bathrooms: []
+    };
+
+    const virtualStructure = JSON.parse(JSON.stringify(structure));
+    // Trick the engine's wall height formula
+    virtualStructure.column.height = String(wallHeight);
+    virtualStructure.roofBeam = { depth: '0', width: '0', mainTmtSize: '', mainTmtCount: '', extraTmtSize: '', extraTmtCount: '', ringSize: '' };
+
+    const virtualOpenings = {
+        mainDoor: { count: '0', height: '0', width: '0' },
+        roomDoors: [], bathroomDoors: [], shutters: [], windows: [], ventilations: []
+    };
+
+    const boundaryFloor = {
+      floorName: "Site Boundary & External Works",
+      buildingType: 'residence', // Faked to trigger calculation
+      layout: virtualLayout,
+      structure: virtualStructure,
+      openings: virtualOpenings,
+      tiles: {},
+      paintData: { puttyRate: '0', brand: '', interiorRate: '0', exteriorRate: '0' },
+      laborRates: { mason: laborRates.mason, painter: '0', tiler: '0' },
+      hasStairs: false,
+      stairsDim: { length: '0', width: '0' },
+      apartmentData: { corridor: { hasCorridor: false }, lift: { hasLift: false } }
+    };
+
+    let masterSettings: any = {
+      ratios: { pcc: { c: 1, s: 3, g: 6 }, slab: { c: 1, s: 2, g: 4 }, footing: { c: 1, s: 2, g: 4 }, plinthBeam: { c: 1, s: 3, g: 4 }, beam: { c: 1, s: 3, g: 4 }, column: { c: 1, s: 3, g: 4 }, mortar: { c: 1, s: 4, g: 0 }, tileBedding: { c: 1, s: 4, g: 0 } },
+      tmtSpecs: { '8mm': { length: 38, weight: 4.74 }, '10mm': { length: 38, weight: 7.40 }, '12mm': { length: 38, weight: 10.66 }, '16mm': { length: 38, weight: 18.96 }, '20mm': { length: 38, weight: 29.60 }, '25mm': { length: 38, weight: 46.20 } },
+      dimensions: { slabThickness: 5, meshGap: 4, ringSpacing: 5 },
+      percentages: { wastage: { cement: 10, sand: 10, gravel: 10, tmt: 10, bricks: 10, tiles: 10 }, concreteAllowances: { footing: 5, column: 5, plinthBeam: 5, roofBeam: 5, slab: 25 }, shuttering: 5, electrical: 12, plumbing: 8, misc: 5, logistics: 10, contingency: 5 },
+      consumption: { puttyCoverage: 10, interiorPaintCoverage: 50, exteriorPaintCoverage: 50, bricksPerSqft: 5, plasterCftPerSqft: 0.10, brickJoiningCftPerSqft: 0.10, tileBeddingCftPerSqft: 0.20 }
+    };
+
+    try {
+      const localKey = auth.currentUser?.uid ? `OkiConstruct_settings_${auth.currentUser.uid}` : null;
+      const savedAdmin = localKey ? localStorage.getItem(localKey) : null;
+      const customData = userData?.customFormulas || (savedAdmin ? JSON.parse(savedAdmin) : null);
+      if (customData) {
+         masterSettings = { ...masterSettings, ...customData };
+      }
+    } catch (err) {}
+
+    try {
+      // Create a virtual floor array for the engine
+      const report = generateProjectBOQ([boundaryFloor], 1, "0", rates, masterSettings, units, 'civil_only', premiumData);
+      
+      // --- POST-PROCESSING FOR BOUNDARY ---
+      if (report && report.floorReports && report.floorReports[0]) {
+          report.floorReports[0].sections.forEach((section: any) => {
+              const isMasonry = section.title.toLowerCase().includes('masonry') || section.title.toLowerCase().includes('plaster') || section.title.toLowerCase().includes('brick');
+              
+              if (isMasonry) {
+                  // Handle Plaster Deductions
+                  if (boundaryData.finish === 'No Plaster') {
+                      section.items = section.items.filter((item: any) => !item.name.toLowerCase().includes('plaster') && !item.name.toLowerCase().includes('putty'));
+                  } else if (boundaryData.finish === 'Plaster Inside Only') {
+                      section.items.forEach((item: any) => {
+                          if (item.name.toLowerCase().includes('plaster') || item.name.toLowerCase().includes('putty')) {
+                              item.qty = Math.ceil(item.qty / 2);
+                          }
+                      });
+                  }
+
+                  // Handle Double Brick Wall
+                  if (boundaryData.wallType === 'Double Brick (9 Inch)') {
+                      section.items.forEach((item: any) => {
+                          if (item.name.toLowerCase().includes('brick')) {
+                              item.qty = Math.ceil(item.qty * 2);
+                          }
+                      });
+                  }
+                  
+                  // Recalculate section subtotal
+                  section.sectionTotal = section.items.reduce((sum: number, item: any) => sum + ((Number(item.qty) || 0) * (Number(item.rate) || 0)), 0);
+              }
+          });
+
+          // Inject Boundary Topping if selected
+          if (boundaryData.topping !== 'None' && rates.toppingRate) {
+              report.floorReports[0].sections.push({
+                  title: "External Works & Security",
+                  items: [{
+                      name: `Security Topping (${boundaryData.topping})`,
+                      unit: 'RFT',
+                      qty: Math.ceil(totalPerimeter),
+                      rate: Number(rates.toppingRate)
+                  }],
+                  sectionTotal: Math.ceil(totalPerimeter) * Number(rates.toppingRate)
+              });
+          }
+      }
+
+      setBoqReport(report);
+      setCurrentStep(9); 
+    } catch (err) { console.error("Calculation Error:", err); }
+  };
+
   const handleGenerateBOQ = () => {
     setErrorMsg("");
     if (!Number(laborRates.mason)) return setErrorMsg("Please enter Mason Labor Rate.");
@@ -651,6 +810,7 @@ export default function Estimator() {
           apartmentData, apartmentFlats, flatsCount, commercialGroundFloor, hasStairs, stairsDim, slabOverhang,
           premiumData, hiddenSections,
           commChambersCount, commBathType, commSharedBathCount, commLayout,
+          boundaryData: buildingType === 'boundary' ? boundaryData : null,
           customServices: isPremium ? customServices : [], 
           customTerms: isPremium ? customTerms : "", 
           letterheadImg: isPremium ? letterheadImg : null
@@ -701,13 +861,13 @@ export default function Estimator() {
             <div className="flex items-center justify-between text-[10px] md:text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
               <span className={currentStep >= 1 ? "text-[#22c55e]" : ""}>Setup</span>
               <span className={currentStep >= 2 ? "text-[#22c55e]" : ""}>Structure</span>
-              <span className={currentStep >= 3 ? "text-[#22c55e]" : ""}>Layout</span>
-              <span className={currentStep >= 4 ? "text-[#22c55e]" : ""}>Openings</span>
+              {buildingType !== 'boundary' && <span className={currentStep >= 3 ? "text-[#22c55e]" : ""}>Layout</span>}
+              {buildingType !== 'boundary' && <span className={currentStep >= 4 ? "text-[#22c55e]" : ""}>Openings</span>}
               <span className={currentStep >= 5 ? "text-[#22c55e]" : ""}>Pricing</span>
-              {boqScope === 'full' && <span className={currentStep >= 8 ? "text-[#22c55e]" : ""}>Review</span>}
+              {boqScope === 'full' && buildingType !== 'boundary' && <span className={currentStep >= 8 ? "text-[#22c55e]" : ""}>Review</span>}
             </div>
             <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
-              <div className="bg-[#22c55e] h-full transition-all duration-700 ease-out rounded-full" style={{ width: `${((currentStep) / (boqScope === 'civil_only' ? 5 : 8)) * 100}%` }}></div>
+              <div className="bg-[#22c55e] h-full transition-all duration-700 ease-out rounded-full" style={{ width: `${((currentStep) / (buildingType === 'boundary' ? 3 : boqScope === 'civil_only' ? 5 : 8)) * 100}%` }}></div>
             </div>
           </div>
         )}
@@ -743,20 +903,22 @@ export default function Estimator() {
 
                 <div className="p-6 border border-gray-100 bg-gray-50/50 rounded-2xl">
                   
-                  <div className="mb-8">
-                    <label className={labelStyle}>BOQ Scope</label>
-                    <div className="relative">
-                      <select className={selectStyle} value={boqScope} onChange={e => setBoqScope(e.target.value as any)}>
-                        <option value="full">Full Turnkey Project (Civil + Finishes)</option>
-                        <option value="civil_only">Civil Structure Only</option>
-                      </select>
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-sm">▼</div>
+                  {buildingType !== 'boundary' && (
+                    <div className="mb-8">
+                      <label className={labelStyle}>BOQ Scope</label>
+                      <div className="relative">
+                        <select className={selectStyle} value={boqScope} onChange={e => setBoqScope(e.target.value as any)}>
+                          <option value="full">Full Turnkey Project (Civil + Finishes)</option>
+                          <option value="civil_only">Civil Structure Only</option>
+                        </select>
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-sm">▼</div>
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   <label className="text-sm font-bold text-gray-900 mb-4 block">Building Typology</label>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-                    <button type="button" onClick={() => setBuildingType('residence')} className={`p-4 rounded-xl font-bold transition-all border ${buildingType === 'residence' ? 'bg-white border-[#22c55e] text-[#22c55e] shadow-sm ring-2 ring-[#22c55e]/20' : 'bg-transparent border-gray-200 text-gray-500 hover:bg-white'}`}>🏠 Private Residence</button>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                    <button type="button" onClick={() => setBuildingType('residence')} className={`p-4 rounded-xl font-bold transition-all border ${buildingType === 'residence' ? 'bg-white border-[#22c55e] text-[#22c55e] shadow-sm ring-2 ring-[#22c55e]/20' : 'bg-transparent border-gray-200 text-gray-500 hover:bg-white'}`}>🏠 Residence</button>
                     <button type="button" onClick={() => { 
                         if(!isPremium) return alert("Apartment multi-unit generation is a Premium feature. Please upgrade your account from the Dashboard to unlock this capability.");
                         setBuildingType('apartment'); 
@@ -773,39 +935,48 @@ export default function Estimator() {
                     >
                       🏬 Commercial {(!isPremium) && <span className="text-red-500 ml-1">🔒</span>}
                     </button>
+                    <button type="button" onClick={() => { 
+                        setBuildingType('boundary'); 
+                      }} 
+                      className={`p-4 rounded-xl font-bold transition-all border ${buildingType === 'boundary' ? 'bg-white border-[#22c55e] text-[#22c55e] shadow-sm ring-2 ring-[#22c55e]/20' : 'bg-transparent border-gray-200 text-gray-500 hover:bg-white'}`}
+                    >
+                      🧱 Boundary Wall
+                    </button>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className={labelStyle}>Total Floors</label>
-                      <div className="relative">
-                        <select className={selectStyle} value={totalFloorsCount === 1 ? 'G' : `G+${totalFloorsCount - 1}`} onChange={(e) => {
-                           if (!isPremium && e.target.value !== 'G') {
-                             alert("Multi-Story calculation is a Premium feature. Please upgrade your account from the Dashboard to process multi-level buildings.");
-                             return;
-                           }
-                           setTotalFloorsCount(e.target.value === 'G' ? 1 : parseInt(e.target.value.replace('G+', '')) + 1);
-                        }}>
-                          <option value="G">Ground Floor Only</option>
-                          {Array.from({ length: 9 }, (_, i) => (
-                             <option key={i + 1} value={`G+${i + 1}`}>G + {i + 1} Floor {(!isPremium) && '🔒'}</option>
-                          ))}
-                        </select>
-                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-sm">▼</div>
-                      </div>
-                    </div>
-                    {buildingType === 'residence' && (
+                  {buildingType !== 'boundary' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
-                        <label className={labelStyle}>Requirement</label>
+                        <label className={labelStyle}>Total Floors</label>
                         <div className="relative">
-                          <select className={selectStyle} value={siteDetails.bhkType} onChange={e => setSiteDetails({...siteDetails, bhkType: e.target.value})}>
-                            <option value="1BHK">1 BHK</option><option value="2BHK">2 BHK</option><option value="3BHK">3 BHK</option><option value="4BHK">4 BHK</option>
+                          <select className={selectStyle} value={totalFloorsCount === 1 ? 'G' : `G+${totalFloorsCount - 1}`} onChange={(e) => {
+                             if (!isPremium && e.target.value !== 'G') {
+                               alert("Multi-Story calculation is a Premium feature. Please upgrade your account from the Dashboard to process multi-level buildings.");
+                               return;
+                             }
+                             setTotalFloorsCount(e.target.value === 'G' ? 1 : parseInt(e.target.value.replace('G+', '')) + 1);
+                          }}>
+                            <option value="G">Ground Floor Only</option>
+                            {Array.from({ length: 9 }, (_, i) => (
+                               <option key={i + 1} value={`G+${i + 1}`}>G + {i + 1} Floor {(!isPremium) && '🔒'}</option>
+                            ))}
                           </select>
                           <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-sm">▼</div>
                         </div>
                       </div>
-                    )}
-                  </div>
+                      {buildingType === 'residence' && (
+                        <div>
+                          <label className={labelStyle}>Requirement</label>
+                          <div className="relative">
+                            <select className={selectStyle} value={siteDetails.bhkType} onChange={e => setSiteDetails({...siteDetails, bhkType: e.target.value})}>
+                              <option value="1BHK">1 BHK</option><option value="2BHK">2 BHK</option><option value="3BHK">3 BHK</option><option value="4BHK">4 BHK</option>
+                            </select>
+                            <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-sm">▼</div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   
                   {/* APARTMENT SETTINGS */}
                   {buildingType === 'apartment' && (
@@ -879,19 +1050,86 @@ export default function Estimator() {
                     </div>
                   )}
 
+                  {/* BOUNDARY WALL SETTINGS */}
+                  {buildingType === 'boundary' && (
+                    <div className="mt-6 p-5 bg-stone-50 border border-stone-200 rounded-2xl">
+                      <div className="flex justify-between items-center mb-4">
+                        <label className="text-sm font-bold text-stone-900 block">Boundary Wall Specifications</label>
+                        {isPremium && (
+                          <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.boundaryLayout} onChange={(e) => setUnits({...units, boundaryLayout: e.target.value})}>
+                            <option value="feet">Lengths in Feet (ft)</option><option value="meters">Lengths in Meters (m)</option>
+                          </select>
+                        )}
+                      </div>
+                      
+                      <div className="bg-white p-5 rounded-xl border border-stone-200 space-y-6">
+                        <div>
+                          <label className={labelStyle}>Perimeter Dimensions ({getLabel(units.boundaryLayout)})</label>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                             <div><input type="number" placeholder="North Length" className={inputStyle} value={boundaryData.northLength} onChange={e => setBoundaryData({...boundaryData, northLength: e.target.value})} /><span className="text-[10px] font-bold text-gray-400 mt-1 block text-center">NORTH</span></div>
+                             <div><input type="number" placeholder="South Length" className={inputStyle} value={boundaryData.southLength} onChange={e => setBoundaryData({...boundaryData, southLength: e.target.value})} /><span className="text-[10px] font-bold text-gray-400 mt-1 block text-center">SOUTH</span></div>
+                             <div><input type="number" placeholder="East Length" className={inputStyle} value={boundaryData.eastLength} onChange={e => setBoundaryData({...boundaryData, eastLength: e.target.value})} /><span className="text-[10px] font-bold text-gray-400 mt-1 block text-center">EAST</span></div>
+                             <div><input type="number" placeholder="West Length" className={inputStyle} value={boundaryData.westLength} onChange={e => setBoundaryData({...boundaryData, westLength: e.target.value})} /><span className="text-[10px] font-bold text-gray-400 mt-1 block text-center">WEST</span></div>
+                          </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-t border-gray-100 pt-4">
+                          <div>
+                            <label className={labelStyle}>Wall Height (Above Ground)</label>
+                            <input type="number" className={inputStyle} placeholder="e.g. 6" value={boundaryData.height} onChange={e => setBoundaryData({...boundaryData, height: e.target.value})} />
+                          </div>
+                          <div>
+                            <label className={labelStyle}>Column Spacing Dist.</label>
+                            <input type="number" className={inputStyle} placeholder="e.g. 10" value={boundaryData.columnSpacing} onChange={e => setBoundaryData({...boundaryData, columnSpacing: e.target.value})} />
+                          </div>
+                          <div>
+                            <label className={labelStyle}>Wall Type</label>
+                            <select className={selectStyle} value={boundaryData.wallType} onChange={e => setBoundaryData({...boundaryData, wallType: e.target.value})}>
+                              <option value="Single Brick (5 Inch)">Single Brick (5 Inch)</option>
+                              <option value="Double Brick (9 Inch)">Double Brick (9 Inch)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-gray-100 pt-4">
+                          <div>
+                            <label className={labelStyle}>Plaster Finish</label>
+                            <select className={selectStyle} value={boundaryData.finish} onChange={e => setBoundaryData({...boundaryData, finish: e.target.value})}>
+                              <option value="Plaster Both Sides">Plaster Both Sides (In/Out)</option>
+                              <option value="Plaster Inside Only">Plaster Inside Only</option>
+                              <option value="No Plaster">No Plaster (Exposed Brick)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className={labelStyle}>Security Topping Add-on</label>
+                            <select className={selectStyle} value={boundaryData.topping} onChange={e => setBoundaryData({...boundaryData, topping: e.target.value})}>
+                              <option value="None">None</option>
+                              <option value="Barbed Wire (3 Lines)">Barbed Wire (3 Lines)</option>
+                              <option value="Concertina Coil">Concertina Coil / Razor Wire</option>
+                              <option value="Iron Spikes">Iron Spikes / Railing</option>
+                            </select>
+                          </div>
+                        </div>
+
+                      </div>
+                    </div>
+                  )}
+
                 </div>
 
-                <div className="p-5 border border-blue-100 bg-blue-50/50 rounded-2xl">
-                  <label className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3 block">Staircase Access</label>
-                  <div className="flex flex-col md:flex-row gap-4">
-                    <button type="button" onClick={() => { setSiteDetails({...siteDetails, stairType: 'None'}); setHasStairs(false); }} className={`flex-1 p-3 rounded-xl font-semibold transition-all border ${siteDetails.stairType === 'None' ? 'bg-white border-blue-500 text-blue-600 shadow-sm ring-2 ring-blue-500/20' : 'bg-transparent border-blue-200 text-gray-600 hover:bg-white'}`}>No Stairs</button>
-                    <button type="button" onClick={() => { setSiteDetails({...siteDetails, stairType: 'Internal'}); setHasStairs(true); }} className={`flex-1 p-3 rounded-xl font-semibold transition-all border ${siteDetails.stairType === 'Internal' ? 'bg-white border-blue-500 text-blue-600 shadow-sm ring-2 ring-blue-500/20' : 'bg-transparent border-blue-200 text-gray-600 hover:bg-white'}`}>Internal Stairs</button>
-                    <button type="button" onClick={() => { setSiteDetails({...siteDetails, stairType: 'External'}); setHasStairs(true); }} className={`flex-1 p-3 rounded-xl font-semibold transition-all border ${siteDetails.stairType === 'External' ? 'bg-white border-blue-500 text-blue-600 shadow-sm ring-2 ring-blue-500/20' : 'bg-transparent border-blue-200 text-gray-600 hover:bg-white'}`}>External Stairs</button>
+                {buildingType !== 'boundary' && (
+                  <div className="p-5 border border-blue-100 bg-blue-50/50 rounded-2xl">
+                    <label className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3 block">Staircase Access</label>
+                    <div className="flex flex-col md:flex-row gap-4">
+                      <button type="button" onClick={() => { setSiteDetails({...siteDetails, stairType: 'None'}); setHasStairs(false); }} className={`flex-1 p-3 rounded-xl font-semibold transition-all border ${siteDetails.stairType === 'None' ? 'bg-white border-blue-500 text-blue-600 shadow-sm ring-2 ring-blue-500/20' : 'bg-transparent border-blue-200 text-gray-600 hover:bg-white'}`}>No Stairs</button>
+                      <button type="button" onClick={() => { setSiteDetails({...siteDetails, stairType: 'Internal'}); setHasStairs(true); }} className={`flex-1 p-3 rounded-xl font-semibold transition-all border ${siteDetails.stairType === 'Internal' ? 'bg-white border-blue-500 text-blue-600 shadow-sm ring-2 ring-blue-500/20' : 'bg-transparent border-blue-200 text-gray-600 hover:bg-white'}`}>Internal Stairs</button>
+                      <button type="button" onClick={() => { setSiteDetails({...siteDetails, stairType: 'External'}); setHasStairs(true); }} className={`flex-1 p-3 rounded-xl font-semibold transition-all border ${siteDetails.stairType === 'External' ? 'bg-white border-blue-500 text-blue-600 shadow-sm ring-2 ring-blue-500/20' : 'bg-transparent border-blue-200 text-gray-600 hover:bg-white'}`}>External Stairs</button>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
-              {isPremium && (
+              {isPremium && buildingType !== 'boundary' && (
                 <div className="mt-6 p-5 border border-[#22c55e]/30 bg-green-50/30 rounded-2xl">
                   <label className="flex items-center gap-3 cursor-pointer mb-4">
                     <input type="checkbox" checked={premiumData.isBasement} onChange={(e) => setPremiumData({...premiumData, isBasement: e.target.checked})} className="w-5 h-5 text-[#22c55e] rounded" />
@@ -939,6 +1177,7 @@ export default function Estimator() {
                   <span className="text-3xl">🏛️</span> Structural Elements
                 </h1>
                 {isFromCAD && <p className="text-[#22c55e] font-bold mt-2 text-sm uppercase tracking-wide">Layout Dimensions Auto-Synced from CAD!</p>}
+                {buildingType === 'boundary' && <p className="text-[#22c55e] font-bold mt-2 text-sm uppercase tracking-wide">Boundary Wall Foundation Specs</p>}
               </div>
 
               <div className="border border-gray-200 p-6 rounded-3xl bg-white shadow-sm">
@@ -950,6 +1189,7 @@ export default function Estimator() {
                 <div className="space-y-5">
                   <div>
                     <label className={labelStyle}>Number of footings</label>
+                    {buildingType === 'boundary' && <span className="text-xs text-[#22c55e] mb-2 block font-medium">Auto-calculated based on perimeter & column spacing. You can modify it.</span>}
                     <input type="number" inputMode="decimal" min="0" placeholder="e.g., 12" className={`${inputStyle} ring-2 ring-blue-500/20`} value={structure.footing.count} onChange={(e) => setStructure({ ...structure, footing: { ...structure.footing, count: e.target.value } })} />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -1022,17 +1262,19 @@ export default function Estimator() {
                 </div>
 
                 <div className="space-y-5">
-                  <div>
-                    <div className="flex justify-between items-end mb-2">
-                      <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Height</label>
-                      {isPremium ? (
-                        <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.columnHeight} onChange={(e) => setUnits({...units, columnHeight: e.target.value})}>
-                          <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
-                        </select>
-                      ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                  {buildingType !== 'boundary' && (
+                    <div>
+                      <div className="flex justify-between items-end mb-2">
+                        <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Height</label>
+                        {isPremium ? (
+                          <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.columnHeight} onChange={(e) => setUnits({...units, columnHeight: e.target.value})}>
+                            <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                          </select>
+                        ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                      </div>
+                      <input type="number" inputMode="decimal" min="0" placeholder="Height" className={inputStyle} value={structure.column.height} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, height: e.target.value } })} />
                     </div>
-                    <input type="number" inputMode="decimal" min="0" placeholder="Height" className={inputStyle} value={structure.column.height} onChange={(e) => setStructure({ ...structure, column: { ...structure.column, height: e.target.value } })} />
-                  </div>
+                  )}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <div className="flex justify-between items-end mb-2">
@@ -1138,51 +1380,53 @@ export default function Estimator() {
                     )}
                   </div>
 
-                  {/* Roof Beam */}
-                  <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                    <div className="flex justify-between items-center mb-3">
-                       <span className="font-bold text-gray-700 block">Roof Beam</span>
+                  {/* Roof Beam - Hidden for Boundary Wall */}
+                  {buildingType !== 'boundary' && (
+                    <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                      <div className="flex justify-between items-center mb-3">
+                         <span className="font-bold text-gray-700 block">Roof Beam</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                          <div className="flex justify-between items-end mb-2">
+                             <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Depth</label>
+                             {isPremium ? (
+                               <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.roofBeam} onChange={(e) => setUnits({...units, roofBeam: e.target.value})}>
+                                 <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                               </select>
+                             ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(IN)</span>}
+                          </div>
+                          <input type="number" inputMode="decimal" min="0" placeholder="Depth" className={inputStyle} value={structure.roofBeam.depth} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, depth: e.target.value } })} />
+                        </div>
+                        <div>
+                          <div className="flex justify-between items-end mb-2">
+                             <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
+                             {isPremium ? (
+                               <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.roofBeam} onChange={(e) => setUnits({...units, roofBeam: e.target.value})}>
+                                 <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                               </select>
+                             ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(IN)</span>}
+                          </div>
+                          <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.roofBeam.width} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, width: e.target.value } })} />
+                        </div>
+                      </div>
+                      {isPremium && (
+                        <div className="p-3 border border-blue-100 bg-blue-50/50 rounded-xl mt-4">
+                          <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block mb-2">Override Roof TMT <span className="text-blue-500">★</span></span>
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                              <div><label className="text-[9px] font-bold text-gray-500 uppercase">Main Size</label><select className={`${selectStyle} py-2 text-sm px-2`} value={structure.roofBeam.mainTmtSize || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, mainTmtSize: e.target.value } })}><option value="">Auto</option><option value="12mm">12mm</option><option value="16mm">16mm</option><option value="20mm">20mm</option><option value="25mm">25mm</option></select></div>
+                              <div><label className="text-[9px] font-bold text-gray-500 uppercase">Main Qty</label><input type="number" placeholder="Count" className={`${inputStyle} py-2 text-sm px-2`} value={structure.roofBeam.mainTmtCount || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, mainTmtCount: e.target.value } })} /></div>
+                              <div><label className="text-[9px] font-bold text-gray-500 uppercase">Extra Size</label><select className={`${selectStyle} py-2 text-sm px-2`} value={structure.roofBeam.extraTmtSize || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, extraTmtSize: e.target.value } })}><option value="">None</option><option value="12mm">12mm</option><option value="16mm">16mm</option><option value="20mm">20mm</option><option value="25mm">25mm</option></select></div>
+                              <div><label className="text-[9px] font-bold text-gray-500 uppercase">Extra Qty</label><input type="number" placeholder="Count" className={`${inputStyle} py-2 text-sm px-2`} value={structure.roofBeam.extraTmtCount || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, extraTmtCount: e.target.value } })} /></div>
+                              <div className="col-span-2 md:col-span-1"><label className="text-[9px] font-bold text-gray-500 uppercase">Rings</label><select className={`${selectStyle} py-2 text-sm px-2`} value={structure.roofBeam.ringSize || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, ringSize: e.target.value } })}><option value="">Auto</option><option value="8mm">8mm</option><option value="10mm">10mm</option><option value="12mm">12mm</option></select></div>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <div className="grid grid-cols-2 gap-4 mb-4">
-                      <div>
-                        <div className="flex justify-between items-end mb-2">
-                           <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Depth</label>
-                           {isPremium ? (
-                             <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.roofBeam} onChange={(e) => setUnits({...units, roofBeam: e.target.value})}>
-                               <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
-                             </select>
-                           ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(IN)</span>}
-                        </div>
-                        <input type="number" inputMode="decimal" min="0" placeholder="Depth" className={inputStyle} value={structure.roofBeam.depth} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, depth: e.target.value } })} />
-                      </div>
-                      <div>
-                        <div className="flex justify-between items-end mb-2">
-                           <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
-                           {isPremium ? (
-                             <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.roofBeam} onChange={(e) => setUnits({...units, roofBeam: e.target.value})}>
-                               <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
-                             </select>
-                           ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(IN)</span>}
-                        </div>
-                        <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.roofBeam.width} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, width: e.target.value } })} />
-                      </div>
-                    </div>
-                    {isPremium && (
-                      <div className="p-3 border border-blue-100 bg-blue-50/50 rounded-xl mt-4">
-                        <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block mb-2">Override Roof TMT <span className="text-blue-500">★</span></span>
-                        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                            <div><label className="text-[9px] font-bold text-gray-500 uppercase">Main Size</label><select className={`${selectStyle} py-2 text-sm px-2`} value={structure.roofBeam.mainTmtSize || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, mainTmtSize: e.target.value } })}><option value="">Auto</option><option value="12mm">12mm</option><option value="16mm">16mm</option><option value="20mm">20mm</option><option value="25mm">25mm</option></select></div>
-                            <div><label className="text-[9px] font-bold text-gray-500 uppercase">Main Qty</label><input type="number" placeholder="Count" className={`${inputStyle} py-2 text-sm px-2`} value={structure.roofBeam.mainTmtCount || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, mainTmtCount: e.target.value } })} /></div>
-                            <div><label className="text-[9px] font-bold text-gray-500 uppercase">Extra Size</label><select className={`${selectStyle} py-2 text-sm px-2`} value={structure.roofBeam.extraTmtSize || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, extraTmtSize: e.target.value } })}><option value="">None</option><option value="12mm">12mm</option><option value="16mm">16mm</option><option value="20mm">20mm</option><option value="25mm">25mm</option></select></div>
-                            <div><label className="text-[9px] font-bold text-gray-500 uppercase">Extra Qty</label><input type="number" placeholder="Count" className={`${inputStyle} py-2 text-sm px-2`} value={structure.roofBeam.extraTmtCount || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, extraTmtCount: e.target.value } })} /></div>
-                            <div className="col-span-2 md:col-span-1"><label className="text-[9px] font-bold text-gray-500 uppercase">Rings</label><select className={`${selectStyle} py-2 text-sm px-2`} value={structure.roofBeam.ringSize || ''} onChange={(e) => setStructure({ ...structure, roofBeam: { ...structure.roofBeam, ringSize: e.target.value } })}><option value="">Auto</option><option value="8mm">8mm</option><option value="10mm">10mm</option><option value="12mm">12mm</option></select></div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  )}
 
                   {/* PREMIUM FEATURE: SILL & LINTEL BEAMS */}
-                  {isPremium && (
+                  {isPremium && buildingType !== 'boundary' && (
                     <div className="bg-green-50/30 p-4 rounded-2xl border border-[#22c55e]/30 space-y-4">
                        <span className="font-bold text-gray-700 block mb-2">Extra Beams (Premium) <span className="text-[#22c55e]">★</span></span>
                        
@@ -1217,7 +1461,7 @@ export default function Estimator() {
               </div>
 
               {/* PREMIUM FEATURE: BASE FLOORING & SLAB */}
-              {isPremium && (
+              {isPremium && buildingType !== 'boundary' && (
                 <div className="border border-gray-200 p-6 rounded-3xl bg-white shadow-sm mt-8">
                   <h2 className="font-bold text-lg text-gray-900 mb-6 flex items-center gap-2">
                     <span className="bg-green-100 text-[#22c55e] w-8 h-8 rounded-full flex items-center justify-center text-sm">4</span> Flooring & Roof Slab <span className="text-[#22c55e] ml-2">★</span>
@@ -1268,10 +1512,17 @@ export default function Estimator() {
               <div className="flex gap-4 pt-4">
                 <button onClick={() => validateAndProceed(1)} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
                 <button 
-                  onClick={() => validateAndProceed(3)} 
+                  onClick={() => {
+                     setErrorMsg("");
+                     if (buildingType === 'boundary') {
+                         setCurrentStep(5); // Skip Layout and Openings for boundary wall
+                     } else {
+                         validateAndProceed(3);
+                     }
+                  }} 
                   className="w-2/3 bg-[#22c55e] text-white font-bold text-lg p-4 rounded-xl hover:bg-[#1ea950] transition-colors shadow-md flex items-center justify-center gap-2"
                 >
-                  Continue to Layout ➔
+                  Continue to {buildingType === 'boundary' ? 'Pricing' : 'Layout'} ➔
                 </button>
               </div>
             </div>
@@ -1932,41 +2183,6 @@ export default function Estimator() {
                         </div>
                     ))}
                   </div>
-
-                  {hasStairs && (
-                    <div className="mt-8 pt-6 border-t border-gray-200">
-                      <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider mb-4">Vertical Circulation</h3>
-                      <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
-                        <label className={labelStyle}>Staircase Area</label>
-                        <div className="flex gap-4 items-center">
-                          <div className="w-full">
-                            <div className="flex justify-between items-end mb-1">
-                               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Length</label>
-                               {isPremium ? (
-                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
-                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
-                                 </select>
-                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
-                            </div>
-                            <input type="number" placeholder="Length" className={inputStyle} value={stairsDim.length} onChange={(e) => setStairsDim({ ...stairsDim, length: e.target.value })} />
-                          </div>
-                          <span className="font-bold text-gray-300 mt-4">×</span>
-                          <div className="w-full">
-                            <div className="flex justify-between items-end mb-1">
-                               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
-                               {isPremium ? (
-                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
-                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
-                                 </select>
-                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
-                            </div>
-                            <input type="number" placeholder="Width" className={inputStyle} value={stairsDim.width} onChange={(e) => setStairsDim({ ...stairsDim, width: e.target.value })} />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
                 </div>
               )}
 
@@ -2163,7 +2379,6 @@ export default function Estimator() {
                     { label: 'Cement Rate (Bag)', key: 'cement' },
                     { label: 'Sand Rate (CFT)', key: 'sand' },
                     { label: 'Gravel Rate (CFT)', key: 'gravel' },
-                    { label: 'Boulder Rate (CFT)', key: 'boulder' },
                     { label: 'Bricks Rate (Piece)', key: 'bricks' }
                   ].map(mat => (
                     <div key={mat.key} className={mat.key === 'bricks' ? "md:col-span-2 pt-4 border-t border-gray-100" : ""}>
@@ -2174,11 +2389,22 @@ export default function Estimator() {
                       </div>
                     </div>
                   ))}
+
+                  {/* Add Topping Rate for Boundary Wall if selected */}
+                  {buildingType === 'boundary' && boundaryData.topping !== 'None' && (
+                    <div className="md:col-span-2 pt-4 border-t border-gray-100">
+                      <label className={labelStyle}>{boundaryData.topping} Rate (Per RFT)</label>
+                      <div className="relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#22c55e] font-bold">₹</span>
+                        <input type="number" inputMode="decimal" min="0" className={`${inputStyle} pl-8 border-[#22c55e]/30`} value={rates.toppingRate} onChange={(e) => setRates({ ...rates, toppingRate: e.target.value })} />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {/* Only show Doors/Windows pricing if it's a Full Build */}
-              {boqScope === 'full' && (
+              {/* Only show Doors/Windows pricing if it's a Full Build and not a Boundary Wall */}
+              {boqScope === 'full' && buildingType !== 'boundary' && (
                 <div className="border border-gray-100 p-6 rounded-3xl bg-white shadow-sm">
                   <h2 className="font-bold text-lg text-gray-900 mb-6">3. Windows & Doors</h2>
                   <div className="space-y-6">
@@ -2237,8 +2463,22 @@ export default function Estimator() {
                 </div>
               )}
 
+              {/* BOUNDARY WALL LABOR */}
+              {buildingType === 'boundary' && (
+                <div className="border border-gray-100 p-6 rounded-3xl bg-white shadow-sm mt-6">
+                  <h2 className="font-bold text-lg text-gray-900 mb-6">3. Labor Rate</h2>
+                  <div>
+                    <label className={labelStyle}>Mason Labor Rate (Per RFT of Wall)</label>
+                    <div className="relative">
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">₹</span>
+                      <input type="number" inputMode="decimal" min="0" className={`${inputStyle} pl-8 border-[#22c55e]/30`} value={laborRates.mason} onChange={(e) => setLaborRates({ ...laborRates, mason: e.target.value })} />
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* CIVIL ONLY: Show Mason Labor here and skip the rest */}
-              {boqScope === 'civil_only' && (
+              {boqScope === 'civil_only' && buildingType !== 'boundary' && (
                 <div className="border border-gray-100 p-6 rounded-3xl bg-white shadow-sm mt-6">
                   <h2 className="font-bold text-lg text-gray-900 mb-6">3. Labor Rate</h2>
                   <div>
@@ -2253,9 +2493,9 @@ export default function Estimator() {
 
               <ErrorDisplay />
               <div className="flex gap-4 pt-4">
-                <button onClick={() => { setErrorMsg(""); setCurrentStep(4); window.scrollTo(0,0); }} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
-                {boqScope === 'civil_only' ? (
-                   <button onClick={handleGenerateBOQ} className="w-2/3 bg-gray-900 text-white font-bold text-lg p-4 rounded-xl hover:bg-[#22c55e] transition-colors shadow-md">Generate Civil BOQ ✨</button>
+                <button onClick={() => { setErrorMsg(""); setCurrentStep(buildingType === 'boundary' ? 2 : 4); window.scrollTo(0,0); }} className="w-1/3 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Back</button>
+                {boqScope === 'civil_only' || buildingType === 'boundary' ? (
+                   <button onClick={buildingType === 'boundary' ? handleBoundaryGenerateBOQ : handleGenerateBOQ} className="w-2/3 bg-gray-900 text-white font-bold text-lg p-4 rounded-xl hover:bg-[#22c55e] transition-colors shadow-md">Generate {buildingType === 'boundary' ? 'Boundary' : 'Civil'} BOQ ✨</button>
                 ) : (
                    <button onClick={() => validateAndProceed(6)} className="w-2/3 bg-[#22c55e] text-white font-bold text-lg p-4 rounded-xl hover:bg-[#1ea950] transition-colors shadow-md">Continue to Finishes</button>
                 )}
@@ -2263,8 +2503,8 @@ export default function Estimator() {
             </div>
           )}
 
-          {/* --- STEP 6: TILES (Hidden if Civil Only) --- */}
-          {currentStep === 6 && boqScope === 'full' && (
+          {/* --- STEP 6: TILES (Hidden if Civil Only or Boundary) --- */}
+          {currentStep === 6 && boqScope === 'full' && buildingType !== 'boundary' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-4xl mx-auto">
               
               <div className="mb-8 border-b border-gray-100 pb-6 text-center">
@@ -2346,8 +2586,8 @@ export default function Estimator() {
             </div>
           )}
 
-          {/* --- STEP 7: PAINT (Hidden if Civil Only) --- */}
-          {currentStep === 7 && boqScope === 'full' && (
+          {/* --- STEP 7: PAINT (Hidden if Civil Only or Boundary) --- */}
+          {currentStep === 7 && boqScope === 'full' && buildingType !== 'boundary' && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-2xl mx-auto">
               
               <div className="mb-8 border-b border-gray-100 pb-6 text-center">
@@ -2395,8 +2635,8 @@ export default function Estimator() {
             </div>
           )}
 
-          {/* --- STEP 8: LABOR (Hidden if Civil Only) --- */}
-          {currentStep === 8 && boqScope === 'full' && (
+          {/* --- STEP 8: LABOR (Hidden if Civil Only or Boundary) --- */}
+          {currentStep === 8 && boqScope === 'full' && buildingType !== 'boundary' && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-4xl mx-auto">
               
               <div className="mb-8 border-b border-gray-100 pb-6 text-center">
@@ -2462,7 +2702,9 @@ export default function Estimator() {
                     </div>
                     <div className="mt-4 md:mt-0 text-left md:text-right">
                       <h2 className="text-xl font-bold text-gray-900">{projectName}</h2>
-                      <p className="text-xs font-bold text-[#22c55e] uppercase tracking-widest mt-1 mb-1">{boqScope === 'civil_only' ? 'Civil Structure Only' : 'Full Turnkey Build'}</p>
+                      <p className="text-xs font-bold text-[#22c55e] uppercase tracking-widest mt-1 mb-1">
+                        {buildingType === 'boundary' ? 'Boundary Wall Build' : boqScope === 'civil_only' ? 'Civil Structure Only' : 'Full Turnkey Build'}
+                      </p>
                       <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mt-1">Date: {new Date().toLocaleDateString()}</p>
                     </div>
                     
@@ -2477,7 +2719,7 @@ export default function Estimator() {
                 )}
               </div>
 
-              {boqReport?.metrics && (
+              {boqReport?.metrics && buildingType !== 'boundary' && (
                 <div className="mb-12 print:break-inside-avoid">
                   <h3 className="text-lg font-bold text-gray-900 mb-4 border-l-4 border-[#22c55e] pl-3">Project Measurement Summary</h3>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -2665,7 +2907,7 @@ export default function Estimator() {
               <div className="flex flex-col md:flex-row gap-4 print:hidden mt-10">
                 {!isSaved ? (
                   <>
-                    <button onClick={() => setCurrentStep(boqScope === 'civil_only' ? 5 : 8)} className="flex-1 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Edit Data</button>
+                    <button onClick={() => setCurrentStep(buildingType === 'boundary' ? 5 : boqScope === 'civil_only' ? 5 : 8)} className="flex-1 border border-gray-200 text-gray-600 p-4 font-semibold rounded-xl hover:bg-gray-50 transition-colors">Edit Data</button>
                     <button onClick={() => window.print()} className="flex-[2] bg-white border border-gray-200 text-gray-900 p-4 font-bold rounded-xl hover:bg-gray-50 transition-colors shadow-sm flex items-center justify-center gap-2">Print / PDF</button>
                     <button onClick={saveEstimateToDatabase} disabled={isSaving} className="flex-[2] bg-[#22c55e] text-white p-4 font-bold rounded-xl hover:bg-[#1ea950] transition-colors shadow-md disabled:opacity-50">
                       {isSaving ? "Syncing..." : "Save to Workspace ☁️"}
