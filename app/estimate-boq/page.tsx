@@ -111,7 +111,7 @@ export default function Estimator() {
     const floorsTotal = boqReport?.floorReports?.reduce((sum: number, floor: any, fIdx: number) => {
       return sum + getVisibleFloorTotal(floor, fIdx);
     }, 0) || 0;
-    return floorsTotal + customServicesTotal;
+    return floorsTotal + (isPremium ? customServicesTotal : 0);
   };
 
   const isPremium = userData?.tier === 'premium' || userData?.planStatus === 'premium' || auth?.currentUser?.email?.toLowerCase() === 'okiconstruct2026@gmail.com';
@@ -594,7 +594,9 @@ export default function Estimator() {
           units, boqScope, structure, floorsData, openingsData, rates, tiles, paintData, laborRates,
           apartmentData, apartmentFlats, flatsCount, commercialGroundFloor, hasStairs, stairsDim, slabOverhang,
           premiumData, hiddenSections,
-          customServices, customTerms, letterheadImg
+          customServices: isPremium ? customServices : [], 
+          customTerms: isPremium ? customTerms : "", 
+          letterheadImg: isPremium ? letterheadImg : null
         }
       };
 
@@ -2126,7 +2128,7 @@ export default function Estimator() {
               
               {/* 🟢 DYNAMIC LETTERHEAD HEADER */}
               <div className="flex flex-col mb-12 border-b border-gray-100 pb-8 print:border-b-2 print:border-gray-300 print:pb-4 relative group">
-                {letterheadImg ? (
+                {letterheadImg && isPremium ? (
                    <div className="w-full relative">
                      {/* eslint-disable-next-line @next/next/no-img-element */}
                      <img src={letterheadImg} alt="Company Letterhead" className="w-full max-h-48 object-contain print:object-cover" />
@@ -2330,13 +2332,20 @@ export default function Estimator() {
               {isPremium && (
                 <div className="mt-8 print:mt-6 print:break-inside-avoid">
                   <label className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 block print:hidden">Terms, Guidelines & Instructions</label>
+                  
+                  {/* Acts as an editor on the screen */}
                   <textarea 
-                     className="w-full bg-gray-50 p-4 rounded-xl border border-gray-200 outline-none text-sm text-gray-700 font-medium print:bg-transparent print:border-none print:p-0 print:resize-none"
+                     className="w-full bg-gray-50 p-4 rounded-xl border border-gray-200 outline-none text-sm text-gray-700 font-medium print:hidden"
                      rows={5}
                      value={customTerms}
                      onChange={(e) => setCustomTerms(e.target.value)}
                      placeholder="Enter terms, guidelines, or payment instructions here..."
                   ></textarea>
+
+                  {/* 🟢 THE FIX: Renders as pure expanding text when printing, eliminating scrollbars! */}
+                  <div className="hidden print:block w-full text-sm text-black whitespace-pre-wrap font-medium leading-relaxed">
+                    {customTerms}
+                  </div>
                 </div>
               )}
 
