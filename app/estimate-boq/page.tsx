@@ -56,6 +56,11 @@ export default function Estimator() {
   const [isSaved, setIsSaved] = useState(false);
   const router = useRouter();
 
+  // --- NEW FEATURES STATES ---
+  const [letterheadImg, setLetterheadImg] = useState<string | null>(null);
+  const [customTerms, setCustomTerms] = useState<string>("TERMS & CONDITIONS:\n1. Payment is due within 15 days of invoice generation.\n2. Estimate is valid for 30 days.\n3. Material rates are subject to market fluctuations.");
+  const [customServices, setCustomServices] = useState<any[]>([]);
+
   const [structure, setStructure] = useState<any>({
     footing: { count: '', breadth: '', width: '', depth: '' },
     column: { height: '10', breadth: '', width: '', mainTmtSize: '', mainTmtCount: '', extraTmtSize: '', extraTmtCount: '', ringSize: '' },
@@ -100,15 +105,38 @@ export default function Estimator() {
     }, 0) || 0;
   };
 
+  const customServicesTotal = customServices.reduce((sum, item) => sum + ((Number(item.qty)||0) * (Number(item.rate)||0)), 0);
+
   const getVisibleGrandTotal = () => {
-    return boqReport?.floorReports?.reduce((sum: number, floor: any, fIdx: number) => {
+    const floorsTotal = boqReport?.floorReports?.reduce((sum: number, floor: any, fIdx: number) => {
       return sum + getVisibleFloorTotal(floor, fIdx);
     }, 0) || 0;
+    return floorsTotal + customServicesTotal;
   };
 
   const isPremium = userData?.tier === 'premium' || userData?.planStatus === 'premium' || auth?.currentUser?.email?.toLowerCase() === 'okiconstruct2026@gmail.com';
 
-  // 🟢 AGGRESSIVE BRIDGE INTERCEPTOR: Forces UI auto-fill perfectly
+  // --- NEW FEATURES HANDLERS ---
+  const handleLetterheadUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event: any) => setLetterheadImg(event.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const addCustomService = () => setCustomServices([...customServices, { id: Date.now(), name: '', unit: '', qty: '', rate: '' }]);
+  const updateCustomService = (index: number, field: string, value: string) => {
+     const updated = [...customServices];
+     updated[index][field] = value;
+     setCustomServices(updated);
+  };
+  const removeCustomService = (index: number) => {
+     const updated = [...customServices];
+     updated.splice(index, 1);
+     setCustomServices(updated);
+  };
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const bridgeData = localStorage.getItem('oki_cad_bridge');
@@ -155,7 +183,6 @@ export default function Estimator() {
           }
         }
 
-        // 🟢 AUTO-FILL THE COLUMNS AND FOOTINGS TO PREVENT 'NaN' CRASHES!
         if (cad.columnsCount || cad.footingsCount) {
             setStructure((prev: any) => ({
                 ...prev,
@@ -214,6 +241,9 @@ export default function Estimator() {
                setSlabOverhang(data.inputs.slabOverhang || "2");
                if (data.inputs.premiumData) setPremiumData(data.inputs.premiumData);
                if (data.inputs.hiddenSections) setHiddenSections(data.inputs.hiddenSections);
+               if (data.inputs.customServices) setCustomServices(data.inputs.customServices);
+               if (data.inputs.customTerms) setCustomTerms(data.inputs.customTerms);
+               if (data.inputs.letterheadImg) setLetterheadImg(data.inputs.letterheadImg);
                setCurrentStep(1); 
             } else {
                alert("This BOQ was saved with an older version of the software and cannot be dynamically edited.");
@@ -253,7 +283,6 @@ export default function Estimator() {
     };
   };
 
-  // 🚀 ADVANCED MANUAL DATA CATCHER (Restores Missing Quantities)
   const handleSetupComplete = () => {
     if (!projectName.trim()) return setErrorMsg("Please provide a Project Name to begin.");
     if (!existingProjectId || floorsData.length !== totalFloorsCount) {
@@ -261,7 +290,6 @@ export default function Estimator() {
         const initialOpenings = [];
         const bridgeData = isFromCAD ? JSON.parse(localStorage.getItem('oki_cad_bridge') || '{}') : null;
 
-        // Catch Manual Additions
         let extraBeds: any[] = [];
         let extraBaths: any[] = [];
         let extraShops: any[] = [];
@@ -269,7 +297,6 @@ export default function Estimator() {
         if (bridgeData?.canvasRooms) {
             const manualRooms = bridgeData.canvasRooms.filter((r: any) => r.id.startsWith('manual_'));
             
-            // STRICT FALLBACKS (|| '0') applied here to prevent NaN crashes!
             extraBeds = manualRooms
               .filter((r: any) => !r.id.includes('_bath_') && !r.id.includes('_chamber_') && !r.id.includes('_col_'))
               .map((b: any, idx: number) => ({ id: Date.now() + 500 + idx, length: String(b.widthFt || '0'), breadth: String(b.heightFt || '0') }));
@@ -560,17 +587,18 @@ export default function Estimator() {
         userId: auth.currentUser.uid, uid: auth.currentUser.uid, 
         projectName: (projectName || "OkiConstruct Build").trim(), 
         totalFloors: totalFloorsCount, siteDetails: siteDetails, buildingType: buildingType,
-        grandTotal: boqReport.grandTotal || 0,
+        grandTotal: getVisibleGrandTotal(),
         boqData: JSON.parse(JSON.stringify(boqReport)), 
         
         inputs: {
           units, boqScope, structure, floorsData, openingsData, rates, tiles, paintData, laborRates,
           apartmentData, apartmentFlats, flatsCount, commercialGroundFloor, hasStairs, stairsDim, slabOverhang,
-          premiumData, hiddenSections
+          premiumData, hiddenSections,
+          customServices, customTerms, letterheadImg
         }
       };
 
-      const cleanPayload = JSON.parse(JSON.stringify(payload)); // Scrub all undefined
+      const cleanPayload = JSON.parse(JSON.stringify(payload)); 
 
       if (existingProjectId) {
          cleanPayload.updatedAt = serverTimestamp();
@@ -598,6 +626,15 @@ export default function Estimator() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans relative">
+      
+      {/* 🟢 NEW: Global Print CSS overrides browser headers/footers */}
+      <style>{`
+        @media print {
+          @page { margin: 0.5cm; }
+          body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        }
+      `}</style>
+
       <main className="max-w-5xl mx-auto w-full p-4 md:p-8 mt-4 pb-24 print:p-0 print:mt-0 print:max-w-none relative z-10">
 
         {currentStep < 9 && (
@@ -748,7 +785,6 @@ export default function Estimator() {
                 </div>
               </div>
 
-              {/* PREMIUM BASEMENT UI */}
               {isPremium && (
                 <div className="mt-6 p-5 border border-[#22c55e]/30 bg-green-50/30 rounded-2xl">
                   <label className="flex items-center gap-3 cursor-pointer mb-4">
@@ -1317,7 +1353,7 @@ export default function Estimator() {
                               </div>
                               {flat.bathrooms.map((bath: any, bIdx: number) => (
                                   <div key={bath.id} className="p-4 border border-gray-100 bg-white rounded-xl space-y-4 relative">
-                                    <div className="flex flex-col md:flex-row gap-4 items-center">
+                                    <div className="flex flex-col md:flex-row gap-4 items-center pr-6">
                                         <span className="text-sm font-bold text-gray-500 w-full md:w-20">Bath {bIdx + 1}</span>
                                         <div className="flex gap-4 w-full items-center">
                                           <div className="w-full">
@@ -2088,23 +2124,43 @@ export default function Estimator() {
           {currentStep === 9 && boqReport?.floorReports && (
             <div className="animate-in fade-in slide-in-from-bottom-6 duration-700 printable-boq">
               
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 border-b border-gray-100 pb-8 print:border-b-2 print:border-gray-300">
-                <div className="flex items-center gap-4 text-left">
-                  {userData?.avatar && userData.avatar.length > 5 ? (
-                    <img src={userData.avatar} alt="Logo" className="w-16 h-16 object-cover rounded-xl border border-gray-200 shadow-sm" />
-                  ) : (
-                    <span className="text-4xl bg-gray-50 p-3 rounded-xl border border-gray-100">{userData?.avatar || "🏢"}</span>
-                  )}
-                  <div>
-                    <h1 className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight uppercase">{userData?.name || "OkiConstruct User"}</h1>
-                    <p className="text-gray-500 font-bold tracking-widest text-xs uppercase mt-1">Official Master BOQ • 📞 {userData?.phone || "N/A"}</p>
+              {/* 🟢 DYNAMIC LETTERHEAD HEADER */}
+              <div className="flex flex-col mb-12 border-b border-gray-100 pb-8 print:border-b-2 print:border-gray-300 print:pb-4 relative group">
+                {letterheadImg ? (
+                   <div className="w-full relative">
+                     {/* eslint-disable-next-line @next/next/no-img-element */}
+                     <img src={letterheadImg} alt="Company Letterhead" className="w-full max-h-48 object-contain print:object-cover" />
+                     <button onClick={() => setLetterheadImg(null)} className="absolute top-2 right-2 bg-red-500 text-white px-2 py-1 rounded text-xs print:hidden hidden group-hover:block transition-all shadow-md">Remove Letterhead</button>
+                   </div>
+                ) : (
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center w-full relative">
+                    <div className="flex items-center gap-4 text-left">
+                      {userData?.avatar && userData.avatar.length > 5 ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img src={userData.avatar} alt="Logo" className="w-16 h-16 object-cover rounded-xl border border-gray-200 shadow-sm" />
+                      ) : (
+                        <span className="text-4xl bg-gray-50 p-3 rounded-xl border border-gray-100">{userData?.avatar || "🏢"}</span>
+                      )}
+                      <div>
+                        <h1 className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight uppercase">{userData?.name || "OkiConstruct User"}</h1>
+                        <p className="text-gray-500 font-bold tracking-widest text-xs uppercase mt-1">Official Master BOQ • 📞 {userData?.phone || "N/A"}</p>
+                      </div>
+                    </div>
+                    <div className="mt-4 md:mt-0 text-left md:text-right">
+                      <h2 className="text-xl font-bold text-gray-900">{projectName}</h2>
+                      <p className="text-xs font-bold text-[#22c55e] uppercase tracking-widest mt-1 mb-1">{boqScope === 'civil_only' ? 'Civil Structure Only' : 'Full Turnkey Build'}</p>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mt-1">Date: {new Date().toLocaleDateString()}</p>
+                    </div>
+                    
+                    {/* PREMIUM LOCK: Letterhead Upload */}
+                    {isPremium && (
+                      <label className="absolute -top-4 -right-4 md:top-0 md:right-0 bg-gray-100 text-gray-600 px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer border border-gray-200 hover:bg-gray-200 transition-colors shadow-sm print:hidden">
+                        Upload Letterhead Banner
+                        <input type="file" accept="image/*" onChange={handleLetterheadUpload} className="hidden" />
+                      </label>
+                    )}
                   </div>
-                </div>
-                <div className="mt-4 md:mt-0 text-left md:text-right">
-                  <h2 className="text-xl font-bold text-gray-900">{projectName}</h2>
-                  <p className="text-xs font-bold text-[#22c55e] uppercase tracking-widest mt-1 mb-1">{boqScope === 'civil_only' ? 'Civil Structure Only' : 'Full Turnkey Build'}</p>
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mt-1">Date: {new Date().toLocaleDateString()}</p>
-                </div>
+                )}
               </div>
 
               {boqReport?.metrics && (
@@ -2197,12 +2253,92 @@ export default function Estimator() {
                 </div>
               ))}
 
+              {/* 🟢 PREMIUM LOCK: ADDITIONAL CUSTOM SERVICES BUILDER */}
+              {isPremium && (
+                <div className="border border-gray-100 rounded-2xl overflow-hidden bg-white shadow-sm print:border-b print:rounded-none print:shadow-none mb-6">
+                  <div className="bg-gray-50 p-4 border-b border-gray-100 print:bg-gray-100 print:p-2 flex justify-between items-center">
+                    <h3 className="font-bold text-gray-800 text-sm uppercase tracking-wider">Additional Custom Services</h3>
+                    <button onClick={addCustomService} className="text-xs font-bold px-3 py-1.5 rounded-lg bg-[#22c55e] text-white hover:bg-[#1ea950] transition-colors print:hidden shadow-sm">
+                      + Add Custom Service
+                    </button>
+                  </div>
+                  
+                  <div className="w-full">
+                    <table className="w-full text-left border-collapse print:text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-100 print:border-gray-300">
+                          <th className="p-2 md:p-4 font-semibold text-[10px] md:text-xs text-gray-500 uppercase tracking-wider print:p-2">Material/Service</th>
+                          <th className="p-2 md:p-4 font-semibold text-[10px] md:text-xs text-gray-500 uppercase tracking-wider text-center print:p-2">Unit</th>
+                          <th className="p-2 md:p-4 font-semibold text-[10px] md:text-xs text-gray-500 uppercase tracking-wider text-center print:p-2">Qty</th>
+                          <th className="p-2 md:p-4 font-semibold text-[10px] md:text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Rate</th>
+                          <th className="p-2 md:p-4 font-semibold text-[10px] md:text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Amount</th>
+                          <th className="print:hidden w-10"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {customServices.length === 0 && (
+                          <tr className="print:hidden">
+                            <td colSpan={6} className="p-6 text-center text-gray-400 font-medium text-sm">No custom services added. Click the button above to add one.</td>
+                          </tr>
+                        )}
+                        {customServices.map((item, i) => (
+                          <tr key={item.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors print:border-gray-200">
+                            <td className="p-2 md:p-4">
+                              <input type="text" placeholder="Service Name" className="w-full bg-transparent outline-none font-semibold text-xs md:text-sm text-gray-900 border-b border-dashed border-gray-300 focus:border-[#22c55e] print:border-none print:p-0" value={item.name} onChange={e => updateCustomService(i, 'name', e.target.value)} />
+                            </td>
+                            <td className="p-2 md:p-4">
+                              <input type="text" placeholder="Unit" className="w-full text-center bg-transparent outline-none font-medium text-xs md:text-sm text-gray-500 border-b border-dashed border-gray-300 focus:border-[#22c55e] print:border-none print:p-0" value={item.unit} onChange={e => updateCustomService(i, 'unit', e.target.value)} />
+                            </td>
+                            <td className="p-2 md:p-4">
+                              <input type="number" placeholder="0" className="w-full text-center bg-transparent outline-none font-bold text-xs md:text-sm text-[#22c55e] border-b border-dashed border-gray-300 focus:border-[#22c55e] print:border-none print:text-black print:p-0" value={item.qty} onChange={e => updateCustomService(i, 'qty', e.target.value)} />
+                            </td>
+                            <td className="p-2 md:p-4 relative">
+                              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 font-medium print:hidden">₹</span>
+                              <input type="number" placeholder="0" className="w-full text-right bg-transparent outline-none font-medium text-xs md:text-sm text-gray-600 pl-6 border-b border-dashed border-gray-300 focus:border-[#22c55e] print:border-none print:pl-0 print:p-0" value={item.rate} onChange={e => updateCustomService(i, 'rate', e.target.value)} />
+                            </td>
+                            <td className="p-2 md:p-4 text-right font-bold text-xs md:text-sm text-gray-900 print:p-2">
+                              ₹{Math.ceil((Number(item.qty) || 0) * (Number(item.rate) || 0)).toLocaleString()}
+                            </td>
+                            <td className="p-2 print:hidden text-center">
+                              <button onClick={() => removeCustomService(i)} className="text-red-400 hover:text-red-600 font-bold p-2 bg-red-50 rounded-lg">✕</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      {customServices.length > 0 && (
+                        <tfoot>
+                          <tr className="bg-gray-50/50 print:bg-transparent">
+                            <td colSpan={4} className="p-2 md:p-4 font-semibold text-[10px] md:text-xs text-gray-500 uppercase tracking-wider text-right print:p-2">Section Subtotal:</td>
+                            <td className="p-2 md:p-4 font-bold text-sm md:text-base text-gray-900 text-right print:p-2">₹{customServicesTotal.toLocaleString()}</td>
+                            <td className="print:hidden"></td>
+                          </tr>
+                        </tfoot>
+                      )}
+                    </table>
+                  </div>
+                </div>
+              )}
+
               <div className="bg-gray-900 text-white p-8 rounded-2xl text-center shadow-lg mt-12 print:shadow-none print:bg-white print:text-black print:border-2 print:border-black print:break-inside-avoid">
                 <p className="text-sm font-semibold uppercase tracking-widest text-gray-400 mb-2 print:text-gray-600">Total Project Estimate</p>
                 <h2 className="text-5xl md:text-6xl font-black text-[#22c55e] print:text-black">
                   ₹ {Math.ceil(getVisibleGrandTotal()).toLocaleString()}
                 </h2>
               </div>
+
+              {/* 🟢 PREMIUM LOCK: TERMS AND INSTRUCTIONS EDITOR */}
+              {isPremium && (
+                <div className="mt-8 print:mt-6 print:break-inside-avoid">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 block print:hidden">Terms, Guidelines & Instructions</label>
+                  <textarea 
+                     className="w-full bg-gray-50 p-4 rounded-xl border border-gray-200 outline-none text-sm text-gray-700 font-medium print:bg-transparent print:border-none print:p-0 print:resize-none"
+                     rows={5}
+                     value={customTerms}
+                     onChange={(e) => setCustomTerms(e.target.value)}
+                     placeholder="Enter terms, guidelines, or payment instructions here..."
+                  ></textarea>
+                </div>
+              )}
 
               <ErrorDisplay />
               <div className="flex flex-col md:flex-row gap-4 print:hidden mt-10">
