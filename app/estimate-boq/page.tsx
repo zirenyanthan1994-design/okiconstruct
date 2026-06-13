@@ -29,7 +29,7 @@ export default function Estimator() {
   const [boqScope, setBoqScope] = useState<'full' | 'civil_only'>('full');
   const [units, setUnits] = useState({
     footing: 'feet', columnHeight: 'feet', columnDim: 'inches', 
-    plinthBeam: 'inches', roofBeam: 'inches', layout: 'feet', openings: 'feet',
+    tieBeam: 'inches', plinthBeam: 'inches', roofBeam: 'inches', layout: 'feet', openings: 'feet',
     boundaryLayout: 'feet'
   });
 
@@ -78,6 +78,7 @@ export default function Estimator() {
   const [structure, setStructure] = useState<any>({
     footing: { count: '', breadth: '', width: '', depth: '' },
     column: { height: '10', breadth: '', width: '', mainTmtSize: '', mainTmtCount: '', extraTmtSize: '', extraTmtCount: '', ringSize: '' },
+    tieBeam: { hasTieBeam: false, depth: '', width: '', mainTmtSize: '', mainTmtCount: '', extraTmtSize: '', extraTmtCount: '', ringSize: '' },
     plinthBeam: { depth: '', width: '', mainTmtSize: '', mainTmtCount: '', extraTmtSize: '', extraTmtCount: '', ringSize: '' },
     roofBeam: { depth: '', width: '', mainTmtSize: '', mainTmtCount: '', extraTmtSize: '', extraTmtCount: '', ringSize: '' }
   });
@@ -593,6 +594,7 @@ export default function Estimator() {
     const virtualStructure = JSON.parse(JSON.stringify(structure));
     // Trick the engine's wall height formula
     virtualStructure.column.height = String(wallHeight);
+    virtualStructure.tieBeam = { hasTieBeam: false }; // Ensure no tie beam leaks into boundary
     virtualStructure.roofBeam = { depth: '0', width: '0', mainTmtSize: '', mainTmtCount: '', extraTmtSize: '', extraTmtCount: '', ringSize: '' };
 
     const virtualOpenings = {
@@ -1337,6 +1339,60 @@ export default function Estimator() {
                 </h2>
                 <div className="space-y-6">
                   
+                  {/* Tie Beam - Hidden for Boundary Wall */}
+                  {buildingType !== 'boundary' && (
+                    <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 mb-6">
+                      <div className="flex justify-between items-center mb-3">
+                         <span className="font-bold text-gray-700 block">Tie Beam (Foundation Level)</span>
+                         <label className="flex items-center gap-2 cursor-pointer">
+                           <input type="checkbox" checked={structure.tieBeam?.hasTieBeam || false} onChange={(e) => setStructure({ ...structure, tieBeam: { ...structure.tieBeam, hasTieBeam: e.target.checked } })} className="w-5 h-5 text-[#22c55e] rounded" />
+                           <span className="text-sm font-bold text-gray-700">Include Tie Beam</span>
+                         </label>
+                      </div>
+                      
+                      {structure.tieBeam?.hasTieBeam && (
+                        <>
+                          <div className="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                              <div className="flex justify-between items-end mb-2">
+                                 <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Depth</label>
+                                 {isPremium ? (
+                                   <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.tieBeam} onChange={(e) => setUnits({...units, tieBeam: e.target.value})}>
+                                     <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                   </select>
+                                 ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(IN)</span>}
+                              </div>
+                              <input type="number" inputMode="decimal" min="0" placeholder="Depth" className={inputStyle} value={structure.tieBeam.depth} onChange={(e) => setStructure({ ...structure, tieBeam: { ...structure.tieBeam, depth: e.target.value } })} />
+                            </div>
+                            <div>
+                              <div className="flex justify-between items-end mb-2">
+                                 <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
+                                 {isPremium ? (
+                                   <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.tieBeam} onChange={(e) => setUnits({...units, tieBeam: e.target.value})}>
+                                     <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                   </select>
+                                 ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(IN)</span>}
+                              </div>
+                              <input type="number" inputMode="decimal" min="0" placeholder="Width" className={inputStyle} value={structure.tieBeam.width} onChange={(e) => setStructure({ ...structure, tieBeam: { ...structure.tieBeam, width: e.target.value } })} />
+                            </div>
+                          </div>
+                          {isPremium && (
+                            <div className="p-3 border border-blue-100 bg-blue-50/50 rounded-xl mt-4">
+                              <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block mb-2">Override Tie Beam TMT <span className="text-blue-500">★</span></span>
+                              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                  <div><label className="text-[9px] font-bold text-gray-500 uppercase">Main Size</label><select className={`${selectStyle} py-2 text-sm px-2`} value={structure.tieBeam.mainTmtSize || ''} onChange={(e) => setStructure({ ...structure, tieBeam: { ...structure.tieBeam, mainTmtSize: e.target.value } })}><option value="">Auto</option><option value="12mm">12mm</option><option value="16mm">16mm</option><option value="20mm">20mm</option><option value="25mm">25mm</option></select></div>
+                                  <div><label className="text-[9px] font-bold text-gray-500 uppercase">Main Qty</label><input type="number" placeholder="Count" className={`${inputStyle} py-2 text-sm px-2`} value={structure.tieBeam.mainTmtCount || ''} onChange={(e) => setStructure({ ...structure, tieBeam: { ...structure.tieBeam, mainTmtCount: e.target.value } })} /></div>
+                                  <div><label className="text-[9px] font-bold text-gray-500 uppercase">Extra Size</label><select className={`${selectStyle} py-2 text-sm px-2`} value={structure.tieBeam.extraTmtSize || ''} onChange={(e) => setStructure({ ...structure, tieBeam: { ...structure.tieBeam, extraTmtSize: e.target.value } })}><option value="">None</option><option value="12mm">12mm</option><option value="16mm">16mm</option><option value="20mm">20mm</option><option value="25mm">25mm</option></select></div>
+                                  <div><label className="text-[9px] font-bold text-gray-500 uppercase">Extra Qty</label><input type="number" placeholder="Count" className={`${inputStyle} py-2 text-sm px-2`} value={structure.tieBeam.extraTmtCount || ''} onChange={(e) => setStructure({ ...structure, tieBeam: { ...structure.tieBeam, extraTmtCount: e.target.value } })} /></div>
+                                  <div className="col-span-2 md:col-span-1"><label className="text-[9px] font-bold text-gray-500 uppercase">Rings</label><select className={`${selectStyle} py-2 text-sm px-2`} value={structure.tieBeam.ringSize || ''} onChange={(e) => setStructure({ ...structure, tieBeam: { ...structure.tieBeam, ringSize: e.target.value } })}><option value="">Auto</option><option value="8mm">8mm</option><option value="10mm">10mm</option><option value="12mm">12mm</option></select></div>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+
                   {/* Plinth Beam */}
                   <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
                     <div className="flex justify-between items-center mb-3">
@@ -2183,6 +2239,41 @@ export default function Estimator() {
                         </div>
                     ))}
                   </div>
+
+                  {hasStairs && (
+                    <div className="mt-8 pt-6 border-t border-gray-200">
+                      <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider mb-4">Vertical Circulation</h3>
+                      <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
+                        <label className={labelStyle}>Staircase Area</label>
+                        <div className="flex gap-4 items-center">
+                          <div className="w-full">
+                            <div className="flex justify-between items-end mb-1">
+                               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Length</label>
+                               {isPremium ? (
+                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                 </select>
+                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                            </div>
+                            <input type="number" placeholder="Length" className={inputStyle} value={stairsDim.length} onChange={(e) => setStairsDim({ ...stairsDim, length: e.target.value })} />
+                          </div>
+                          <span className="font-bold text-gray-300 mt-4">×</span>
+                          <div className="w-full">
+                            <div className="flex justify-between items-end mb-1">
+                               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0">Width</label>
+                               {isPremium ? (
+                                 <select className="text-[10px] font-bold border border-[#22c55e]/50 rounded px-1 outline-none text-[#22c55e] bg-green-50 uppercase tracking-wider" value={units.layout} onChange={(e) => setUnits({...units, layout: e.target.value})}>
+                                   <option value="feet">Feet</option><option value="meters">Meters</option><option value="inches">Inches</option><option value="cm">cm</option><option value="mm">mm</option>
+                                 </select>
+                               ) : <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">(FT)</span>}
+                            </div>
+                            <input type="number" placeholder="Width" className={inputStyle} value={stairsDim.width} onChange={(e) => setStairsDim({ ...stairsDim, width: e.target.value })} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                 </div>
               )}
 

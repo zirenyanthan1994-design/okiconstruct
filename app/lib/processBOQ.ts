@@ -95,17 +95,19 @@ export const generateProjectBOQ = (
   const getRoomPerimeter = (room: any) => (toFeet(room?.length || room?.width, units.layout) + toFeet(room?.breadth || room?.width, units.layout)) * 2;
 
   const floorReports = finalSnaps.map((snap: any, idx: number) => {
-    const currentLayout = snap?.layout || {};
-    const currentStructure = snap?.structure || {};
-    const currentOpenings = snap?.openings || {};
-    const currentTiles = snap?.tiles || {};
-    const currentPaintData = snap?.paintData || {};
-    const currentLaborRates = snap?.laborRates || {};
-    const currentHasStairs = snap?.hasStairs || false;
-    const currentStairsDim = snap?.stairsDim || { length: 0, width: 0 };
-    const buildingType = snap?.buildingType || 'residence';
+    const sections: any[] = [];
+    let floorBaseCost = 0; 
 
-    // Advanced Premium TMT Parsing Algorithm
+    const addSection = (title: string, rawItems: any[]) => {
+      const items = rawItems.filter(item => item && (Number(item.qty) > 0) && (Number(item.rate) > 0));
+      if (items.length === 0) return; 
+
+      const sectionTotal = items.reduce((sum, item) => sum + (Math.ceil(Number(item.qty) * Number(item.rate))), 0);
+      sections.push({ title, items, sectionTotal });
+      floorBaseCost += sectionTotal;
+    };
+
+    const currentStructure = snap?.structure || {};
     const parseTmt = (structPath: any, baseProfile: any) => {
       const mainSize = structPath?.mainTmtSize || baseProfile.main.s;
       const mainCount = Number(structPath?.mainTmtCount) || baseProfile.main.c;
@@ -117,18 +119,154 @@ export const generateProjectBOQ = (
 
     const colTmt = parseTmt(currentStructure?.column, profile);
     const pbTmt = parseTmt(currentStructure?.plinthBeam, profile);
+    const tbTmt = parseTmt(currentStructure?.tieBeam, profile);
     const rbTmt = parseTmt(currentStructure?.roofBeam, profile);
+    
+    const calculateRingFt = (bFt: number, wFt: number) => (((bFt - 0.25) + (wFt - 0.25)) * 2); 
 
-    const sections: any[] = [];
-    let floorBaseCost = 0; 
+    // =========================================================================================
+    // NATIVE BOUNDARY WALL ENGINE BYPASS
+    // =========================================================================================
+    if (snap?.buildingType === 'boundary' || snap?.boundaryData?.totalPerimeter > 0) {
+        const bData = snap.boundaryData;
+        const perimeter = Number(bData.totalPerimeter) || 0;
+        const wallHeight = Number(bData.wallHeight) || 6;
+        const colCount = Number(currentStructure?.footing?.count) || Math.ceil(perimeter / 10) + 1;
+        
+        const fB = toFeet(currentStructure?.footing?.breadth, units.boundaryLayout); 
+        const fW = toFeet(currentStructure?.footing?.width, units.boundaryLayout);
+        const depth = toFeet(currentStructure?.footing?.depth, units.boundaryLayout);
+        
+        const colHt = wallHeight + depth; // Total column height from footing to top
+        const colB = toFeet(currentStructure?.column?.breadth, units.columnDim);
+        const colW = toFeet(currentStructure?.column?.width, units.columnDim);
 
-    let layoutArea = 0;
+        // 1. Foundation & Columns
+        const padThicknessFt = (premiumData?.customFootingThickness || masterSettings?.premiumDefaults?.footingThickness || 5) / 12;
+        const footingMesh = premiumData?.customFootingMesh || masterSettings?.premiumDefaults?.footingMesh || '10mm';
+        
+        const padVolume = colCount * (fB * fW * padThicknessFt);
+        const padConc = calculateConcrete(padVolume, masterSettings?.ratios?.footing, getAllowance('footing', 5));
+        const pitColumnHeight = Math.max(0, depth - padThicknessFt);
+        const starterConc = calculateConcrete(colCount * (colB * colW * pitColumnHeight), masterSettings?.ratios?.column, getAllowance('column', 5));
+        const aboveGroundConc = calculateConcrete(colCount * (colB * colW * wallHeight), masterSettings?.ratios?.column, getAllowance('column', 5));
+
+        const totalMeshFt = ((fW / 0.5 + 1) * fB + (fB / 0.5 + 1) * fW) * colCount;
+        const colRings = (colHt / (masterSettings?.dimensions?.ringSpacing / 12 || 0.416)) * colCount;
+
+        addSection("1. Foundation & Substructure", [
+            { name: `Footing Pad Cement (${padThicknessFt * 12}in)`, qty: padConc.cement, unit: "BAG", rate: safeRates.cement || 0 },
+            { name: "Footing Pad Sand", qty: padConc.sand, unit: "CFT", rate: safeRates.sand || 0 },
+            { name: "Footing Pad Gravel", qty: padConc.gravel, unit: "CFT", rate: safeRates.gravel || 0 },
+            { name: `Footing Pad TMT Mesh (${footingMesh})`, qty: Math.ceil(getWeight(footingMesh, totalMeshFt)), unit: "KG", rate: safeRates.tmt?.[footingMesh] || 0 },
+            { name: "Sub-ground Column Cement", qty: starterConc.cement, unit: "BAG", rate: safeRates.cement || 0 },
+            { name: "Sub-ground Column Sand", qty: starterConc.sand, unit: "CFT", rate: safeRates.sand || 0 },
+            { name: "Sub-ground Column Gravel", qty: starterConc.gravel, unit: "CFT", rate: safeRates.gravel || 0 },
+            { name: `Column Main TMT (${colTmt.mainSize})`, qty: Math.ceil(getWeight(colTmt.mainSize, colHt * colCount * colTmt.mainCount)), unit: "KG", rate: safeRates.tmt?.[colTmt.mainSize] || 0 },
+            { name: `Column Rings (${colTmt.ringSize})`, qty: Math.ceil(getWeight(colTmt.ringSize, colRings * calculateRingFt(colB, colW))), unit: "KG", rate: safeRates.tmt?.[colTmt.ringSize] || 0 }
+        ]);
+
+        // 1B. Tie Beam
+        if (currentStructure?.tieBeam?.hasTieBeam) {
+            const tD = toFeet(currentStructure?.tieBeam?.depth, units.tieBeam || 'inches');
+            const tW = toFeet(currentStructure?.tieBeam?.width, units.tieBeam || 'inches');
+            const tbConc = calculateConcrete(perimeter * (tD * tW), masterSettings?.ratios?.plinthBeam, getAllowance('plinthBeam', 5));
+            const tbRings = perimeter / (masterSettings?.dimensions?.ringSpacing / 12 || 0.416);
+            
+            const tbItems = [
+                { name: "Cement", qty: tbConc.cement, unit: "BAG", rate: safeRates.cement || 0 },
+                { name: "Sand", qty: tbConc.sand, unit: "CFT", rate: safeRates.sand || 0 },
+                { name: "Gravel", qty: tbConc.gravel, unit: "CFT", rate: safeRates.gravel || 0 },
+                { name: `TMT Main (${tbTmt.mainSize})`, qty: Math.ceil(getWeight(tbTmt.mainSize, perimeter * tbTmt.mainCount)), unit: "KG", rate: safeRates.tmt?.[tbTmt.mainSize] || 0 },
+                { name: `TMT Rings (${tbTmt.ringSize})`, qty: Math.ceil(getWeight(tbTmt.ringSize, tbRings * calculateRingFt(tD, tW))), unit: "KG", rate: safeRates.tmt?.[tbTmt.ringSize] || 0 }
+            ];
+            addSection("1B. Tie Beams (Foundation)", tbItems);
+        }
+
+        // 2. Plinth Beam
+        const pD = toFeet(currentStructure?.plinthBeam?.depth, units.plinthBeam);
+        const plW = toFeet(currentStructure?.plinthBeam?.width, units.plinthBeam);
+        const plConc = calculateConcrete(perimeter * (pD * plW), masterSettings?.ratios?.plinthBeam, getAllowance('plinthBeam', 5));
+        const plRings = perimeter / (masterSettings?.dimensions?.ringSpacing / 12 || 0.416);
+        
+        addSection("2. Plinth Beams", [
+            { name: "Cement", qty: plConc.cement, unit: "BAG", rate: safeRates.cement || 0 },
+            { name: "Sand", qty: plConc.sand, unit: "CFT", rate: safeRates.sand || 0 },
+            { name: "Gravel", qty: plConc.gravel, unit: "CFT", rate: safeRates.gravel || 0 },
+            { name: `TMT Main (${pbTmt.mainSize})`, qty: Math.ceil(getWeight(pbTmt.mainSize, perimeter * pbTmt.mainCount)), unit: "KG", rate: safeRates.tmt?.[pbTmt.mainSize] || 0 },
+            { name: `TMT Rings (${pbTmt.ringSize})`, qty: Math.ceil(getWeight(pbTmt.ringSize, plRings * calculateRingFt(pD, plW))), unit: "KG", rate: safeRates.tmt?.[pbTmt.ringSize] || 0 }
+        ]);
+
+        // 3. Columns Above Ground
+        addSection("3. Columns (Above Ground)", [
+            { name: "Cement", qty: aboveGroundConc.cement, unit: "BAG", rate: safeRates.cement || 0 },
+            { name: "Sand", qty: aboveGroundConc.sand, unit: "CFT", rate: safeRates.sand || 0 },
+            { name: "Gravel", qty: aboveGroundConc.gravel, unit: "CFT", rate: safeRates.gravel || 0 }
+        ]);
+
+        // 4. Brickwork & Masonry
+        const netWallArea = perimeter * wallHeight;
+        let brickMultiplier = bData.wallType === 'Double Brick (9 Inch)' ? 10 : 5;
+        const estimatedBricks = Math.ceil(netWallArea * brickMultiplier * wBricks);
+        const joiningVol = netWallArea * (masterSettings?.consumption?.brickJoiningCftPerSqft || 0.10) * (brickMultiplier / 5);
+        const joiningConc = calculateConcrete(joiningVol, masterSettings?.ratios?.mortar);
+
+        const masonryItems = [
+            { name: `Bricks (${bData.wallType})`, qty: estimatedBricks, unit: "NOS", rate: safeRates.bricks || 0 },
+            { name: "Cement for Brick Joining", qty: joiningConc.cement, unit: "BAG", rate: safeRates.cement || 0 },
+            { name: "Sand for Brick Joining", qty: joiningConc.sand, unit: "CFT", rate: safeRates.sand || 0 }
+        ];
+
+        // Plastering logic
+        if (bData.finish !== 'No Plaster') {
+            const plasterMultiplier = bData.finish === 'Plaster Both Sides' ? 2 : 1;
+            const plasterVol = netWallArea * (masterSettings?.consumption?.plasterCftPerSqft || 0.10) * plasterMultiplier;
+            const plasterConc = calculateConcrete(plasterVol, masterSettings?.ratios?.mortar);
+            masonryItems.push(
+                { name: `Cement for Wall Plaster (${bData.finish})`, qty: plasterConc.cement, unit: "BAG", rate: safeRates.cement || 0 },
+                { name: `Sand for Wall Plaster (${bData.finish})`, qty: plasterConc.sand, unit: "CFT", rate: safeRates.sand || 0 }
+            );
+        }
+        addSection("4. Masonry & Plastering", masonryItems);
+
+        // 5. Toppings
+        if (bData.topping && bData.topping !== 'None' && safeRates.toppingRate) {
+            addSection("5. Security Topping", [
+                { name: `Boundary Topping (${bData.topping})`, qty: Math.ceil(perimeter), unit: "RFT", rate: Number(safeRates.toppingRate) }
+            ]);
+        }
+
+        // 6. Labor
+        addSection("Master Labor & Services", [
+            { name: "Mason Labor (Perimeter)", qty: Math.ceil(perimeter), unit: "RFT", rate: Number(snap?.laborRates?.mason) || 0 }
+        ]);
+
+        m_builtUp += 0;
+        m_slab += 0;
+        m_wall += netWallArea;
+
+        return { floorName: snap?.floorName || 'Boundary Wall Estimate', sections, layoutArea: 0, adjustedSlabArea: 0, floorTotal: floorBaseCost };
+    }
+    // =========================================================================================
+
+    // --- STANDARD RESIDENCE / APARTMENT / COMMERCIAL LOGIC ---
+    const currentLayout = snap?.layout || {};
+    const currentOpenings = snap?.openings || {};
+    const currentTiles = snap?.tiles || {};
+    const currentPaintData = snap?.paintData || {};
+    const currentLaborRates = snap?.laborRates || {};
+    const currentHasStairs = snap?.hasStairs || false;
+    const currentStairsDim = snap?.stairsDim || { length: 0, width: 0 };
+    const buildingType = snap?.buildingType || 'residence';
+
+    let layoutArea = 0; // Enclosed rooms taking roof load
+    let cantileverArea = 0; // Open spaces (Balcony/Porch)
     let layoutPerimeter = 0;
     let totalBathsPeri = 0;
 
     const tileAreas: Record<string, number> = {
-      hall: 0, kitchenDining: 0, foyer: 0, commercialShops: 0, commercialWashrooms: 0, corridor: 0,
-      bathroomWalls: 0, skirting: 0
+      hall: 0, kitchenDining: 0, foyer: 0, balcony: 0, passage: 0, porch: 0,
+      commercialShops: 0, commercialWashrooms: 0, corridor: 0, bathroomWalls: 0, skirting: 0
     };
 
     if (buildingType === 'apartment') {
@@ -150,15 +288,34 @@ export const generateProjectBOQ = (
         layoutPerimeter += wPeri;
         totalBathsPeri += wPeri;
         tileAreas.commercialWashrooms = (tileAreas.commercialWashrooms || 0) + wArea;
+        
+        if (currentLayout.passage) {
+            const pArea = getRoomArea(currentLayout.passage);
+            layoutArea += pArea;
+            layoutPerimeter += getRoomPerimeter(currentLayout.passage);
+            tileAreas.passage = (tileAreas.passage || 0) + pArea;
+        }
       } else {
         (currentLayout.flats || []).forEach((flat: any) => {
           const fHallArea = getRoomArea(flat.hall);
           const fKitchenArea = getRoomArea(flat.kitchen);
-          layoutArea += fHallArea + fKitchenArea;
-          layoutPerimeter += getRoomPerimeter(flat.hall) + getRoomPerimeter(flat.kitchen);
+          const fFoyerArea = getRoomArea(flat.foyer);
+          const fPassageArea = getRoomArea(flat.passage);
+          const fBalconyArea = getRoomArea(flat.balcony);
+          const fPorchArea = getRoomArea(flat.porch);
+
+          layoutArea += fHallArea + fKitchenArea + fFoyerArea + fPassageArea;
+          cantileverArea += fBalconyArea + fPorchArea;
+
+          layoutPerimeter += getRoomPerimeter(flat.hall) + getRoomPerimeter(flat.kitchen) + getRoomPerimeter(flat.foyer) + getRoomPerimeter(flat.passage);
+          layoutPerimeter += getRoomPerimeter(flat.balcony) + getRoomPerimeter(flat.porch);
           
           tileAreas.hall += fHallArea;
           tileAreas.kitchenDining += fKitchenArea;
+          tileAreas.foyer += fFoyerArea;
+          tileAreas.passage += fPassageArea;
+          tileAreas.balcony += fBalconyArea;
+          tileAreas.porch += fPorchArea;
 
           (flat.bedrooms || []).forEach((b: any, i: number) => {
             layoutArea += getRoomArea(b);
@@ -190,28 +347,36 @@ export const generateProjectBOQ = (
         layoutPerimeter += getRoomPerimeter(snap.apartmentData.lift) * liftCount;
       }
     } else {
-      const staticRoomsArea = getRoomArea(currentLayout?.hall) + getRoomArea(currentLayout?.kitchenDining) + getRoomArea(currentLayout?.foyer);
+      const staticRoomsArea = getRoomArea(currentLayout?.hall) + getRoomArea(currentLayout?.kitchenDining) + getRoomArea(currentLayout?.foyer) + getRoomArea(currentLayout?.passage);
+      const openRoomsArea = getRoomArea(currentLayout?.balcony) + getRoomArea(currentLayout?.porch);
       const dynamicBedroomsArea = (currentLayout?.bedrooms || []).reduce((sum: number, r: any) => sum + getRoomArea(r), 0);
       const dynamicBathsArea = (currentLayout?.bathrooms || []).reduce((sum: number, r: any) => sum + (r.isAttached && r.layoutType === 'inside' ? 0 : getRoomArea(r)), 0);
       const stairsArea = currentHasStairs ? getRoomArea(currentStairsDim) : 0;
+      
       layoutArea = staticRoomsArea + dynamicBedroomsArea + dynamicBathsArea + stairsArea;
+      cantileverArea = openRoomsArea;
 
-      const staticPeri = getRoomPerimeter(currentLayout?.hall) + getRoomPerimeter(currentLayout?.kitchenDining) + getRoomPerimeter(currentLayout?.foyer);
+      const staticPeri = getRoomPerimeter(currentLayout?.hall) + getRoomPerimeter(currentLayout?.kitchenDining) + getRoomPerimeter(currentLayout?.foyer) + getRoomPerimeter(currentLayout?.passage);
+      const openPeri = getRoomPerimeter(currentLayout?.balcony) + getRoomPerimeter(currentLayout?.porch);
       const dynamicBedroomsPeri = (currentLayout?.bedrooms || []).reduce((sum: number, r: any) => sum + getRoomPerimeter(r), 0);
       const dynamicBathsPeri = (currentLayout?.bathrooms || []).reduce((sum: number, r: any) => sum + (r.isAttached && r.layoutType === 'inside' ? 0 : getRoomPerimeter(r)), 0);
       const stairsPeri = currentHasStairs ? getRoomPerimeter(currentStairsDim) : 0;
-      layoutPerimeter = staticPeri + dynamicBedroomsPeri + dynamicBathsPeri + stairsPeri;
+      
+      layoutPerimeter = staticPeri + openPeri + dynamicBedroomsPeri + dynamicBathsPeri + stairsPeri;
 
       totalBathsPeri = (currentLayout?.bathrooms || []).reduce((sum: number, r: any) => sum + getRoomPerimeter(r), 0);
       
       tileAreas.hall = getRoomArea(currentLayout?.hall);
       tileAreas.kitchenDining = getRoomArea(currentLayout?.kitchenDining);
       tileAreas.foyer = getRoomArea(currentLayout?.foyer);
+      tileAreas.passage = getRoomArea(currentLayout?.passage);
+      tileAreas.balcony = getRoomArea(currentLayout?.balcony);
+      tileAreas.porch = getRoomArea(currentLayout?.porch);
       (currentLayout?.bedrooms || []).forEach((b: any, i: number) => tileAreas[`bedroom_${i}`] = getRoomArea(b));
       (currentLayout?.bathrooms || []).forEach((b: any, i: number) => tileAreas[`bathroom_${i}`] = getRoomArea(b));
     }
 
-    const baseSide = Math.sqrt(layoutArea) || 0;
+    const baseSide = Math.sqrt(layoutArea + cantileverArea) || 0;
     const slabSide = baseSide + overhang;
     let adjustedSlabArea = Math.pow(slabSide, 2);
     
@@ -227,21 +392,11 @@ export const generateProjectBOQ = (
     const plinthPerimeter = baseSide * 4;
     const roofPerimeter = slabSide * 4;
 
-    const colCount = Number(currentStructure?.footing?.count) || Math.ceil(layoutArea / 100);
+    const colCount = Number(currentStructure?.footing?.count) || Math.ceil((layoutArea + cantileverArea) / 100);
     
     const colHt = toFeet(currentStructure?.column?.height, units.columnHeight);
     const colB = toFeet(currentStructure?.column?.breadth, units.columnDim);
     const colW = toFeet(currentStructure?.column?.width, units.columnDim);
-    const calculateRingFt = (bFt: number, wFt: number) => (((bFt - 0.25) + (wFt - 0.25)) * 2); 
-
-    const addSection = (title: string, rawItems: any[]) => {
-      const items = rawItems.filter(item => item && (Number(item.qty) > 0) && (Number(item.rate) > 0));
-      if (items.length === 0) return; 
-
-      const sectionTotal = items.reduce((sum, item) => sum + (Math.ceil(Number(item.qty) * Number(item.rate))), 0);
-      sections.push({ title, items, sectionTotal });
-      floorBaseCost += sectionTotal;
-    };
 
     if (idx === 0) {
       const fB = toFeet(currentStructure?.footing?.breadth, units.footing); 
@@ -252,7 +407,6 @@ export const generateProjectBOQ = (
       
       const pitBoulderThicknessFt = 6 / 12; 
       
-      // --- PREMIUM OVERRIDES (Features 1, 2, 3, 8) ---
       const padThicknessFt = (premiumData?.customFootingThickness || masterSettings?.premiumDefaults?.footingThickness || 5) / 12;
       const footingMesh = premiumData?.customFootingMesh || masterSettings?.premiumDefaults?.footingMesh || '10mm';
       
@@ -261,10 +415,9 @@ export const generateProjectBOQ = (
       const isRccFloor = premiumData?.floorType === 'RCC';
       const floorRccMesh = premiumData?.floorRccMeshSize || masterSettings?.premiumDefaults?.floorRccMesh || '8mm';
       const floorNamePrefix = premiumData?.isBasement ? "Basement" : "GF";
-      // ---------------------------------------------
       
-      const gfPlinthBoulderCft = layoutArea * (9 / 12); 
-      const floorVol = layoutArea * floorThickFt;      
+      const gfPlinthBoulderCft = (layoutArea + cantileverArea) * (9 / 12); 
+      const floorVol = (layoutArea + cantileverArea) * floorThickFt;      
       
       const pitBoulderCft = colCount * (fB * fW * pitBoulderThicknessFt);
       const padVolume = colCount * (fB * fW * padThicknessFt);
@@ -274,15 +427,13 @@ export const generateProjectBOQ = (
       const pitColumnVolume = colCount * (colB * colW * pitColumnHeight);
       const starterConc = calculateConcrete(pitColumnVolume, masterSettings?.ratios?.column, getAllowance('column', 5));
 
-      // Dynamically switch concrete ratio if it is RCC instead of PCC
       const floorRatio = isRccFloor ? masterSettings?.ratios?.slab : masterSettings?.ratios?.pcc;
       const floorConc = calculateConcrete(floorVol, floorRatio, 1.0); 
 
       const starterHt = 1 + depth + pD;
       const meshBarsL = (fW / 0.5) + 1;
       const meshBarsW = (fB / 0.5) + 1;
-      const totalMeshFtPerFooting = (meshBarsL * fB) + (meshBarsW * fW);
-      const grandTotalMeshFt = totalMeshFtPerFooting * colCount;
+      const grandTotalMeshFt = ((meshBarsL * fB) + (meshBarsW * fW)) * colCount;
       const starterRingsQty = (starterHt / (masterSettings?.dimensions?.ringSpacing / 12 || 0.416)) * colCount;
 
       const starterItems = [
@@ -300,10 +451,9 @@ export const generateProjectBOQ = (
         { name: `${floorNamePrefix} Floor ${isRccFloor ? 'RCC' : 'PCC'} Gravel`, qty: floorConc.gravel, unit: "CFT", rate: safeRates.gravel || 0 }
       ];
 
-      // If RCC Floor, calculate and inject the steel mesh cost dynamically
       if (isRccFloor) {
         const floorMeshPieces = (baseSide * 12) / (masterSettings?.dimensions?.meshGap || 4);
-        const floorMeshFt = (floorMeshPieces * baseSide) * 2; // double for grid
+        const floorMeshFt = (floorMeshPieces * baseSide) * 2; 
         starterItems.push({ name: `${floorNamePrefix} Floor RCC Mesh (${floorRccMesh})`, qty: Math.ceil(getWeight(floorRccMesh, floorMeshFt)), unit: "KG", rate: safeRates.tmt?.[floorRccMesh] || 0 });
       }
 
@@ -317,6 +467,28 @@ export const generateProjectBOQ = (
       starterItems.push({ name: `Starter Rings (${colTmt.ringSize})`, qty: Math.ceil(getWeight(colTmt.ringSize, starterRingsQty * calculateRingFt(colB, colW))), unit: "KG", rate: safeRates.tmt?.[colTmt.ringSize] || 0 });
       
       addSection("1. Foundation & Substructure", starterItems);
+
+      // --- TIE BEAM (Foundation Level) ---
+      if (currentStructure?.tieBeam?.hasTieBeam) {
+        const tD = toFeet(currentStructure?.tieBeam?.depth, units.tieBeam || 'inches');
+        const tW = toFeet(currentStructure?.tieBeam?.width, units.tieBeam || 'inches');
+        
+        const tbConc = calculateConcrete(plinthPerimeter * (tD * tW), masterSettings?.ratios?.plinthBeam, getAllowance('plinthBeam', 5));
+        const tbRings = plinthPerimeter / (masterSettings?.dimensions?.ringSpacing / 12 || 0.416);
+
+        const tbItems = [
+          { name: "Cement", qty: tbConc.cement, unit: "BAG", rate: safeRates.cement || 0 },
+          { name: "Sand", qty: tbConc.sand, unit: "CFT", rate: safeRates.sand || 0 },
+          { name: "Gravel", qty: tbConc.gravel, unit: "CFT", rate: safeRates.gravel || 0 },
+          { name: `TMT Main (${tbTmt.mainSize})`, qty: Math.ceil(getWeight(tbTmt.mainSize, plinthPerimeter * tbTmt.mainCount)), unit: "KG", rate: safeRates.tmt?.[tbTmt.mainSize] || 0 }
+        ];
+        if (tbTmt.extraSize && tbTmt.extraCount > 0) {
+           tbItems.push({ name: `TMT Extra (${tbTmt.extraSize})`, qty: Math.ceil(getWeight(tbTmt.extraSize, plinthPerimeter * tbTmt.extraCount)), unit: "KG", rate: safeRates.tmt?.[tbTmt.extraSize] || 0 });
+        }
+        tbItems.push({ name: `TMT Rings (${tbTmt.ringSize})`, qty: Math.ceil(getWeight(tbTmt.ringSize, tbRings * calculateRingFt(tD, tW))), unit: "KG", rate: safeRates.tmt?.[tbTmt.ringSize] || 0 });
+
+        addSection("1B. Tie Beams (Foundation)", tbItems);
+      }
 
       const plConc = calculateConcrete(plinthPerimeter * (pD * plW), masterSettings?.ratios?.plinthBeam, getAllowance('plinthBeam', 5));
       const plRings = plinthPerimeter / (masterSettings?.dimensions?.ringSpacing / 12 || 0.416);
@@ -367,7 +539,6 @@ export const generateProjectBOQ = (
     colItems.push({ name: `TMT Rings (${colTmt.ringSize})`, qty: Math.ceil(getWeight(colTmt.ringSize, colRings * calculateRingFt(colB, colW))), unit: "KG", rate: safeRates.tmt?.[colTmt.ringSize] || 0 });
     addSection("4. Columns", colItems);
 
-    // --- NEW PREMIUM FEATURE: SILL & LINTEL BEAMS ---
     if (premiumData?.hasSillBeam) {
       const sD = (premiumData.sillDepth || masterSettings?.premiumDefaults?.sillDepth || 4) / 12; 
       const sW = (premiumData.sillWidth || masterSettings?.premiumDefaults?.sillWidth || 9) / 12;
@@ -397,13 +568,11 @@ export const generateProjectBOQ = (
         { name: `TMT Rings (${pbTmt.ringSize})`, qty: Math.ceil(getWeight(pbTmt.ringSize, lintelRings * calculateRingFt(lD, lW))), unit: "KG", rate: safeRates.tmt?.[pbTmt.ringSize] || 0 }
       ]);
     }
-    // --- END PREMIUM BEAMS ---
 
     const pieces = (slabSide * 12) / (masterSettings?.dimensions?.meshGap || 4);
     const totalSlabSteelFt = (pieces * slabSide) + (pieces * slabSide);
     const slabConc = calculateConcrete(adjustedSlabArea * ((masterSettings?.dimensions?.slabThickness || 5) / 12), masterSettings?.ratios?.slab, getAllowance('slab', 25));
     
-    // --- PREMIUM FEATURE: CUSTOM SLAB MESH ---
     const slabMesh = premiumData?.customSlabMesh || masterSettings?.premiumDefaults?.slabMesh || '10mm';
     
     addSection("5. Roof Slab", [
@@ -451,7 +620,6 @@ export const generateProjectBOQ = (
     
     const netWallArea = Math.max(0, grossWallArea - (mainDoorArea + roomDoorsArea + bathroomDoorsArea + shutterArea + windowsArea + ventArea));
     
-    // --- PREMIUM FEATURE: RCC WALLS vs BRICK WALLS (Features 6 & 7) ---
     const isRccWall = premiumData?.wallType === 'RCC';
     const rccWallThickFt = (premiumData?.rccWallThickness || masterSettings?.premiumDefaults?.rccWallThickness || 6) / 12; 
     const wallMesh = premiumData?.rccWallMeshSize || masterSettings?.premiumDefaults?.rccWallMesh || '10mm';
@@ -459,13 +627,12 @@ export const generateProjectBOQ = (
     let masonryItems = [];
     
     if (isRccWall) {
-      // RCC Wall Calculations
       const rccWallVol = netWallArea * rccWallThickFt;
       const rccWallConc = calculateConcrete(rccWallVol, masterSettings?.ratios?.column, getAllowance('column', 5));
       
       const wallMeshPiecesH = (netWallArea / colHt) / (masterSettings?.dimensions?.meshGap / 12 || 0.33);
       const wallMeshPiecesV = colHt / (masterSettings?.dimensions?.meshGap / 12 || 0.33);
-      const totalWallMeshFt = ((wallMeshPiecesH * colHt) + (wallMeshPiecesV * (netWallArea / colHt))) * 2; // Double mesh for walls
+      const totalWallMeshFt = ((wallMeshPiecesH * colHt) + (wallMeshPiecesV * (netWallArea / colHt))) * 2; 
 
       masonryItems = [
         { name: `RCC Wall Cement (${premiumData?.rccWallThickness || masterSettings?.premiumDefaults?.rccWallThickness || 6}in)`, qty: rccWallConc.cement, unit: "BAG", rate: safeRates.cement || 0 },
@@ -474,7 +641,6 @@ export const generateProjectBOQ = (
         { name: `RCC Wall Mesh (${wallMesh})`, qty: Math.ceil(getWeight(wallMesh, totalWallMeshFt)), unit: "KG", rate: safeRates.tmt?.[wallMesh] || 0 }
       ];
     } else {
-      // Standard Brick Wall Calculations
       const estimatedBricks = Math.ceil(netWallArea * (masterSettings?.consumption?.bricksPerSqft || 5) * wBricks);
       const joiningVol = netWallArea * (masterSettings?.consumption?.brickJoiningCftPerSqft || 0.10);
       const joiningConc = calculateConcrete(joiningVol, masterSettings?.ratios?.mortar);
@@ -486,15 +652,14 @@ export const generateProjectBOQ = (
       ];
     }
 
-    // Plaster is required for both Brick and RCC walls
     const plasterVol = netWallArea * (masterSettings?.consumption?.plasterCftPerSqft || 0.10) * 2; 
     const plasterConc = calculateConcrete(plasterVol, masterSettings?.ratios?.mortar);
-    const ceilingPlasterVol = layoutArea * (masterSettings?.consumption?.plasterCftPerSqft || 0.10);
+    const ceilingPlasterVol = (layoutArea + cantileverArea) * (masterSettings?.consumption?.plasterCftPerSqft || 0.10);
     const ceilingPlasterConc = calculateConcrete(ceilingPlasterVol, masterSettings?.ratios?.mortar);
 
-    const floorPaintArea = ((netWallArea * 2) + layoutArea) * 1.10;
+    const floorPaintArea = ((netWallArea * 2) + layoutArea + cantileverArea) * 1.10;
 
-    m_builtUp += layoutArea;
+    m_builtUp += layoutArea + cantileverArea;
     m_slab += adjustedSlabArea;
     m_wall += netWallArea;
     m_doors += (mainDoorArea + roomDoorsArea + bathroomDoorsArea + shutterArea);
@@ -509,7 +674,6 @@ export const generateProjectBOQ = (
     );
 
     addSection(isRccWall ? "6. RCC Walls & Plastering" : "6. Masonry, Joining & Plastering", masonryItems);
-    // --- END PREMIUM WALLS ---
 
     if (boqScope !== 'civil_only') {
       const doorsWindowsItems = [];
@@ -548,7 +712,7 @@ export const generateProjectBOQ = (
           const [tl, tw] = sizeStr.split('x').map(Number);
           const sqftPerTile = (tl && tw) ? (tl * tw) : 4; 
           const pieces = Math.ceil((area / sqftPerTile) * wTiles);
-          const friendlyLabel = { hall: 'Hall', kitchenDining: 'Kitchen/Dining', foyer: 'Foyer', commercialShops: 'Shop Chambers', commercialWashrooms: 'Washrooms', corridor: 'Corridor', bathroomWalls: 'Bathroom Walls', skirting: 'Internal Skirting' }[key] || key.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+          const friendlyLabel = { hall: 'Hall', kitchenDining: 'Kitchen/Dining', foyer: 'Foyer', balcony: 'Balcony', passage: 'Passage', porch: 'Porch', commercialShops: 'Shop Chambers', commercialWashrooms: 'Washrooms', corridor: 'Corridor', bathroomWalls: 'Bathroom Walls', skirting: 'Internal Skirting' }[key] || key.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
           tileItems.push({ name: `${friendlyLabel} Tiles (${sizeStr}, ${t.type || 'Standard'})`, qty: pieces, unit: "PIECES", rate: Number(t.price) });
         }
       });
@@ -571,7 +735,7 @@ export const generateProjectBOQ = (
     }
 
     const masonQty = Math.ceil(adjustedSlabArea);
-    const tileQty = Math.ceil(layoutArea);
+    const tileQty = Math.ceil(layoutArea + cantileverArea);
     const exteriorWallAreaCalc = roofPerimeter * colHt;
     const painterQty = Math.ceil(floorPaintArea + exteriorWallAreaCalc);
     
@@ -600,7 +764,7 @@ export const generateProjectBOQ = (
 
     addSection("Master Labor & Services", laborItems);
 
-    return { floorName: snap?.floorName || 'Floor', sections, layoutArea, adjustedSlabArea, floorTotal: floorBaseCost };
+    return { floorName: snap?.floorName || 'Floor', sections, layoutArea: (layoutArea + cantileverArea), adjustedSlabArea, floorTotal: floorBaseCost };
   });
 
   return {
